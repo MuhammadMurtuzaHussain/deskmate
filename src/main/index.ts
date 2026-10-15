@@ -254,9 +254,8 @@ function createWindow(): void {
     debugSayFired = true
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
-        const reply = await brain.respond({ kind: 'chat', text: debugSay })
+        const reply = await handleChat(debugSay)
         console.log('[debug] reply', JSON.stringify(reply))
-        await deliver(reply, 'chat')
       }, 10000)
     })
   }
@@ -380,8 +379,11 @@ ipcMain.handle('character:set', (_event, id: string) => {
   win.webContents.reload()
 })
 
-ipcMain.handle('chat:send', async (_event, rawText: string): Promise<Reply> => {
-  const text = String(rawText).slice(0, 2000)
+ipcMain.handle('chat:send', (_event, rawText: string): Promise<Reply> => handleChat(String(rawText)))
+
+/** One path for typed chat and the debug hook: captures the screen when it matters, then asks the brain. */
+async function handleChat(rawText: string): Promise<Reply> {
+  const text = rawText.slice(0, 2000)
   if (text.trim().toLowerCase() === '/forget') {
     memory.clear()
     const reply: Reply = { say: 'Clean slate. Who are you again, sweetheart?', emotion: 'smug', speak: true, remember: [] }
@@ -397,7 +399,7 @@ ipcMain.handle('chat:send', async (_event, rawText: string): Promise<Reply> => {
   const reply = await brain.respond({ kind: 'chat', text, screenshot, blind: aboutScreen && !screenshot })
   await deliver(reply, 'chat')
   return reply
-})
+}
 
 ipcMain.handle('watch:look', () => observe(true))
 

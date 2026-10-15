@@ -214,6 +214,15 @@ export class Brain {
     try {
       text = await ollamaChat({ model: this.ollamaModel, messages, schema: REPLY_SCHEMA })
       console.log(`[brain:ollama] ${this.ollamaModel} answered in ${Date.now() - started} ms`)
+      if (stimulus.kind === 'chat' && !salvageField(text, 'say')?.trim()) {
+        // A direct message deserves an answer: one nudge before the fallback line.
+        console.log('[brain:ollama] empty line for a direct message; asking once more')
+        text = await ollamaChat({
+          model: this.ollamaModel,
+          messages: [...messages, { role: 'system', content: 'They spoke to you directly. Answer them now in one or two sentences; "say" must not be empty and "speak" must be true.' }],
+          schema: REPLY_SCHEMA
+        })
+      }
     } catch (err) {
       console.error('[brain:ollama]', err)
       const speak = stimulus.kind !== 'observe'
