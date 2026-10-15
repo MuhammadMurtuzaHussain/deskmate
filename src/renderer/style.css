@@ -37,3 +37,8 @@ button.hidden, select.hidden { display: none; }
 #key { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); outline: none; font-size: 12px; }
 #key:focus { border-color: var(--accent); }
 body.dragging, body.dragging * { cursor: grabbing !important; }
+
+/* hands-free listening: the mic button breathes while she listens and lights up while you talk */
+#mic.on { background: var(--accent); color: #1a1030; border-color: transparent; animation: breathe 1.8s ease-in-out infinite; }
+#mic.on.hot { animation: none; box-shadow: 0 0 0 3px rgba(179, 140, 255, 0.55), 0 0 18px rgba(179, 140, 255, 0.8); }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }

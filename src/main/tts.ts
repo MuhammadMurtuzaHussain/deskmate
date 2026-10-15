@@ -21,6 +21,14 @@ export function localTtsSelected(): boolean {
   return (process.env.DESKMATE_TTS || '').trim().toLowerCase() === 'local'
 }
 
+/** True when she should hear: `DESKMATE_STT=local`, or the local voice is on and DESKMATE_STT is unset. */
+export function localSttSelected(): boolean {
+  const v = (process.env.DESKMATE_STT || '').trim().toLowerCase()
+  if (v === 'off' || v === '0' || v === 'false' || v === 'no') return false
+  if (v === 'local') return true
+  return localTtsSelected()
+}
+
 /**
  * Voice. Local Kokoro server if `DESKMATE_TTS=local`, else ElevenLabs if a key is set (what Kyndred is backed by),
  * else macOS `say`. Each provider falls through to the next when it fails.
@@ -86,7 +94,7 @@ async function localKokoro(text: string, voice: CharacterVoice): Promise<Audio> 
  */
 export async function autostartLocalTts(root: string, userData?: string): Promise<() => void> {
   const noop = (): void => undefined
-  if (!localTtsSelected() || process.env.DESKMATE_TTS_AUTOSTART === '0') return noop
+  if (!(localTtsSelected() || localSttSelected()) || process.env.DESKMATE_TTS_AUTOSTART === '0') return noop
   if (process.env.DESKMATE_TTS_URL?.trim() && !localTtsUrl().startsWith('http://127.0.0.1')) return noop
   const dir = join(root, 'tts-local')
   // The venv lives next to the scripts in a checkout, or under the user-data folder for the packaged app.
@@ -94,7 +102,7 @@ export async function autostartLocalTts(root: string, userData?: string): Promis
   const bin = process.platform === 'win32' ? join('Scripts', 'python.exe') : join('bin', 'python')
   const venv = candidates.find((v) => existsSync(join(v, bin)))
   if (!venv) {
-    console.warn(`[tts] DESKMATE_TTS=local but no Kokoro venv found (${candidates.join(' or ')}); run tts-local/setup.sh`)
+    console.warn(`[tts] local voice requested but no venv found (${candidates.join(' or ')}); run tts-local/setup.sh`)
     return noop
   }
   const python = join(venv, bin)
@@ -105,7 +113,8 @@ export async function autostartLocalTts(root: string, userData?: string): Promis
   const port = String(new URL(localTtsUrl()).port || 8880)
   const child: ChildProcess = spawn(python, [join(dir, 'server.py'), '--port', port, '--parent-pid', String(process.pid)], {
     cwd: dir,
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    // The same server does speech-to-text; tell it whether to load Whisper at all.
+    env: { ...process.env, PYTHONUNBUFFERED: '1', DESKMATE_STT: localSttSelected() ? process.env.DESKMATE_STT || 'local' : 'off' },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   child.stdout?.on('data', (d: Buffer) => process.stdout.write(d.toString()))

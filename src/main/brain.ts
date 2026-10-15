@@ -2,10 +2,19 @@ import type { Memory } from './memory'
 import type { Settings } from './settings'
 import { geminiGenerate, geminiCheckKey, GeminiBlockedError, GeminiQuotaError, type GeminiContent } from './gemini'
 import { ollamaChat, ollamaModels, type OllamaMessage } from './ollama'
-import { AVATAR_COMMANDS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type Touch } from '../shared/types'
+import { AVATAR_COMMANDS, EMOTIONS, TOOL_NAMES, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
+
+/** Something her task runner wants her to tell the user about. */
+export interface TaskReport {
+  phase: 'confirm' | 'started' | 'done' | 'failed' | 'cancelled' | 'status'
+  title: string
+  folder?: string
+  /** Claude's final message, the error, or the status list */
+  detail?: string
+}
 
 export interface Stimulus {
-  kind: 'chat' | 'observe' | 'touch'
+  kind: 'chat' | 'observe' | 'touch' | 'task'
   text?: string
   screenshot?: { data: string; mediaType: 'image/jpeg' | 'image/png' }
   fileEvents?: string[]
@@ -14,6 +23,9 @@ export interface Stimulus {
   manual?: boolean
   /** chat only: they asked about the screen but no capture was possible */
   blind?: boolean
+  /** chat only: it came in through the microphone */
+  voice?: boolean
+  task?: TaskReport
 }
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
@@ -24,7 +36,7 @@ const DEFAULT_OLLAMA_MODEL = 'qwen3-vl:4b-instruct'
 
 const OUTPUT_CONTRACT = `
 Reply with ONE JSON object and nothing else, no code fences:
-{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null}
+{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null, "tool": "claude"|"claude_resume"|"open"|"tasks"|"cancel"|null, "tool_input": string, "tool_dir": string|null}
 
 - "say": what you say out loud. Empty string if "speak" is false.
 - "emotion": the face you make. "flirty" when you are teasing or being sweet on them, "smug" when you are right, "shy" when they get to you.
@@ -33,6 +45,10 @@ Reply with ONE JSON object and nothing else, no code fences:
 - Say only what you can actually see or were told. Never invent names, people, messages, files or events. If you are not sure what is on the screen, say what it looks like or ask; do not guess specifics.
 - Never repeat a phrase. One thought per line.
 - "action": null unless they explicitly ask you to move. "dance" when they ask for a dance; "dance_slow" when they ask for something slow, sensual or seductive; "spin" when they ask for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. Never dance just because they are tired, bored or asked a question.
+- "tool": null unless they ask you to get something done on this computer. Claude Code is the coding agent installed here and you can hand it jobs. "claude" when they want real work done: write or fix code, edit a video or vlog project, change files, run a job. "claude_resume" when they want Claude to continue, resume or follow up on an earlier job or session. "open" to open an app, folder or website they name. "tasks" when they ask how Claude or a job is doing. "cancel" when they want the running job stopped. Talking, explaining, teasing and looking at the screen never need a tool; never reach for a tool because they sound busy or stressed.
+- "tool_input": for "claude", the instruction for Claude in plain words: exactly what they asked for, nothing added. For "claude_resume", what to tell Claude next ("" to just continue). For "open", the app name or URL. Otherwise "".
+- "tool_dir": the project or folder they named ("the vlog", "deskmate", "my website"), else null.
+- When "tool" is set, "say" is one short line that you are on it. Never claim the job is already done.
 `.trim()
 
 /** Ollama structured-output schema for the reply (mirrors OUTPUT_CONTRACT). */
@@ -43,12 +59,16 @@ const REPLY_SCHEMA = {
     emotion: { type: 'string', enum: [...EMOTIONS] },
     speak: { type: 'boolean' },
     remember: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, importance: { type: 'integer' } }, required: ['text', 'importance'] } },
-    action: { type: ['string', 'null'], enum: [...AVATAR_COMMANDS, null] }
+    action: { type: ['string', 'null'], enum: [...AVATAR_COMMANDS, null] },
+    tool: { type: ['string', 'null'], enum: [...TOOL_NAMES, null] },
+    tool_input: { type: 'string' },
+    tool_dir: { type: ['string', 'null'] }
   },
-  required: ['say', 'emotion', 'speak', 'remember', 'action']
+  required: ['say', 'emotion', 'speak', 'remember', 'action', 'tool', 'tool_input', 'tool_dir']
 }
 
-const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null}`
+const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null, "tool": null, "tool_input": "", "tool_dir": null}
+Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}`
 
 const TOUCH_PROMPTS: Record<Touch['area'], string> = {
   head: 'They just poked you on the head.',
@@ -143,8 +163,8 @@ export class Brain {
     if (this.useOllamaNow()) return this.respondLocal(stimulus)
     if (!this.key) return this.canned(stimulus)
     if (this.cooldownSeconds() > 0) {
-      // Out of quota: stay in character on taps, stay quiet on looks, be honest in chat.
-      if (stimulus.kind === 'touch') return this.canned(stimulus)
+      // Out of quota: stay in character on taps and task reports, stay quiet on looks, be honest in chat.
+      if (stimulus.kind === 'touch' || stimulus.kind === 'task') return this.canned(stimulus)
       if (stimulus.kind === 'observe') return { say: '', emotion: 'neutral', speak: false, remember: [] }
       return {
         say: `Google cut me off for about ${Math.ceil(this.cooldownSeconds() / 60)} more minutes. Free-tier quota. Talk to me after.`,
@@ -188,10 +208,12 @@ export class Brain {
       return this.failure(err, stimulus)
     }
 
-    const reply = parseReply(text, stimulus.kind === 'observe' && !stimulus.manual ? 'observe' : 'chat')
-    if (stimulus.kind === 'chat') this.memory.addTurn('user', stimulus.text ?? '')
-    if (reply.speak && reply.say) this.memory.addTurn('assistant', reply.say)
-    if (reply.remember.length) this.memory.remember(reply.remember)
+    const reply = parseReply(text, stimulus)
+    if (!reply.say && (stimulus.kind === 'chat' || stimulus.kind === 'task')) {
+      reply.say = this.canned(stimulus).say
+      reply.speak = true
+    }
+    this.commit(stimulus, reply)
     return reply
   }
 
@@ -211,10 +233,11 @@ export class Brain {
     messages.push(current)
     let text: string
     const started = Date.now()
+    const direct = stimulus.kind === 'chat' || stimulus.kind === 'task'
     try {
       text = await ollamaChat({ model: this.ollamaModel, messages, schema: REPLY_SCHEMA })
       console.log(`[brain:ollama] ${this.ollamaModel} answered in ${Date.now() - started} ms`)
-      if (stimulus.kind === 'chat' && !salvageField(text, 'say')?.trim()) {
+      if (direct && !salvageField(text, 'say')?.trim()) {
         // A direct message deserves an answer: one nudge before the fallback line.
         console.log('[brain:ollama] empty line for a direct message; asking once more')
         text = await ollamaChat({
@@ -235,31 +258,74 @@ export class Brain {
       }
       return { say: 'My local brain hiccuped. Is Ollama still running?', emotion: 'sad', speak, remember: [] }
     }
-    const reply = parseReply(text, stimulus.kind === 'observe' && !stimulus.manual ? 'observe' : 'chat')
+    const reply = parseReply(text, stimulus)
     if (!reply.say || !reply.speak) console.log(`[brain:ollama] quiet reply; raw: ${text.slice(0, 200)}`)
-    if (stimulus.kind === 'chat' && !reply.say) {
+    if (direct && !reply.say) {
       // A direct message never ends in silence.
-      reply.say = 'Say that again? I lost the thread for a second.'
+      reply.say = stimulus.kind === 'task' ? this.canned(stimulus).say : 'Say that again? I lost the thread for a second.'
       reply.speak = true
     }
     // Small local models ramble; keep spoken lines to a few sentences unless they were asked for help.
     const helpAsked = stimulus.kind === 'chat' && /\b(help|fix|error|explain|how do|how to|what is|summar|draft|write)\b/i.test(stimulus.text ?? '')
-    reply.say = trimSpoken(reply.say, helpAsked ? 8 : 3)
+    reply.say = trimSpoken(reply.say, stimulus.kind === 'task' ? 5 : helpAsked ? 8 : 3)
+    this.commit(stimulus, reply)
+    return reply
+  }
+
+  /** A small model sometimes announces a job as done the moment it starts, or forgets to ask. Those lines are replaced
+   * with plain ones: on these two the facts matter more than the voice. */
+  private guardTaskLine(stimulus: Stimulus, reply: Reply): void {
+    if (stimulus.kind !== 'task' || !stimulus.task) return
+    const phase = stimulus.task.phase
+    const claimsDone = /\b(done|ready|finished|complete[d]?|created|made|fixed|all set|sorted|handled|delivered)\b/i.test(reply.say)
+    if ((phase === 'started' && claimsDone) || (phase === 'confirm' && !/\?/.test(reply.say))) {
+      console.log(`[brain] replaced an off-script ${phase} line: ${reply.say.slice(0, 80)}`)
+      reply.say = this.canned(stimulus).say
+      reply.speak = true
+    }
+  }
+
+  /** Writes the exchange into her memory: the user's words, what the task runner reported, her own line, new facts. */
+  private commit(stimulus: Stimulus, reply: Reply): void {
+    this.guardTaskLine(stimulus, reply)
     if (stimulus.kind === 'chat') this.memory.addTurn('user', stimulus.text ?? '')
+    if (stimulus.kind === 'task' && stimulus.task && stimulus.task.phase !== 'confirm' && stimulus.task.phase !== 'status') {
+      const t = stimulus.task
+      const extra = t.phase === 'done' && t.detail ? `. Claude's message: ${t.detail.slice(0, 300)}` : t.phase === 'failed' && t.detail ? `: ${t.detail.slice(0, 200)}` : ''
+      this.memory.addTurn('user', `[Claude Code job ${t.phase}: "${t.title}"${extra}]`)
+    }
     if (reply.speak && reply.say) this.memory.addTurn('assistant', reply.say)
     if (reply.remember.length) this.memory.remember(reply.remember)
-    return reply
   }
 
   private promptText(stimulus: Stimulus): string {
     if (stimulus.kind === 'chat') {
+      const spoken = stimulus.voice ? '\n\n[They said this out loud; it came through speech recognition, so a word may be off. Keep your answer short, it will be read aloud.]' : ''
       if (stimulus.screenshot) {
-        return `${stimulus.text ?? ''}\n\n[A screenshot of their screen is attached for context. Use it if the message is about what is on screen; otherwise answer the message and don't describe the screen.]`
+        return `${stimulus.text ?? ''}\n\n[A screenshot of their screen is attached for context. Use it if the message is about what is on screen; otherwise answer the message and don't describe the screen.]${spoken}`
       }
       if (stimulus.blind) {
         return `${stimulus.text ?? ''}\n\n[You cannot see their screen right now: screen capture is not permitted on this computer. Say that plainly in your own voice and ask them to allow Screen Recording for the app; do not guess what is on the screen.]`
       }
-      return stimulus.text ?? ''
+      return `${stimulus.text ?? ''}${spoken}`
+    }
+    if (stimulus.kind === 'task' && stimulus.task) {
+      const t = stimulus.task
+      const where = t.folder ? ` in the folder "${t.folder}"` : ''
+      switch (t.phase) {
+        case 'confirm':
+          return `[They asked you to hand a job to Claude Code${where}: "${t.title}". Before it runs, check with them in one short line in your own voice: repeat the job in a few words and ask whether to send it. Do not start anything yourself and do not add to the job.]`
+        case 'started':
+          return `[You just handed a job to Claude Code (the coding agent on this computer)${where}: "${t.title}". Tell them in one short line, in your own voice, that it is running now. Do not claim it is finished and do not invent results.]`
+        case 'done':
+          return `[Claude Code finished the job "${t.title}"${where}. Its final message, word for word:\n${t.detail || '(no message)'}\n]\nTell them the outcome in your own voice in one to three sentences. Keep every fact exactly as written (file names, numbers, what changed) and add nothing the message does not say. If the message asks them something, pass the question on.`
+        case 'failed':
+          return `[Claude Code could not finish "${t.title}"${where}. What went wrong: ${t.detail || 'unknown'}]\nTell them plainly, in one or two sentences and in your voice, what happened and what they can do. Do not invent a cause.`
+        case 'cancelled':
+          return `[You stopped Claude's job "${t.title}" because they asked.] Confirm in one short line.`
+        case 'status':
+          return `[Status of Claude's jobs, exact:\n${t.detail || 'No jobs.'}\n]\nRelay this in your own voice in one to three sentences; keep names, states and times exact.`
+      }
     }
     if (stimulus.kind === 'touch') {
       const t = stimulus.touch ?? { kind: 'tap', area: 'body' }
@@ -304,8 +370,28 @@ export class Brain {
     return { say: 'Something broke on my side. Try again in a moment.', emotion: 'sad', speak, remember: [] }
   }
 
-  /** Demo mode: no key yet. Keeps the app usable so you can see the overlay, lip sync and expressions. */
+  /** Demo mode: no key yet. Keeps the app usable so you can see the overlay, lip sync and expressions. Also the
+   * plain-words fallback for task reports when no model is available. */
   private canned(stimulus: Stimulus): Reply {
+    if (stimulus.kind === 'task' && stimulus.task) {
+      const t = stimulus.task
+      const where = t.folder ? ` in ${t.folder}` : ''
+      const line = (say: string, emotion: Emotion): Reply => ({ say, emotion, speak: true, remember: [] })
+      switch (t.phase) {
+        case 'confirm':
+          return line(`Send this to Claude${where}: "${t.title}"? Yes or no.`, 'neutral')
+        case 'started':
+          return line(`Claude is on it${where}: ${t.title}. I'll tell you when it's done.`, 'smug')
+        case 'done':
+          return line(`Claude finished "${t.title}". ${(t.detail ?? '').slice(0, 300)}`.trim(), 'happy')
+        case 'failed':
+          return line(`Claude could not finish "${t.title}": ${t.detail ?? 'unknown error'}`, 'sad')
+        case 'cancelled':
+          return line(`Stopped. "${t.title}" is off.`, 'neutral')
+        case 'status':
+          return line(t.detail || 'No Claude jobs yet.', 'neutral')
+      }
+    }
     if (stimulus.kind === 'observe') {
       const lines: [string, Emotion][] = [
         ['Did you run the tests, or are we feeling lucky today?', 'smug'],
@@ -352,29 +438,46 @@ function salvageField(text: string, field: string): string | undefined {
   }
 }
 
-function parseReply(text: string, kind: Stimulus['kind']): Reply {
+function parseReply(text: string, stimulus: Stimulus): Reply {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const quietAllowed = stimulus.kind === 'observe' && !stimulus.manual
   try {
-    let obj: Partial<Reply>
+    let obj: Record<string, unknown>
     try {
-      obj = JSON.parse(cleaned) as Partial<Reply>
+      obj = JSON.parse(cleaned) as Record<string, unknown>
     } catch {
       // Truncated or slightly malformed JSON: keep what we can rather than reading the braces out loud.
       const say = salvageField(cleaned, 'say')
       if (say === undefined) throw new Error('unparseable')
-      const emotion = salvageField(cleaned, 'emotion')
-      const action = salvageField(cleaned, 'action')
-      obj = { say: say.replace(/[,.;:\s]+$/, '').trim(), emotion: emotion as Emotion | undefined, speak: true, remember: [], action: action as AvatarCommand | undefined }
+      obj = {
+        say: say.replace(/[,.;:\s]+$/, '').trim(),
+        emotion: salvageField(cleaned, 'emotion'),
+        speak: true,
+        remember: [],
+        action: salvageField(cleaned, 'action'),
+        tool: salvageField(cleaned, 'tool'),
+        tool_input: salvageField(cleaned, 'tool_input'),
+        tool_dir: salvageField(cleaned, 'tool_dir')
+      }
       console.warn('[brain] salvaged a truncated reply')
     }
-    const emotion = (EMOTIONS as string[]).includes(obj.emotion ?? '') ? (obj.emotion as Emotion) : 'neutral'
+    const emotion = (EMOTIONS as string[]).includes(String(obj.emotion ?? '')) ? (obj.emotion as Emotion) : 'neutral'
     const remember = Array.isArray(obj.remember)
-      ? obj.remember
+      ? (obj.remember as Array<{ text?: unknown; importance?: unknown }>)
           .filter((r) => r && typeof r.text === 'string')
-          .map((r) => ({ text: r.text, importance: Math.min(5, Math.max(1, Number(r.importance) || 3)) }))
+          .map((r) => ({ text: r.text as string, importance: Math.min(5, Math.max(1, Number(r.importance) || 3)) }))
       : []
     const action = (AVATAR_COMMANDS as string[]).includes(String(obj.action ?? '')) ? (obj.action as AvatarCommand) : undefined
-    return { say: String(obj.say ?? ''), emotion, speak: kind === 'observe' ? Boolean(obj.speak) : true, remember, action }
+    let tool: ToolCall | undefined
+    // Only a direct message can start a job; a glance at the screen or a poke never does.
+    if (stimulus.kind === 'chat' && (TOOL_NAMES as string[]).includes(String(obj.tool ?? ''))) {
+      tool = {
+        name: obj.tool as ToolName,
+        input: String(obj.tool_input ?? '').trim(),
+        dir: obj.tool_dir ? String(obj.tool_dir).trim() : null
+      }
+    }
+    return { say: String(obj.say ?? ''), emotion, speak: quietAllowed ? Boolean(obj.speak) : true, remember, action, tool }
   } catch {
     // The model answered in prose; treat the whole thing as speech.
     return { say: cleaned, emotion: 'neutral', speak: true, remember: [] }

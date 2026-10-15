@@ -4,6 +4,8 @@ import { dirname } from 'node:path'
 export interface SettingsData {
   geminiApiKey?: string
   activeCharacter?: string
+  /** folder Claude jobs run in unless the user names another */
+  activeProject?: string
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

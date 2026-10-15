@@ -26,6 +26,7 @@ echo "setup.sh: creating .venv with $("$PY" --version)"
 [ -d .venv ] || "$PY" -m venv .venv
 .venv/bin/python -m pip install --quiet --upgrade pip
 .venv/bin/python -m pip install --quiet -r requirements.txt
-echo "setup.sh: downloading the Kokoro model and saying a test line…"
+echo "setup.sh: downloading the Kokoro voice (~330 MB) and Whisper ${DESKMATE_STT_MODEL:-small.en} for listening (~480 MB), then a test line…"
+echo "          (DESKMATE_STT=off skips Whisper; DESKMATE_STT_MODEL=base.en is a lighter ear)"
 .venv/bin/python server.py --warmup
 echo "setup.sh: done. Start the server with ./run.sh (or let the app start it: DESKMATE_TTS=local in .env)."

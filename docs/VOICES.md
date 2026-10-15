@@ -37,3 +37,7 @@ Voice Library voices need a paid plan to be used through the API; built-in voice
 ## Per character
 
 Each `character.json` carries its own `voice` block (Kokoro preset, ElevenLabs id, system voice), so switching characters switches voices. `.env` values override all characters at once.
+
+## Talking to her (speech to text)
+
+The same local server listens: `tts-local/setup.sh` also installs faster-whisper and downloads Whisper `small.en`. With `DESKMATE_TTS=local` her ears are on; `DESKMATE_STT=off` leaves Whisper out, `DESKMATE_STT=local` turns it on even with another voice. Press ⌘⇧Space (Ctrl+Shift+Space), click **mic**, or use the tray menu, then talk; she answers when you pause. `DESKMATE_STT_MODEL` picks the size (`base.en` lighter, `small` or `medium` for other languages), `DESKMATE_WAKE_NAME=1` makes her answer only sentences with her name in them. The full story, including what she can do with what you say, is in [AGENT.md](AGENT.md).

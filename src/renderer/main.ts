@@ -1,5 +1,6 @@
 import type { AppConfig, AvatarCommand, Emotion, ReplyPayload, Touch } from '../shared/types'
 import type { Avatar } from './avatar'
+import { createMic } from './mic'
 
 const api = window.deskmate
 const canvas = document.getElementById('stage') as HTMLCanvasElement
@@ -11,6 +12,7 @@ const form = document.getElementById('chat') as HTMLFormElement
 const input = document.getElementById('input') as HTMLInputElement
 const lookBtn = document.getElementById('look') as HTMLButtonElement
 const watchBtn = document.getElementById('watch') as HTMLButtonElement
+const micBtn = document.getElementById('mic') as HTMLButtonElement
 const characterSelect = document.getElementById('character') as HTMLSelectElement
 const keyForm = document.getElementById('keyform') as HTMLFormElement
 const keyInput = document.getElementById('key') as HTMLInputElement
@@ -18,13 +20,14 @@ const keyInput = document.getElementById('key') as HTMLInputElement
 let config: AppConfig
 let avatar: Avatar | null = null
 let bubbleTimer: number | undefined
+let listening = false
 
 function setStatus(text: string): void {
   statusEl.textContent = text
 }
 
 function idleStatus(): string {
-  return config?.watching ? 'watching' : 'idle'
+  return listening ? 'listening' : config?.watching ? 'watching' : 'idle'
 }
 
 function showBubble(text: string, ms = 9000): void {
@@ -33,6 +36,13 @@ function showBubble(text: string, ms = 9000): void {
   window.clearTimeout(bubbleTimer)
   bubbleTimer = window.setTimeout(() => bubble.classList.add('hidden'), ms)
 }
+
+// ---- ears: the mic feeds whole utterances to the main process; it is deaf while she speaks.
+const mic = createMic({
+  onUtterance: (wav, ms) => void api.heard(wav, ms),
+  onLevel: (_rms, speaking) => micBtn.classList.toggle('hot', speaking),
+  onError: (message) => setStatus(`mic: ${message}`)
+})
 
 // ---- speech: lines arrive faster than she can say them; queue instead of dropping.
 const speechQueue: ReplyPayload[] = []
@@ -52,9 +62,12 @@ async function next(): Promise<void> {
   const payload = speechQueue.shift()
   if (!payload) {
     speaking = false
+    // Her own voice must not come back in as a question; the mic opens again a beat after she stops.
+    window.setTimeout(() => mic.setBlocked(speaking), 350)
     return
   }
   speaking = true
+  mic.setBlocked(true)
   await perform(payload)
 }
 
@@ -223,6 +236,18 @@ const LOCAL_COMMANDS: Record<string, AvatarCommand> = {
   '/outfit': 'next_outfit'
 }
 
+function applyListening(on: boolean): void {
+  listening = on
+  micBtn.classList.toggle('on', on)
+  micBtn.textContent = on ? 'listening' : 'mic'
+  if (on) {
+    mic.start().catch(() => void api.setListening(false))
+  } else {
+    mic.stop()
+    micBtn.classList.remove('hot')
+  }
+}
+
 function wireUi(): void {
   form.addEventListener('submit', async (e) => {
     e.preventDefault()
@@ -232,6 +257,10 @@ function wireUi(): void {
     const local = LOCAL_COMMANDS[text.toLowerCase()]
     if (local) {
       runAction(local)
+      return
+    }
+    if (text.toLowerCase() === '/listen') {
+      void api.setListening(!listening)
       return
     }
     setStatus('thinking…')
@@ -246,6 +275,7 @@ function wireUi(): void {
     config.watching = await api.toggleWatch()
     watchBtn.classList.toggle('on', config.watching)
   })
+  micBtn.addEventListener('click', () => void api.setListening(!listening))
   characterSelect.addEventListener('change', () => {
     setStatus(`switching to ${characterSelect.options[characterSelect.selectedIndex].text}…`)
     void api.setCharacter(characterSelect.value)
@@ -268,6 +298,7 @@ function wireUi(): void {
   api.onReply(enqueue)
   api.onStatus(setStatus)
   api.onCommand(runAction)
+  api.onListen(applyListening)
 }
 
 function fillCharacterSelect(): void {
@@ -304,6 +335,7 @@ async function main(): Promise<void> {
   config = await api.getConfig()
   wireUi()
   fillCharacterSelect()
+  micBtn.classList.toggle('hidden', !config.ears)
   setStatus(`loading ${config.character.name}…`)
   try {
     avatar = await createAvatar()
@@ -316,10 +348,12 @@ async function main(): Promise<void> {
   wirePointer()
   watchBtn.classList.toggle('on', config.watching)
   keyForm.classList.toggle('hidden', config.mode !== 'demo')
+  if (config.listening) applyListening(true)
+  const extras = [config.ears ? 'mic' : '', config.hands ? `Claude in ${config.project?.name ?? '…'}` : ''].filter(Boolean).join(' · ')
   setStatus(
     config.mode === 'demo'
       ? `${config.character.name} is here. She needs a Gemini key to think.`
-      : `${config.character.name} is here · ${config.modelName}${config.watchDir ? ` · watching ${config.watchDir}` : ''}`
+      : `${config.character.name} is here · ${config.modelName}${config.watchDir ? ` · watching ${config.watchDir}` : ''}${extras ? ` · ${extras}` : ''}`
   )
 }
 

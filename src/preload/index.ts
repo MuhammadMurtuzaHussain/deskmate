@@ -11,6 +11,9 @@ const api: DeskmateApi = {
   react: (touch) => ipcRenderer.invoke('touch:react', touch),
   setKey: (key) => ipcRenderer.invoke('settings:set-key', key),
   setCharacter: (id) => ipcRenderer.invoke('character:set', id),
+  setListening: (on) => ipcRenderer.invoke('listen:set', on),
+  // A typed array crosses the bridge intact; a bare ArrayBuffer does not always.
+  heard: (wav, ms) => ipcRenderer.invoke('mic:heard', new Uint8Array(wav), ms),
   onReply: (cb) => {
     ipcRenderer.on('reply', (_event, payload: ReplyPayload) => cb(payload))
   },
@@ -19,6 +22,9 @@ const api: DeskmateApi = {
   },
   onCommand: (cb) => {
     ipcRenderer.on('avatar:command', (_event, command: AvatarCommand) => cb(command))
+  },
+  onListen: (cb) => {
+    ipcRenderer.on('listen:state', (_event, on: boolean) => cb(on))
   }
 }
 

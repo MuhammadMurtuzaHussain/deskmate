@@ -1,8 +1,8 @@
 {
   "name": "deskmate",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
-  "description": "A Live2D or 3D (VRM / MMD) AI desk companion that lives on your screen: watches what you do, talks back with a voice and expressions, dances when you ask, remembers you. Runs fully local with Ollama + Kokoro, or on Gemini.",
+  "description": "A Live2D or 3D (VRM / MMD) AI desk companion that lives on your screen and talks back: speech to speech with a local Whisper + Kokoro voice, sees what you do, dances when you ask, remembers you, and hands real work to Claude Code when you tell her to. Runs fully local with Ollama, or on Gemini.",
   "main": "./out/main/index.js",
   "scripts": {
     "ensure-electron": "node scripts/ensure-electron.cjs",
@@ -49,12 +49,15 @@
   },
   "keywords": [
     "3d-avatar",
+    "agent",
     "ai-companion",
     "anime",
+    "claude-code",
     "desktop-companion",
     "desktop-pet",
     "electron",
     "gemini",
+    "hands-free",
     "kokoro",
     "linux",
     "live2d",
@@ -63,18 +66,21 @@
     "mmd",
     "ollama",
     "screen-aware",
+    "speech-to-text",
     "text-to-speech",
     "three-js",
+    "voice-assistant",
     "vrm",
     "vroid",
     "vtuber",
     "waifu",
+    "whisper",
     "windows"
   ],
   "build": {
     "appId": "com.murtuza.deskmate",
     "productName": "Deskmate",
-    "copyright": "Copyright \u00a9 2026 Muhammad Murtuza Hussain",
+    "copyright": "Copyright © 2026 Muhammad Murtuza Hussain",
     "directories": {
       "buildResources": "build",
       "output": "release"
@@ -86,7 +92,6 @@
       "!out/renderer/models/jian/**",
       "!out/renderer/models/nicole/**",
       "!out/renderer/models/ani/**",
-      "!out/renderer/models/kim/**",
       "!out/renderer/models/victoria/test.vrma"
     ],
     "extraResources": [
@@ -137,7 +142,7 @@
       "extendInfo": {
         "LSUIElement": true,
         "NSScreenCaptureDescription": "Deskmate looks at your screen so your companion can react to what you are doing.",
-        "NSMicrophoneUsageDescription": "Reserved for voice input."
+        "NSMicrophoneUsageDescription": "Deskmate listens while hands-free mode is on, so you can talk to your companion."
       }
     },
     "dmg": {

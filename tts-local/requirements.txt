@@ -1,3 +1,5 @@
 # Kokoro-82M (Apache-2.0) and what it needs to serve WAV. torch and misaki[en] come in through kokoro.
 kokoro>=0.9.4
 soundfile>=0.12
+# faster-whisper (MIT) for speech-to-text: CTranslate2 on CPU, int8, with Silero VAD. Models download on first use.
+faster-whisper>=1.1

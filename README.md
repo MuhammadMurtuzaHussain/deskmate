@@ -33,7 +33,8 @@
 - **Lives on top of everything.** A transparent, always-on-top Live2D character, click-through except on her, with a menu-bar / tray icon to show, hide, and quit. Start at login from the tray.
 - **Sees your screen.** Press *look* and she reacts to what you're doing; turn on *watch* and she glances over every minute and speaks up when something catches her eye. Point her at a project folder and she notices what you edit.
 - **Actually helps.** Ask "what's this error" or "what should I do next" and she reads the screen and answers properly, then goes back to being herself.
-- **Talks.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice. Expressions and body language follow the emotion of every line.
+- **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Speech to speech, nothing sent anywhere.
+- **Puts Claude to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how is Claude doing": she hands the job to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the right project folder, follows it, and tells you in her own voice what came back. Spoken jobs are read back and wait for your yes. [docs/AGENT.md](docs/AGENT.md).
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
 - **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Built-in choreographies (upbeat groove, slow and sensual, a twirl) with smooth blends, and real motion capture when you drop clips in: Mixamo `.fbx` dances retarget straight onto any VRM character, `.vrma` plays as is, `.vmd` for MMD. Hair and skirts move with the model's own physics.
@@ -71,9 +72,13 @@ OLLAMA_MODEL=qwen3-vl:4b-instruct
 
 Details, other models, and running both: [docs/BRAINS.md](docs/BRAINS.md).
 
-### Give her a voice (optional)
+### Give her a voice, and ears (optional)
 
-Without setup she uses your system voice. For a natural one: [docs/VOICES.md](docs/VOICES.md) covers the local open-source Kokoro voice (one script) and ElevenLabs (an API key).
+Without setup she uses your system voice. For a natural one: [docs/VOICES.md](docs/VOICES.md) covers the local open-source Kokoro voice (one script) and ElevenLabs (an API key). The same script installs Whisper, so with the local voice on you can talk to her: ⌘⇧Space (Ctrl+Shift+Space), the **mic** button, or **Listen hands-free** in the tray.
+
+### Give her hands (optional)
+
+If [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is installed and logged in on your machine, she can give it jobs: "ask Claude to …", "resume the vlog edit", "stop the task". Pick the folder she works in from the tray menu, or name it in the sentence. How it works, what Claude is allowed to do, and how to turn the read-back confirmation on or off: [docs/AGENT.md](docs/AGENT.md).
 
 ## Run from source
 
@@ -103,7 +108,7 @@ Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each
 
 ## Settings reference
 
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, watch folder and interval, default character.
+All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake name), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character.
 
 | folder | macOS | Windows | Linux |
 |---|---|---|---|
@@ -112,9 +117,10 @@ All settings are environment variables, read from `.env` / `.env.local` in the u
 ## How it works
 
 ```
-Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, emotion, speak, remember}
+Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, emotion, speak, remember, action, tool}
    │  desktopCapturer every N s, chokidar on your project folder
-   │  Kokoro / ElevenLabs / say ──► audio
+   │  mic ──► Whisper (local) ──► text · Kokoro / ElevenLabs / say ──► audio
+   │  tool: claude ──► `claude -p` in the project folder (stream-json) ──► she reports back
    ▼ IPC
 Renderer: Live2D: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
           3D: three.js + three-vrm (VRM) · vendored MMDLoader + Ammo physics (MMD) · OBJ/GLTF (static)
@@ -125,17 +131,18 @@ The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, t
 
 ## Privacy
 
-Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. Memory and settings live in your user-data folder and nowhere else.
+Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. Memory and settings live in your user-data folder and nowhere else.
 
 ## Roadmap
 
-- Voice input (push-to-talk)
+- A wake word instead of the shortcut; barge-in (interrupt her mid-sentence)
+- More for her hands: reminders, calendar, a shell tool with spoken approval
 - Voice cloning via Chatterbox as a local option
 - In-app settings panel (no `.env` editing)
 - Signed builds
 
 ## Credits
 
-[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own license; the sample model Haru is under the Live2D Free Material License) · [three.js](https://threejs.org) and [three-vrm](https://github.com/pixiv/three-vrm) by pixiv · MMD loading vendored from three.js r170 (MIT) with [Ammo.js](https://github.com/kripken/ammo.js) physics · [Victoria Rubin](https://github.com/madjin/vrm-samples) sample model by VRoid Project, CC0 · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [Ollama](https://ollama.com) · PixiJS · Electron.
+[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own license; the sample model Haru is under the Live2D Free Material License) · [three.js](https://threejs.org) and [three-vrm](https://github.com/pixiv/three-vrm) by pixiv · MMD loading vendored from three.js r170 (MIT) with [Ammo.js](https://github.com/kripken/ammo.js) physics · [Victoria Rubin](https://github.com/madjin/vrm-samples) sample model by VRoid Project, CC0 · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Ollama](https://ollama.com) · PixiJS · Electron.
 
 MIT © 2026 Muhammad Murtuza Hussain
