@@ -19,8 +19,10 @@ export interface Avatar {
   layout(): void
   getBounds(): Bounds | null
   setExpression(emotion: Emotion): void
-  /** Plays the audio with lip sync. Resolves true when playback finished, false if it could not start. */
+  /** Plays the audio with lip sync. Resolves true when playback finished (or was cut short), false if it could not start. */
   speak(url: string, mime: string): Promise<boolean>
+  /** Stops the line she is saying: the audio and the lip sync; the pending speak() resolves. */
+  interrupt(): void
   /** Mouth value 0..1 for the browser-voice fallback (no audio stream to analyse). */
   setFakeMouth(value: number): void
   /** Physics impulse (taps, drags, replies). */

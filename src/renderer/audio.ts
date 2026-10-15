@@ -3,10 +3,11 @@
  * One shared AudioContext; each utterance gets its own element and analyser.
  */
 export interface Speaker {
-  /** Resolves true when playback finished, false if it could not start. */
+  /** Resolves true when playback finished or was stopped, false if it could not start. */
   speak(url: string): Promise<boolean>
   /** 0..1 loudness of whatever is playing right now (0 when silent). */
   level(): number
+  /** Cuts the current line; its speak() resolves at once. */
   stop(): void
 }
 
@@ -14,16 +15,23 @@ export function createSpeaker(): Speaker {
   let ctx: AudioContext | null = null
   let analyser: AnalyserNode | null = null
   let data: Uint8Array<ArrayBuffer> | null = null
-  let current: HTMLAudioElement | null = null
+  let current: { audio: HTMLAudioElement; done: (ok: boolean) => void } | null = null
+
+  function stop(): void {
+    const c = current
+    current = null
+    if (!c) return
+    c.audio.pause()
+    c.done(true)
+  }
 
   return {
     speak(url: string): Promise<boolean> {
       return new Promise((resolve) => {
         try {
-          current?.pause()
+          stop()
           ctx ??= new AudioContext()
           const audio = new Audio(url)
-          current = audio
           const src = ctx.createMediaElementSource(audio)
           const an = ctx.createAnalyser()
           an.fftSize = 512
@@ -39,7 +47,7 @@ export function createSpeaker(): Speaker {
               analyser = null
               data = null
             }
-            if (current === audio) current = null
+            if (current?.audio === audio) current = null
             try {
               src.disconnect()
               an.disconnect()
@@ -48,6 +56,7 @@ export function createSpeaker(): Speaker {
             }
             resolve(ok)
           }
+          current = { audio, done }
           audio.onended = () => done(true)
           audio.onerror = () => done(false)
           void ctx.resume()
@@ -72,9 +81,6 @@ export function createSpeaker(): Speaker {
       const rms = Math.sqrt(sum / data.length)
       return Math.min(1, Math.max(0, (rms - 0.015) * 9))
     },
-    stop() {
-      current?.pause()
-      current = null
-    }
+    stop
   }
 }

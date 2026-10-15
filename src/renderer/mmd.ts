@@ -380,6 +380,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
     },
 
     speak: (url: string) => speaker.speak(url),
+    interrupt: () => speaker.stop(),
     setFakeMouth: (v: number) => {
       fakeMouth = v
     },

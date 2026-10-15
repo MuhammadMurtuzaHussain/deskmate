@@ -40,6 +40,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   })
   let model: Live2DModel | null = null
   let fakeMouth = 0
+  let settleSpeak: ((ok: boolean) => void) | null = null
   const sway = { amount: character.physics?.sway ?? 1, bounce: character.physics?.bounce ?? 1.5, impulse: 0, impulseAt: 0 }
 
   function swayOffsets(now: number): { x: number; y: number; z: number } {
@@ -132,9 +133,11 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
         const done = (ok: boolean): void => {
           if (!settled) {
             settled = true
+            if (settleSpeak === done) settleSpeak = null
             resolve(ok)
           }
         }
+        settleSpeak = done
         const options = {
           volume: 1,
           resetExpression: false,
@@ -154,6 +157,12 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
           if (!ok) done(false)
         })
       })
+    },
+
+    interrupt() {
+      // stopSpeaking() drops the audio element and its listeners, so onFinish never fires: settle the promise here.
+      model?.internalModel.motionManager.stopSpeaking()
+      settleSpeak?.(true)
     },
 
     setFakeMouth(v: number) {

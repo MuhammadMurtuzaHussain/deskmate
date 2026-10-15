@@ -3,6 +3,7 @@
 
 POST /v1/audio/speech          {"input": "text", "voice": "af_heart", "speed": 1.0}  ->  audio/wav (24 kHz, 16-bit mono)
 POST /v1/audio/transcriptions  raw audio bytes (WAV/WebM/Ogg/MP3; body is the file)    ->  {"text": "...", "language": "en", ...}
+                               ?language=en  ?prompt=Mika  (a name or phrase Whisper should spell this way)
 GET  /health                   {"ok": true, "voice": "...", "device": "...", "stt": {...}}
 GET  /v1/voices                the preset voice names bundled with Kokoro
 
@@ -22,6 +23,7 @@ import os
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_VOICE = os.environ.get("DESKMATE_TTS_VOICE", "").strip() or "af_heart"
@@ -119,13 +121,14 @@ class Ears:
             mono = np.interp(np.linspace(0, len(mono) - 1, n), np.arange(len(mono)), mono).astype("float32")
         return mono
 
-    def transcribe(self, data: bytes, language: str | None) -> dict:
+    def transcribe(self, data: bytes, language: str | None, prompt: str | None = None) -> dict:
         audio = self._audio(data)
         with self._lock:
             model = self.model()
             segments, info = model.transcribe(
                 audio,
                 language=language,
+                initial_prompt=prompt or None,
                 beam_size=1,
                 best_of=1,
                 vad_filter=True,
@@ -224,13 +227,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "send the audio file as the request body (up to 25 MB)"})
         data = self.rfile.read(length)
         language = STT_LANGUAGE
-        query = self.path.split("?", 1)[1] if "?" in self.path else ""
-        for pair in query.split("&"):
-            if pair.startswith("language=") and pair[9:]:
-                language = pair[9:]
+        prompt = None
+        query = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+        if query.get("language", [""])[0]:
+            language = query["language"][0]
+        if query.get("prompt", [""])[0]:
+            prompt = query["prompt"][0][:200]
         t0 = time.time()
         try:
-            result = ears.transcribe(data, language)
+            result = ears.transcribe(data, language, prompt)
         except Exception as err:  # noqa: BLE001 - report whatever whisper/av raised
             print(f"[stt-local] transcription failed: {err!r}", flush=True)
             return self._json(500, {"error": str(err)})

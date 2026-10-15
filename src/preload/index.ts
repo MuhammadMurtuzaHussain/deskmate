@@ -13,7 +13,8 @@ const api: DeskmateApi = {
   setCharacter: (id) => ipcRenderer.invoke('character:set', id),
   setListening: (on) => ipcRenderer.invoke('listen:set', on),
   // A typed array crosses the bridge intact; a bare ArrayBuffer does not always.
-  heard: (wav, ms) => ipcRenderer.invoke('mic:heard', new Uint8Array(wav), ms),
+  heard: (wav, ms, bargedIn) => ipcRenderer.invoke('mic:heard', new Uint8Array(wav), ms, Boolean(bargedIn)),
+  speaking: (on) => ipcRenderer.send('speech:state', on),
   onReply: (cb) => {
     ipcRenderer.on('reply', (_event, payload: ReplyPayload) => cb(payload))
   },

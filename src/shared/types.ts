@@ -131,6 +131,10 @@ export interface AppConfig {
   hands: boolean
   /** the folder Claude jobs run in unless they name another */
   project: ProjectInfo | null
+  /** the mic stays open while she talks, and talking over her stops her (DESKMATE_BARGE_IN, default on) */
+  bargeIn: boolean
+  /** the name she waits for before she answers (DESKMATE_WAKE_MODE=word), or null when she answers everything */
+  wakeWord: string | null
 }
 
 export interface DeskmateApi {
@@ -145,8 +149,10 @@ export interface DeskmateApi {
   setCharacter(id: string): Promise<void>
   /** hands-free listening on/off; resolves to the new state (false when the mic was refused) */
   setListening(on: boolean): Promise<boolean>
-  /** one utterance from the mic, 16 kHz mono 16-bit WAV */
-  heard(wav: ArrayBuffer, ms: number): Promise<void>
+  /** one utterance from the mic, 16 kHz mono 16-bit WAV; bargedIn when it began while she was talking */
+  heard(wav: ArrayBuffer, ms: number, bargedIn?: boolean): Promise<void>
+  /** she started or stopped talking (the main process times her attention window from it) */
+  speaking(on: boolean): void
   onReply(cb: (payload: ReplyPayload) => void): void
   onStatus(cb: (text: string) => void): void
   onCommand(cb: (command: AvatarCommand) => void): void

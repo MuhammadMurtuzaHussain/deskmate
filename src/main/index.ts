@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
-import { Brain, type Stimulus, type TaskReport } from './brain'
+import { ACKNOWLEDGEMENTS, Brain, type Stimulus, type TaskReport } from './brain'
 import { browse } from './browse'
 import * as chrome from './chrome'
 import { routeCommand } from './commands'
@@ -12,10 +12,11 @@ import { loadDotEnv } from './env'
 import { Memory } from './memory'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
-import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe } from './stt'
+import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, synthesize } from './tts'
+import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import type { AppConfig, AvatarCommand, CharacterConfig, Emotion, Reply, ReplyPayload, ToolCall, Touch } from '../shared/types'
+import type { AppConfig, Audio, AvatarCommand, CharacterConfig, Emotion, Reply, ReplyPayload, ToolCall, Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -79,6 +80,18 @@ const ears = localSttSelected()
 let listening = false
 const LISTEN_SHORTCUT = process.env.DESKMATE_LISTEN_SHORTCUT?.trim() || 'CommandOrControl+Shift+Space'
 const WAKE_NAME = /^(1|true|yes|on)$/i.test(process.env.DESKMATE_WAKE_NAME?.trim() || '')
+/** off (default): while listening is on she answers everything · word: her ears are on from launch and she answers only
+ * after her name ("Mika, …", or "Mika?" and then the question). DESKMATE_WAKE_NAME=1 is the older switch: the same
+ * gate, with listening still started by hand. */
+const WAKE_MODE = (process.env.DESKMATE_WAKE_MODE?.trim().toLowerCase() || 'off') === 'word' ? 'word' : 'off'
+const WAKE_GATE = WAKE_MODE === 'word' || WAKE_NAME
+/** the mic stays open while she talks and talking over her stops her; 0 closes the mic while she talks, as before */
+const BARGE_IN = !/^(0|false|no|off)$/i.test(process.env.DESKMATE_BARGE_IN?.trim() || '')
+/** how long she listens for the question after "Mika?" and her "yes?" */
+const ATTEND_MS = 8000
+/** a long utterance that is not for her is only transcribed this far, to look for her name at the start */
+const WAKE_HEAD_S = 3.5
+let wake = createWakeMatcher(character.name)
 /** always | voice (default) | never: whether she repeats a job back and waits for a yes before Claude starts */
 const CONFIRM_JOBS = (process.env.DESKMATE_CONFIRM_JOBS?.trim().toLowerCase() || 'voice') as 'always' | 'voice' | 'never'
 
@@ -95,6 +108,7 @@ function switchCharacter(id: string): void {
   if (pending?.kind === 'confirm') pending.resolve(false)
   pending = null
   ;({ character, persona } = readCharacter(id))
+  wake = createWakeMatcher(character.name)
   memory = new Memory(join(app.getPath('userData'), `memory-${id}.json`))
   brain.setCharacter(memory, persona)
   settings.set({ activeCharacter: id })
@@ -194,7 +208,7 @@ function buildTrayMenu(): Menu {
     { label: 'Look at my screen now', click: () => void observe(true) },
     { label: watching ? 'Stop watching' : 'Watch my screen', type: 'checkbox', checked: watching, click: () => void setWatching(!watching) },
     {
-      label: `${listening ? 'Stop listening' : 'Listen hands-free'}  ${shortcutLabel()}`,
+      label: `${listening ? 'Stop listening' : WAKE_GATE ? `Listen for "${character.name}"` : 'Listen hands-free'}  ${shortcutLabel()}`,
       type: 'checkbox',
       checked: listening,
       enabled: ears,
@@ -354,18 +368,26 @@ function createWindow(): void {
     })
   }
   if (debugWav && !debugSayFired) {
-    // Feeds a WAV file through the same path as the microphone: transcription, routing, reply.
+    // Feeds WAV files (';'-separated) through the same path as the microphone, one after another: transcription,
+    // wake word, routing, reply. The next one goes in a few seconds after she has dealt with the last.
     debugSayFired = true
-    win.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        try {
-          const bytes = new Uint8Array(readFileSync(debugWav))
-          void onUtterance(bytes, 0)
-        } catch (err) {
-          console.error('[debug] could not read DESKMATE_DEBUG_WAV', err)
-        }
-      }, 10000)
-    })
+    const files = debugWav.split(';').map((f) => f.trim()).filter(Boolean)
+    let i = 0
+    const feedNext = (): void => {
+      if (i >= files.length) return
+      if (hearing) {
+        setTimeout(feedNext, 500)
+        return
+      }
+      const file = files[i++]
+      try {
+        void onUtterance(new Uint8Array(readFileSync(file)), 0).finally(() => setTimeout(feedNext, 5000))
+      } catch (err) {
+        console.error('[debug] could not read DESKMATE_DEBUG_WAV', file, err)
+        setTimeout(feedNext, 500)
+      }
+    }
+    win.webContents.once('did-finish-load', () => setTimeout(feedNext, 10000))
   }
   if (shot) {
     win.webContents.once('did-finish-load', () => {
@@ -425,10 +447,10 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
   }
 }
 
-async function deliver(reply: Reply, source: ReplyPayload['source']): Promise<void> {
+async function deliver(reply: Reply, source: ReplyPayload['source'], ready?: Audio | null): Promise<void> {
   if (!reply.speak || !reply.say) return
   console.log(`[say:${source}] ${reply.say.slice(0, 90)}`)
-  const audio = await synthesize(reply.say, character.voice)
+  const audio = ready !== undefined ? ready : await synthesize(reply.say, character.voice)
   const payload: ReplyPayload = { reply, audio, source }
   win.webContents.send('reply', payload)
 }
@@ -495,7 +517,9 @@ ipcMain.handle(
     project: (() => {
       const p = projects.current()
       return p ? { name: p.name, path: p.path } : null
-    })()
+    })(),
+    bargeIn: BARGE_IN,
+    wakeWord: WAKE_GATE ? character.name : null
   })
 )
 
@@ -867,8 +891,52 @@ agent.on('end', (task: Task) => {
 
 // ---- ears: hands-free listening
 
+let attendUntil = 0 // wake mode: until when she answers without hearing her name
+let attendTimer: NodeJS.Timeout | null = null
+let herSpeaking = false
+let followUp = false // her current line is the "yes?" to her name; when it ends, the window for the question opens
+
 function listeningStatus(): string {
-  return `listening · ${WAKE_NAME ? `start with "${character.name}"` : 'just talk'} · ${shortcutLabel()} stops`
+  const how = !WAKE_GATE ? 'just talk' : Date.now() < attendUntil ? 'yes? go on' : `say "${character.name}"`
+  return `listening · ${how} · ${shortcutLabel()} ${WAKE_MODE === 'word' ? 'mutes' : 'stops'}`
+}
+
+/** Opens (or extends) the window in which she answers without her name, and shows it in the status row. */
+function attend(): void {
+  attendUntil = Date.now() + ATTEND_MS
+  if (listening) status(listeningStatus())
+  if (attendTimer) clearTimeout(attendTimer)
+  attendTimer = setTimeout(() => {
+    attendTimer = null
+    if (listening && !hearing && !herSpeaking && Date.now() >= attendUntil) status(listeningStatus())
+  }, ATTEND_MS + 50)
+}
+
+// "Mika?" gets a canned one-word answer; its audio is made once per voice so it comes back at once.
+const ackAudio = new Map<string, Audio | null>()
+function ackKey(say: string): string {
+  return `${JSON.stringify(character.voice)}|${say}`
+}
+
+async function acknowledge(): Promise<void> {
+  const reply = brain.acknowledge()
+  const key = ackKey(reply.say)
+  let audio = ackAudio.get(key)
+  if (audio === undefined) {
+    audio = await synthesize(reply.say, character.voice)
+    ackAudio.set(key, audio)
+  }
+  followUp = true
+  attend()
+  await deliver(reply, 'chat', audio)
+}
+
+/** Synthesizes the acknowledgement lines ahead of time, so the first "Mika?" is not met with a pause. */
+async function warmAcknowledgements(): Promise<void> {
+  for (const [say] of ACKNOWLEDGEMENTS) {
+    const key = ackKey(say)
+    if (!ackAudio.has(key)) ackAudio.set(key, await synthesize(say, character.voice).catch(() => null))
+  }
 }
 
 async function setListening(on: boolean): Promise<boolean> {
@@ -893,8 +961,13 @@ async function setListening(on: boolean): Promise<boolean> {
 }
 
 let hearing = false
-/** One utterance from the microphone (or the debug hook): transcribe, then treat it exactly like typed chat. */
-async function onUtterance(bytes: Uint8Array, ms: number): Promise<void> {
+/**
+ * One utterance from the microphone (or the debug hook): transcribe, then treat it exactly like typed chat. With the
+ * wake word on, only a sentence that starts or ends with her name counts, unless she is already paying attention:
+ * they talked over her, she is waiting for their yes, or they just called her name. (Not after every answer: in a
+ * room with a video or a call going, an open window after each line had her answering the room.)
+ */
+async function onUtterance(bytes: Uint8Array, ms: number, bargedIn = false): Promise<void> {
   if (hearing) {
     console.log('[ears] still answering the last one; dropped an utterance')
     return
@@ -903,19 +976,43 @@ async function onUtterance(bytes: Uint8Array, ms: number): Promise<void> {
   try {
     status('…')
     const t0 = Date.now()
-    const transcript = await transcribe(bytes)
-    const text = cleanTranscript(transcript)
-    console.log(`[ears] ${ms || Math.round((transcript.duration ?? 0) * 1000)} ms of audio -> ${JSON.stringify(transcript.text)} in ${Date.now() - t0} ms${text ? '' : ' (ignored)'}`)
+    const durationMs = ms || wavDurationMs(bytes)
+    const attending = !WAKE_GATE || bargedIn || Boolean(pending) || Date.now() < attendUntil
+    // The cheap always-on ear: a long utterance that is not for her is transcribed only far enough to look for her name.
+    const headOnly = WAKE_GATE && !attending && durationMs > WAKE_HEAD_S * 1000
+    let transcript = await transcribe(headOnly ? wavHead(bytes, WAKE_HEAD_S) : bytes)
+    let text = cleanTranscript(transcript)
+    let hit = text && WAKE_GATE ? wake.find(text) : null
+    if (hit && headOnly) {
+      // Her name opened a long sentence: now the whole thing.
+      transcript = await transcribe(bytes)
+      text = cleanTranscript(transcript)
+      hit = text ? wake.find(text) : null
+    }
+    const notForHer = Boolean(text) && WAKE_GATE && !hit && !attending
+    const notes = [bargedIn ? 'over her' : '', headOnly ? 'first seconds' : '', text ? (notForHer ? 'not for me' : '') : 'ignored'].filter(Boolean).join(', ')
+    console.log(`[ears] ${durationMs} ms of audio -> ${JSON.stringify(transcript.text)} in ${Date.now() - t0} ms${notes ? ` (${notes})` : ''}`)
     if (!text) {
       status(listening ? listeningStatus() : 'idle')
       return
     }
-    if (WAKE_NAME && !new RegExp(character.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(text)) {
+    if (notForHer) {
       status(`heard "${text}" (not for me)`)
       return
     }
-    status(`you: ${text}`)
-    await handleChat(text, { voice: true })
+    const said = hit ? hit.rest : text
+    if (hit && wake.alone(said)) {
+      // "Mika?" and nothing else: a quick "yes?", then she keeps listening for the question.
+      status(`you: ${text}`)
+      await acknowledge()
+      return
+    }
+    status(`you: ${said}`)
+    if (WAKE_GATE) {
+      attendUntil = 0 // spent: the next sentence needs her name again
+      if (attendTimer) clearTimeout(attendTimer)
+    }
+    await handleChat(said || text, { voice: true })
   } catch (err) {
     console.error('[ears]', err)
     status(`my ears failed: ${(err as Error).message}`)
@@ -925,10 +1022,18 @@ async function onUtterance(bytes: Uint8Array, ms: number): Promise<void> {
 }
 
 ipcMain.handle('listen:set', (_event, on: boolean) => setListening(Boolean(on)))
-ipcMain.handle('mic:heard', (_event, wav: Uint8Array | ArrayBuffer, ms: number) => {
+ipcMain.handle('mic:heard', (_event, wav: Uint8Array | ArrayBuffer, ms: number, bargedIn?: boolean) => {
   if (!listening) return
   const bytes = wav instanceof Uint8Array ? new Uint8Array(wav.buffer, wav.byteOffset, wav.byteLength) : new Uint8Array(wav)
-  return onUtterance(bytes, Number(ms) || 0)
+  return onUtterance(bytes, Number(ms) || 0, Boolean(bargedIn))
+})
+// She started or stopped talking. The follow-up window counts from the end of her line, not from its start.
+ipcMain.on('speech:state', (_event, on: boolean) => {
+  herSpeaking = Boolean(on)
+  if (!herSpeaking && followUp) {
+    followUp = false
+    if (WAKE_GATE) attend()
+  }
 })
 
 ipcMain.handle('watch:look', () => observe(true))
@@ -994,9 +1099,12 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[ears] shortcut:', (err as Error).message)
     }
+    console.log(`[ears] wake word ${WAKE_GATE ? `"${character.name}"${WAKE_MODE === 'word' ? ', listening from the start' : ''}` : 'off'}; barge-in ${BARGE_IN ? 'on' : 'off (the mic closes while she talks)'}`)
   }
   createWindow()
   createTray()
+  if (ears && WAKE_MODE === 'word') void setListening(true)
+  if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else win.show()

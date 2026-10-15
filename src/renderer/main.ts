@@ -37,16 +37,27 @@ function showBubble(text: string, ms = 9000): void {
   bubbleTimer = window.setTimeout(() => bubble.classList.add('hidden'), ms)
 }
 
-// ---- ears: the mic feeds whole utterances to the main process; it is deaf while she speaks.
+// ---- ears: the mic feeds whole utterances to the main process. While she talks it either closes (DESKMATE_BARGE_IN=0)
+// or stays open behind a higher bar, so that talking over her for a moment stops her and becomes the next utterance.
+let userTalking = false
 const mic = createMic({
-  onUtterance: (wav, ms) => void api.heard(wav, ms),
-  onLevel: (_rms, speaking) => micBtn.classList.toggle('hot', speaking),
+  onUtterance: (wav, ms, bargedIn) => void api.heard(wav, ms, bargedIn),
+  onLevel: (_rms, speaking) => {
+    userTalking = speaking
+    micBtn.classList.toggle('hot', speaking)
+  },
+  onBargeIn: () => interrupt('they talked over her'),
   onError: (message) => setStatus(`mic: ${message}`)
 })
 
-// ---- speech: lines arrive faster than she can say them; queue instead of dropping.
+// ---- speech: lines arrive faster than she can say them; queue instead of dropping. One pump plays them in order,
+// never starts a line while they are talking, and lets interrupt() cut the current one short.
 const speechQueue: ReplyPayload[] = []
 let speaking = false
+let pumping = false
+let speechGen = 0 // bumped by interrupt(): a line from an older generation is over and keeps its hands off the queue
+let browserUtter: { stop(): void } | null = null
+let micTimer: number | undefined
 
 function enqueue(payload: ReplyPayload): void {
   if (!payload.reply.speak || !payload.reply.say) {
@@ -55,69 +66,125 @@ function enqueue(payload: ReplyPayload): void {
   }
   speechQueue.push(payload)
   if (speechQueue.length > 3) speechQueue.shift()
-  if (!speaking) void next()
+  pump()
 }
 
-async function next(): Promise<void> {
-  const payload = speechQueue.shift()
-  if (!payload) {
-    speaking = false
-    // Her own voice must not come back in as a question; the mic opens again a beat after she stops.
-    window.setTimeout(() => mic.setBlocked(speaking), 350)
-    return
-  }
-  speaking = true
-  mic.setBlocked(true)
-  await perform(payload)
+function pump(): void {
+  if (pumping) return
+  pumping = true
+  void (async () => {
+    try {
+      let waited = 0
+      while (speechQueue.length) {
+        if (userTalking && waited < 2500) {
+          // Their turn: wait for the pause, when the mic ships their utterance anyway. A room that never pauses (a
+          // video, a call) must not keep her quiet for good.
+          await new Promise((r) => window.setTimeout(r, 100))
+          waited += 100
+          continue
+        }
+        waited = 0
+        const payload = speechQueue.shift() as ReplyPayload
+        setSpeaking(true)
+        await perform(payload)
+      }
+    } finally {
+      setSpeaking(false)
+      pumping = false
+    }
+  })()
 }
 
-/** Fallback when there is no audio: browser voice + a fake mouth wobble. */
-function browserVoice(text: string, onDone: () => void): void {
-  if (!('speechSynthesis' in window)) {
-    onDone()
-    return
+/** She is talking, or not: the main process hears about it, and the mic closes or ducks accordingly. */
+function setSpeaking(on: boolean): void {
+  if (speaking === on) return
+  speaking = on
+  // A renderer hot-reloaded in dev may run against an older main process that does not know this message.
+  api.speaking?.(on)
+  window.clearTimeout(micTimer)
+  if (on) {
+    if (config.bargeIn) mic.setDucked(true)
+    else mic.setBlocked(true)
+  } else {
+    // Her own voice must not come back in as a question; the mic hears everything again a beat after she stops.
+    micTimer = window.setTimeout(
+      () => {
+        mic.setDucked(false)
+        mic.setBlocked(false)
+      },
+      config.bargeIn ? 250 : 350
+    )
   }
-  const utter = new SpeechSynthesisUtterance(text)
-  utter.rate = 1.05
-  let wobble: number | undefined
-  utter.onstart = () => {
-    wobble = window.setInterval(() => avatar?.setFakeMouth(0.15 + Math.random() * 0.75), 90)
-  }
-  const stop = (): void => {
-    window.clearInterval(wobble)
-    avatar?.setFakeMouth(0)
-    onDone()
-  }
-  utter.onend = stop
-  utter.onerror = stop
-  speechSynthesis.cancel()
-  speechSynthesis.speak(utter)
+}
+
+/** Stops her mid-sentence: the line, its lip sync and whatever was queued behind it. */
+function interrupt(why: string): void {
+  if (!speaking) return
+  speechGen++
+  speechQueue.length = 0
+  avatar?.interrupt()
+  browserUtter?.stop()
+  console.log(`[speak] interrupted: ${why}`)
+  setStatus(idleStatus())
+}
+
+/** Fallback when there is no audio: browser voice + a fake mouth wobble. Resolves when the line ends or is cut. */
+function browserVoice(text: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) {
+      resolve()
+      return
+    }
+    const utter = new SpeechSynthesisUtterance(text)
+    utter.rate = 1.05
+    let wobble: number | undefined
+    let done = false
+    const stop = (): void => {
+      if (done) return
+      done = true
+      window.clearInterval(wobble)
+      avatar?.setFakeMouth(0)
+      if (browserUtter === handle) browserUtter = null
+      resolve()
+    }
+    const handle = {
+      stop: () => {
+        speechSynthesis.cancel()
+        stop()
+      }
+    }
+    browserUtter = handle
+    utter.onstart = () => {
+      wobble = window.setInterval(() => avatar?.setFakeMouth(0.15 + Math.random() * 0.75), 90)
+    }
+    utter.onend = stop
+    utter.onerror = stop
+    speechSynthesis.cancel()
+    speechSynthesis.speak(utter)
+  })
 }
 
 async function perform(payload: ReplyPayload): Promise<void> {
   const { reply, audio } = payload
+  const gen = speechGen
   showBubble(reply.say)
   avatar?.setExpression(reply.emotion)
   avatar?.kick(1)
   if (reply.action) runAction(reply.action)
 
-  const finish = (): void => {
-    window.setTimeout(() => avatar?.setExpression('neutral'), 2500)
-    setStatus(idleStatus())
-    void next()
-  }
-
+  let ok = false
   if (audio && avatar) {
     const url = URL.createObjectURL(new Blob([audio.bytes as BlobPart], { type: audio.mime }))
     console.log('[speak] start', audio.mime, audio.bytes.byteLength, 'bytes')
-    const ok = await avatar.speak(url, audio.mime)
+    ok = await avatar.speak(url, audio.mime)
     URL.revokeObjectURL(url)
-    console.log('[speak]', ok ? 'finished' : 'rejected')
-    if (ok) finish()
-    else browserVoice(reply.say, finish)
-  } else {
-    browserVoice(reply.say, finish)
+    console.log('[speak]', gen !== speechGen ? 'cut short' : ok ? 'finished' : 'rejected')
   }
+  if (gen !== speechGen) return // interrupted: interrupt() has already tidied up
+  if (!ok) await browserVoice(reply.say)
+  if (gen !== speechGen) return
+  window.setTimeout(() => avatar?.setExpression('neutral'), 2500)
+  setStatus(idleStatus())
 }
 
 function runAction(command: AvatarCommand): void {
@@ -336,6 +403,7 @@ async function main(): Promise<void> {
   wireUi()
   fillCharacterSelect()
   micBtn.classList.toggle('hidden', !config.ears)
+  if (config.wakeWord) micBtn.title = `she answers after "${config.wakeWord}"; click to mute or unmute her ears`
   setStatus(`loading ${config.character.name}…`)
   try {
     avatar = await createAvatar()
@@ -349,7 +417,7 @@ async function main(): Promise<void> {
   watchBtn.classList.toggle('on', config.watching)
   keyForm.classList.toggle('hidden', config.mode !== 'demo')
   if (config.listening) applyListening(true)
-  const extras = [config.ears ? 'mic' : '', config.hands ? `Claude in ${config.project?.name ?? '…'}` : ''].filter(Boolean).join(' · ')
+  const extras = [config.ears ? (config.wakeWord ? `say "${config.wakeWord}"` : 'mic') : '', config.hands ? `Claude in ${config.project?.name ?? '…'}` : ''].filter(Boolean).join(' · ')
   setStatus(
     config.mode === 'demo'
       ? `${config.character.name} is here. She needs a Gemini key to think.`

@@ -74,6 +74,16 @@ const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"
 Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}
 Example when they say "find me a cheap flight to Lisbon next Friday": {"say": "give me a minute, I'm digging through Chrome.", "emotion": "neutral", "speak": true, "remember": [], "action": null, "tool": "browse", "tool_input": "Find a cheap flight to Lisbon next Friday and report the best option with price and times.", "tool_dir": null}`
 
+/** What she says when she hears her name and nothing else (wake word). Short, so they can go straight on. */
+export const ACKNOWLEDGEMENTS: [string, Emotion][] = [
+  ['Yes?', 'happy'],
+  ['Go on.', 'surprised'],
+  ['Yeah?', 'neutral'],
+  ['Here.', 'happy'],
+  ['Listening.', 'neutral'],
+  ["What's up?", 'flirty']
+]
+
 const TOUCH_PROMPTS: Record<Touch['area'], string> = {
   head: 'They just poked you on the head.',
   chest: 'They just poked your chest. React in character: flustered, teasing or scolding, your call. Suggestive at most, never explicit.',
@@ -203,6 +213,12 @@ export class Brain {
       }
       throw new Error(`the planner returned no JSON: ${cleaned.slice(0, 120)}`)
     }
+  }
+
+  /** "Mika?" and nothing else: a one-word "yes?" from the canned set. No model, so it is back before they breathe in. */
+  acknowledge(): Reply {
+    const [say, emotion] = ACKNOWLEDGEMENTS[Math.floor(Math.random() * ACKNOWLEDGEMENTS.length)]
+    return { say, emotion, speak: true, remember: [] }
   }
 
   async respond(stimulus: Stimulus): Promise<Reply> {

@@ -14,11 +14,17 @@ Her brain is still Gemini or your local Ollama model. Claude is the tool she pic
 2. In `.env`: `DESKMATE_TTS=local` (listening is on by default when the local voice is on; `DESKMATE_STT=off` turns it off).
 3. Press **⌘⇧Space** (Ctrl+Shift+Space on Windows/Linux), or click **mic** in her panel, or pick **Listen hands-free** in the tray menu. macOS asks for the microphone the first time.
 
-Then just talk. She listens for a pause, transcribes the sentence on your machine, and answers out loud. While she is speaking the mic is closed, so she never answers herself. The status row shows what she heard (`you: …`), so a mis-hearing is easy to spot.
+Then just talk. She listens for a pause, transcribes the sentence on your machine, and answers out loud. Talk over her and she stops mid-sentence and listens to you instead (barge-in): echo cancellation keeps her own voice out of the mic, and only a voice that stays well above what is left of it for about half a second counts. The status row shows what she heard (`you: …`), so a mis-hearing is easy to spot.
 
-- `DESKMATE_WAKE_NAME=1` makes her ignore anything that does not contain her name, for a noisy room or a call.
 - `DESKMATE_STT_MODEL` picks the Whisper size: `base.en` is lighter, `small.en` (default) hears well, `small` or `medium` for other languages.
+- `DESKMATE_BARGE_IN=0` closes the mic while she talks, as earlier versions did, if your speakers are loud enough for her to trigger herself. The dev log prints one `[mic] while she talked` line per line of hers with her measured echo and the bar it had to clear, so you can see how much room there is.
 - Nothing you say leaves the computer. Whisper runs on the CPU through faster-whisper; a sentence takes about a second on an Apple Silicon Mac.
+
+### Wake word
+
+`DESKMATE_WAKE_MODE=word` makes her a hands-free assistant. Her ears are on from launch, and she answers only when a sentence starts or ends with her name: "Mika, what's on this page", "what do you think, Mika?". Say just "Mika?" and she comes back with a quick "yes?" (a canned line, no model call) and listens for your question for about eight seconds; anything you say while interrupting her is for her too. After an answer the next sentence needs her name again, so a video or a call in the room does not get answered. Whisper's spelling of her name is matched loosely (Mica, Meeka and Mikah all wake Mika; a one-syllable name that is also a word, like Ani, will wake on "any" too). To keep always-on listening cheap, a long sentence that does not start with her name is only transcribed for its first few seconds. The shortcut, the **mic** button and the tray item mute and unmute her ears.
+
+`DESKMATE_WAKE_NAME=1` is the older switch: the same name gate, with listening still started by hand.
 
 ## Hands: jobs for Claude Code
 

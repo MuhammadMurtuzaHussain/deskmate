@@ -33,7 +33,7 @@
 - **Lives on top of everything.** A transparent, always-on-top Live2D character, click-through except on her, with a menu-bar / tray icon to show, hide, and quit. Start at login from the tray.
 - **Sees your screen.** Press *look* and she reacts to what you're doing; turn on *watch* and she glances over every minute and speaks up when something catches her eye. Point her at a project folder and she notices what you edit.
 - **Actually helps.** Ask "what's this error" or "what should I do next" and she reads the screen and answers properly, then goes back to being herself.
-- **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Speech to speech, nothing sent anywhere.
+- **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Or give her a wake word and only say her name; talk over her and she stops and listens. Speech to speech, nothing sent anywhere.
 - **Puts Claude to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how is Claude doing": she hands the job to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the right project folder, follows it, and tells you in her own voice what came back. Spoken jobs are read back and wait for your yes. [docs/AGENT.md](docs/AGENT.md).
 - **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
@@ -111,7 +111,7 @@ Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each
 
 ## Settings reference
 
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake name), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character.
+All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character.
 
 | folder | macOS | Windows | Linux |
 |---|---|---|---|
@@ -139,7 +139,6 @@ Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat te
 
 ## Roadmap
 
-- A wake word instead of the shortcut; barge-in (interrupt her mid-sentence)
 - More for her hands: reminders, calendar, a shell tool with spoken approval
 - Voice cloning via Chatterbox as a local option
 - In-app settings panel (no `.env` editing)
