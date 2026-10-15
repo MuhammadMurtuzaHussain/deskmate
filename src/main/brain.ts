@@ -131,6 +131,15 @@ export class Brain {
   }
 
   async respond(stimulus: Stimulus): Promise<Reply> {
+    if (stimulus.blind) {
+      // No capture and they asked about the screen: never let a model guess; say so in her own words.
+      const lines: [string, Emotion][] = [
+        ["I can't see your screen right now. Give me Screen Recording in System Settings and restart me, then ask again.", 'annoyed'],
+        ["My eyes are switched off: screen capture is blocked. Allow Screen Recording for me, restart, and I'll look.", 'sad']
+      ]
+      const [say, emotion] = lines[Math.floor(Math.random() * lines.length)]
+      return { say, emotion, speak: true, remember: [] }
+    }
     if (this.useOllamaNow()) return this.respondLocal(stimulus)
     if (!this.key) return this.canned(stimulus)
     if (this.cooldownSeconds() > 0) {
@@ -218,6 +227,12 @@ export class Brain {
       return { say: 'My local brain hiccuped. Is Ollama still running?', emotion: 'sad', speak, remember: [] }
     }
     const reply = parseReply(text, stimulus.kind === 'observe' && !stimulus.manual ? 'observe' : 'chat')
+    if (!reply.say || !reply.speak) console.log(`[brain:ollama] quiet reply; raw: ${text.slice(0, 200)}`)
+    if (stimulus.kind === 'chat' && !reply.say) {
+      // A direct message never ends in silence.
+      reply.say = 'Say that again? I lost the thread for a second.'
+      reply.speak = true
+    }
     // Small local models ramble; keep spoken lines to a few sentences unless they were asked for help.
     const helpAsked = stimulus.kind === 'chat' && /\b(help|fix|error|explain|how do|how to|what is|summar|draft|write)\b/i.test(stimulus.text ?? '')
     reply.say = trimSpoken(reply.say, helpAsked ? 8 : 3)

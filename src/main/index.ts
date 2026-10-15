@@ -292,7 +292,24 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
-    if (!source || source.thumbnail.isEmpty()) return undefined
+    if (!source || source.thumbnail.isEmpty()) {
+      // macOS says "granted" but hands back nothing after the app binary changed (dev reinstall, update):
+      // the permission has to be toggled off and on again for this app.
+      console.warn(`[screen] capture came back empty (${sources.length} source(s)); Screen Recording permission is probably stale`)
+      status('My eyes are off: screen capture returned nothing. System Settings → Privacy & Security → Screen Recording → switch Deskmate (or Electron) off and on, then restart me.')
+      return undefined
+    }
+    // A stale Screen Recording grant (after an app update or a dev reinstall) yields a black frame, not an error.
+    const bmp = source.thumbnail.toBitmap()
+    let sum = 0
+    const step = 4 * 97 // sample every 97th pixel
+    for (let i = 0; i < bmp.length; i += step) sum += bmp[i] + bmp[i + 1] + bmp[i + 2]
+    const mean = sum / (3 * Math.ceil(bmp.length / step))
+    if (mean < 2) {
+      console.warn('[screen] capture is black; Screen Recording permission is stale for this build of the app')
+      status('My eyes are off: the screen comes back black. System Settings → Privacy & Security → Screen Recording → switch Deskmate (or Electron) off and on again, then restart me.')
+      return undefined
+    }
     const jpeg = source.thumbnail.toJPEG(60)
     if (process.env.DESKMATE_DEBUG_SAVE_CAPTURE) writeFileSync(process.env.DESKMATE_DEBUG_SAVE_CAPTURE, jpeg)
     return { data: jpeg.toString('base64'), mediaType: 'image/jpeg' }
