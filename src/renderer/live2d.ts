@@ -1,6 +1,6 @@
 import * as PIXI from 'pixi.js'
 import '@pixi/unsafe-eval'
-import { Live2DModel, MotionPriority } from 'pixi-live2d-display-lipsyncpatch/cubism4'
+import { Cubism4ModelSettings, Live2DModel, MotionPriority } from 'pixi-live2d-display-lipsyncpatch/cubism4'
 import type { CharacterConfig, Emotion } from '../shared/types'
 import type { Avatar, Bounds } from './avatar'
 import { resolveAsset } from './assets'
@@ -8,6 +8,13 @@ import { resolveAsset } from './assets'
 // Pixi 7 builds shader code with `new Function`; importing @pixi/unsafe-eval self-installs a CSP-safe path.
 // pixi-live2d-display finds the Pixi ticker through the global.
 ;(window as unknown as { PIXI: typeof PIXI }).PIXI = PIXI
+
+// pixi-live2d-display resolves every file named in a model3.json with Pixi 7's utils.url.resolve, which Pixi deprecated
+// in 7.3 and reports with a stack trace on every model load. Same resolution through the native URL API instead; the
+// settings URL is always absolute here (resolveAsset output or an https URL), so this returns the same strings.
+Cubism4ModelSettings.prototype.resolveURL = function (this: Cubism4ModelSettings, path: string): string {
+  return new URL(path, new URL(this.url, location.href)).href
+}
 
 const TOP = 92 // clearance for the speech bubble
 const BOTTOM = 100 // the panel

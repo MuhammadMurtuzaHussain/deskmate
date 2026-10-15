@@ -30,7 +30,7 @@ export function createMeshAvatar(canvas: HTMLCanvasElement, character: Character
   const root = new THREE.Group()
   scene.add(root)
   const speaker = createSpeaker()
-  const clock = new THREE.Clock()
+  const timer = new THREE.Timer()
   let modelHeight = 1
   let modelCenter = new THREE.Vector3()
   let baseY = 0 // moves her so her centre sits on the origin
@@ -61,8 +61,9 @@ export function createMeshAvatar(canvas: HTMLCanvasElement, character: Character
   function tick(): void {
     if (!running) return
     requestAnimationFrame(tick)
-    const dt = Math.min(0.05, clock.getDelta())
-    const t = clock.elapsedTime
+    timer.update()
+    const dt = Math.min(0.05, timer.getDelta())
+    const t = timer.getElapsed()
     let k = 0
     if (physics.impulse > 0) {
       const s = (performance.now() - physics.impulseAt) / 1000
@@ -107,6 +108,7 @@ export function createMeshAvatar(canvas: HTMLCanvasElement, character: Character
       console.log(`[mesh] height ${modelHeight.toFixed(2)} baseY ${baseY.toFixed(2)}`)
       avatar.layout()
       window.addEventListener('resize', () => avatar.layout())
+      timer.reset() // count from the first frame, as Clock did, not from construction
       tick()
     },
     layout() {

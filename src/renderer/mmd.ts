@@ -65,7 +65,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
   const loader = new MMDLoader()
   const helper = new MMDAnimationHelper({ afterglow: 2.0 })
   const speaker = createSpeaker()
-  const clock = new THREE.Clock()
+  const timer = new THREE.Timer()
 
   let mesh: THREE.SkinnedMesh | null = null
   let modelHeight = 20
@@ -286,8 +286,9 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
   function tick(): void {
     if (!running) return
     requestAnimationFrame(tick)
-    const dt = Math.min(0.05, clock.getDelta())
-    const t = clock.elapsedTime
+    timer.update()
+    const dt = Math.min(0.05, timer.getDelta())
+    const t = timer.getElapsed()
     if (mesh) {
       if (!playingClip) poseFrame(t, dt)
       updateFace(dt)
@@ -322,6 +323,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
         applyOutfit(outfits[0])
       }
       window.addEventListener('resize', () => avatar.layout())
+      timer.reset() // count from the first frame, as Clock did, not from construction
       tick()
     },
 

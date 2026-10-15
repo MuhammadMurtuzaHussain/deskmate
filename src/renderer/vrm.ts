@@ -76,7 +76,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let modelCenter = new THREE.Vector3(0, 0.8, 0)
   let frame = 0
   let running = true
-  const clock = new THREE.Clock()
+  const timer = new THREE.Timer()
   const physics = { sway: character.physics?.sway ?? 1, bounce: character.physics?.bounce ?? 1.5, impulse: 0, impulseAt: 0 }
 
   // expression state (smoothed)
@@ -297,8 +297,9 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   function tick(): void {
     if (!running) return
     requestAnimationFrame(tick)
-    const dt = Math.min(0.05, clock.getDelta())
-    const t = clock.elapsedTime
+    timer.update()
+    const dt = Math.min(0.05, timer.getDelta())
+    const t = timer.getElapsed()
     if (vrm) {
       if (activeAction && mixer) {
         mixer.update(dt)
@@ -319,6 +320,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     async load() {
       await loadModel(character.model)
       window.addEventListener('resize', () => avatar.layout())
+      timer.reset() // count from the first frame, as Clock did, not from construction
       tick()
     },
 
