@@ -1,0 +1,4 @@
+Victoria Rubin — a VRoid Studio sample model by VRoid Project (pixiv Inc.), released under CC0 1.0
+(public domain dedication). The file's own metadata states "CC0 / allowed user: Everyone / commercial: Allow".
+Source: https://github.com/madjin/vrm-samples (vroid/beta/Victoria_Rubin.vrm), mirrored from VRoid Studio's sample set.
+https://creativecommons.org/publicdomain/zero/1.0/

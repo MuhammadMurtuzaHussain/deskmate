@@ -1,0 +1,21 @@
+{
+  "id": "victoria",
+  "name": "Victoria",
+  "renderer": "vrm",
+  "model": "/models/victoria/victoria_rubin.vrm",
+  "license": "Victoria Rubin, VRoid Project sample model, CC0 (see models/victoria/LICENSE.txt)",
+  "note": "3D character. Expressions are VRM presets (happy/angry/sad/relaxed/surprised), so no mapping is needed; the emotion table below is informational. Outfits here recolour her top and shoes; add {\"name\": \"...\", \"model\": \"/models/victoria/other.vrm\"} entries for real costume swaps.",
+  "expressions": { "neutral": "", "happy": "happy", "flirty": "happy+relaxed", "surprised": "surprised", "annoyed": "angry", "angry": "angry", "sad": "sad", "smug": "relaxed", "shy": "happy+sad" },
+  "motions": { "idle": "Idle", "react": "Idle" },
+  "physics": { "sway": 1.0, "bounce": 1.4 },
+  "camera": { "fov": 24, "yOffset": 0 },
+  "idle": { "armsDown": 1.18 },
+  "dance": { "bpm": 124 },
+  "animations": [],
+  "outfits": [
+    { "name": "noir", "tint": { "Tops": "#2b2733", "Shoes": "#1c1a22" } },
+    { "name": "rose", "tint": { "Tops": "#ff8fb8", "Shoes": "#d94f7e" } },
+    { "name": "sky", "tint": { "Tops": "#8fd0ff", "Shoes": "#3f7fc2" } }
+  ],
+  "voice": { "kokoro": "af_bella", "speed": 1.0, "elevenlabs": "cgSgspJ2msm6clMCkdW9", "say": "Samantha" }
+}

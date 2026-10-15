@@ -5,8 +5,8 @@
 <h1 align="center">Deskmate</h1>
 
 <p align="center">
-  <b>A Live2D AI companion that lives on your desktop.</b><br>
-  She watches what you're doing, talks back with a real voice and real expressions, remembers you, and reacts when you poke her.<br>
+  <b>A Live2D or 3D AI companion that lives on your desktop.</b><br>
+  She watches what you're doing, talks back with a real voice and real expressions, dances when you ask, remembers you, and reacts when you poke her.<br>
   Runs <b>100 % local</b> with Ollama + Kokoro, or on Gemini. macOS, Windows, Linux.
 </p>
 
@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-mika-default.png" width="260" alt="Default character Mika reacting to the screen">
+  <img src="docs/screenshot-mika-default.png" width="260" alt="Default Live2D character Mika reacting to the screen">
+  &nbsp;
+  <img src="docs/screenshot-victoria-3d.png" width="260" alt="Victoria, the bundled 3D VRM character, dancing">
   &nbsp;
   <img src="docs/screenshot-jian-flirty.png" width="260" alt="A custom VTube Studio model as the companion">
-  &nbsp;
-  <img src="docs/screenshot-jian-tap.png" width="260" alt="Tap and drag reactions">
 </p>
-<p align="center"><sub>Left: the bundled character. Middle and right: your own VTube Studio model dropped in (see <a href="docs/CHARACTERS.md">Characters</a>).</sub></p>
+<p align="center"><sub>Left: the bundled Live2D character. Middle: the bundled 3D character mid-dance. Right: your own VTube Studio model dropped in (see <a href="docs/CHARACTERS.md">Characters</a>).</sub></p>
 
 ---
 
@@ -36,7 +36,8 @@
 - **Talks.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice. Expressions and body language follow the emotion of every line.
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
-- **Is yours to shape.** Personality is a plain-text file. Models are standard Live2D / VTube Studio folders. Multiple characters, switchable from the panel or the tray, each with her own voice and memory.
+- **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Three built-in choreographies, plus `.vrma` / `.vmd` motion files if you have them. Hair and skirts move with the model's own physics.
+- **Is yours to shape.** Personality is a plain-text file. Models are standard Live2D / VTube Studio folders, VRM avatars (VRoid Studio, VRoid Hub, Booth), MMD models (.pmx) or a plain .obj/.glb. Multiple characters, switchable from the panel or the tray, each with her own voice and memory.
 - **Runs offline.** With Ollama (brain) and Kokoro (voice) nothing leaves your machine, not even the screenshots.
 
 ## Install
@@ -91,12 +92,13 @@ npm run dev
 | what | where | how |
 |---|---|---|
 | Personality | `character/<id>/persona.md` | Plain English. Who she is, how she talks, what she reacts to, how far flirting goes. |
-| Look | `character/<id>/character.json` | Any Live2D Cubism 3/4 model, including VTube Studio models you own. Map her expressions to nine emotions. |
+| Look | `character/<id>/character.json` | Live2D Cubism 3/4 (incl. VTube Studio models), VRM 0.x/1.0, MMD `.pmx`, or a static `.obj`/`.glb`. Map her expressions to nine emotions. |
+| Moves | `character/<id>/character.json` | 3D only: `dance.bpm`, `animations` (`.vrma` for VRM, `.vmd` for MMD), `outfits` (other model files, parts to hide, materials to recolour). |
 | Voice | `character/<id>/character.json` → `voice` | Kokoro preset, ElevenLabs voice id, system voice. |
 | Jiggle | `physics` in `character.json` | `sway` and `bounce` drive the model's own physics rig (hair, tail, chest). |
 | New character | copy `character/mika/` | Put it next to `mika`, or in your user-data folder so updates don't touch it. Switch from the panel dropdown or the tray. |
 
-Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). The bundled character uses Live2D's free sample model; the project ships no third-party models.
+Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Two characters ship: Mika (Live2D's free sample model Haru) and Victoria (VRoid's CC0 sample model Victoria Rubin). Want a specific character from a game or an app? Bring the model yourself: VRoid Hub and Booth are full of VRM avatars, including fan versions of popular AI companions and VTubers; MMD models (.pmx) load as they are. Check each model's licence; most fan and commissioned models are for personal use only, which is why this repository ships none.
 
 ## Settings reference
 
@@ -113,8 +115,9 @@ Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, e
    │  desktopCapturer every N s, chokidar on your project folder
    │  Kokoro / ElevenLabs / say ──► audio
    ▼ IPC
-Renderer: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
-          emotion → expression · audio volume → mouth · sway/bounce → physics rig
+Renderer: Live2D: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
+          3D: three.js + three-vrm (VRM) · vendored MMDLoader + Ammo physics (MMD) · OBJ/GLTF (static)
+          emotion → expression / morphs · audio volume → mouth · sway, bounce, choreography → bones + physics
 ```
 
 The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, the line goes to TTS, and the audio drives the mouth. Memory is a small JSON store with importance-weighted forgetting. The whole thing started as a reverse-engineering exercise of a commercial companion app; the write-up is in [docs/REVERSE-ENGINEERING.md](docs/REVERSE-ENGINEERING.md).
@@ -132,6 +135,6 @@ Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat te
 
 ## Credits
 
-[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own license; the sample model Haru is under the Live2D Free Material License) · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [Ollama](https://ollama.com) · PixiJS · Electron.
+[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own license; the sample model Haru is under the Live2D Free Material License) · [three.js](https://threejs.org) and [three-vrm](https://github.com/pixiv/three-vrm) by pixiv · MMD loading vendored from three.js r170 (MIT) with [Ammo.js](https://github.com/kripken/ammo.js) physics · [Victoria Rubin](https://github.com/madjin/vrm-samples) sample model by VRoid Project, CC0 · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [Ollama](https://ollama.com) · PixiJS · Electron.
 
 MIT © 2026 Muhammad Murtuza Hussain

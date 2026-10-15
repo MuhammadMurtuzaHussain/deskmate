@@ -2,7 +2,7 @@ import type { Memory } from './memory'
 import type { Settings } from './settings'
 import { geminiGenerate, geminiCheckKey, GeminiBlockedError, GeminiQuotaError, type GeminiContent } from './gemini'
 import { ollamaChat, ollamaModels, type OllamaMessage } from './ollama'
-import { EMOTIONS, type BrainMode, type Emotion, type Reply, type Touch } from '../shared/types'
+import { AVATAR_COMMANDS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type Touch } from '../shared/types'
 
 export interface Stimulus {
   kind: 'chat' | 'observe' | 'touch'
@@ -22,12 +22,13 @@ const DEFAULT_OLLAMA_MODEL = 'qwen3-vl:4b-instruct'
 
 const OUTPUT_CONTRACT = `
 Reply with ONE JSON object and nothing else, no code fences:
-{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}]}
+{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null}
 
 - "say": what you say out loud. Empty string if "speak" is false.
 - "emotion": the face you make. "flirty" when you are teasing or being sweet on them, "smug" when you are right, "shy" when they get to you.
 - "speak": for an observation, true only if you genuinely have something to say. For a direct message or a touch, always true.
 - "remember": zero to three things worth keeping about the user, their project, or your relationship. importance: 1 small talk, 3 useful detail, 5 defining fact. Usually an empty array.
+- "action": null almost always. "dance" for an upbeat dance when they ask you to dance or you feel like it; "dance_slow" when they ask for something slow, sensual or seductive, or the mood is like that; "spin" for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. If you are told you cannot move (a 2D character), leave it null.
 `.trim()
 
 const TOUCH_PROMPTS: Record<Touch['area'], string> = {
@@ -288,7 +289,8 @@ function parseReply(text: string, kind: Stimulus['kind']): Reply {
           .filter((r) => r && typeof r.text === 'string')
           .map((r) => ({ text: r.text, importance: Math.min(5, Math.max(1, Number(r.importance) || 3)) }))
       : []
-    return { say: String(obj.say ?? ''), emotion, speak: kind === 'observe' ? Boolean(obj.speak) : true, remember }
+    const action = (AVATAR_COMMANDS as string[]).includes(String(obj.action ?? '')) ? (obj.action as AvatarCommand) : undefined
+    return { say: String(obj.say ?? ''), emotion, speak: kind === 'observe' ? Boolean(obj.speak) : true, remember, action }
   } catch {
     // The model answered in prose; treat the whole thing as speech.
     return { say: cleaned, emotion: 'neutral', speak: true, remember: [] }

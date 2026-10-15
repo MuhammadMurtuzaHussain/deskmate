@@ -41,6 +41,40 @@ The tray menu has "Open characters folder" and "Open settings folder" shortcuts.
 - **physics**: `sway` is the idle body movement that keeps hair, tail and chest rigs alive; `bounce` is the impulse on taps, drags and replies. Jiggle is a property of the model's `physics3.json`; the app only drives it.
 - **voice**: which preset each voice provider uses for her.
 
+## 3D characters (VRM, MMD, static meshes)
+
+Set `"renderer"` in `character.json`:
+
+| renderer | file | expressions | dance | outfits | notes |
+|---|---|---|---|---|---|
+| `vrm` | `.vrm` (0.x or 1.0) | built-in presets, no mapping needed | built-in choreographies + `.vrma` clips | `tint`, `hide`/`show`, or other `.vrm` files | VRoid Studio exports, VRoid Hub, Booth. Spring bones move hair and skirts. |
+| `mmd` | `.pmx` | morphs, mapped via `morphs` (defaults cover 笑い / まばたき / あ … and ARKit names like `mouthSmileLeft`) | built-in choreographies + `.vmd` motions | material `hide`/`show` lists | Rigid-body physics (hair, skirt, chest) runs through Ammo when `physics.simulate` is not false. |
+| `mesh` | `.obj` + `.mtl`, `.glb` | none | whole-body bob and spin | no | For models without a rig: she still talks (bubble + voice) and moves as a whole. |
+
+Example (the bundled Victoria):
+
+```json
+{
+  "id": "victoria", "name": "Victoria", "renderer": "vrm",
+  "model": "/models/victoria/victoria_rubin.vrm",
+  "dance": { "bpm": 124 },
+  "animations": [{ "name": "wave", "file": "/models/victoria/wave.vrma" }],
+  "outfits": [
+    { "name": "noir", "tint": { "Tops": "#2b2733", "Shoes": "#1c1a22" } },
+    { "name": "beach", "model": "/models/victoria/victoria_beach.vrm" }
+  ],
+  "camera": { "fov": 24, "yOffset": 0 }, "idle": { "armsDown": 1.18 },
+  "voice": { "kokoro": "af_bella" }
+}
+```
+
+- **Dancing** is triggered by asking her (the brain returns an `action`), by `/dance`, `/slow`, `/spin`, `/stop` in the chat box, or from the tray. Styles: `groove` (upbeat), `slow` (hip sway, body rolls), `spin`. When `animations` are listed, each dance request plays the next clip instead. Where to get motion files: for VRM, `.vrma` packs on Booth (the VRoid Project publishes a free set) or convert Mixamo FBX with a fbx-to-vrma converter; for MMD, `.vmd` dance motions from their creators' pages (read their terms; most forbid redistribution).
+- **Outfits**: `model` swaps the whole file; `hide`/`show` toggle meshes (VRM) or materials (MMD) by name fragment; `tint` recolours materials whose name contains the key (works on light textures). Ask her to change, type `/outfit`, or use the tray.
+- **Morphs (MMD)**: `"morphs": { "happy": "笑い+mouthSmileLeft+mouthSmileRight", "mouth": "あ", "blink": "まばたき" }`; join several with `+`.
+- **Framing**: `camera.fov` and `camera.yOffset` (fraction of body height) if she sits too high or low; `idle.armsDown` if her arms hang wrong (VRM rigs start in a T-pose, MMD rigs in an A-pose).
+
+The bundled 3D character, Victoria Rubin, is a VRoid Project sample model under CC0 (see `src/renderer/public/models/victoria/LICENSE.txt`).
+
 ## VTube Studio models
 
 Most purchased or commissioned VTuber models arrive as a VTube Studio folder (`*.vtube.json`, `*.model3.json` with no expressions listed, `*.exp3.json` files next to it, and an 8192 px texture folder). To use one:

@@ -7,7 +7,7 @@ import { Memory } from './memory'
 import { Settings } from './settings'
 import { autostartLocalTts, synthesize } from './tts'
 import { ProjectWatcher } from './watcher'
-import type { AppConfig, CharacterConfig, Reply, ReplyPayload, Touch } from '../shared/types'
+import type { AppConfig, AvatarCommand, CharacterConfig, Reply, ReplyPayload, Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -57,6 +57,7 @@ const brain = new Brain(memory, persona, settings)
 function switchCharacter(id: string): void {
   if (!characters.some((c) => c.id === id)) return
   activeId = id
+  trayDancing = false
   ;({ character, persona } = readCharacter(id))
   memory = new Memory(join(app.getPath('userData'), `memory-${id}.json`))
   brain.setCharacter(memory, persona)
@@ -90,14 +91,35 @@ function toggleWindow(): void {
   refreshTray()
 }
 
+let trayDancing = false
+function sendCommand(command: AvatarCommand): void {
+  if (command === 'dance' || command === 'dance_slow' || command === 'spin') trayDancing = true
+  if (command === 'stop_dancing') trayDancing = false
+  win?.webContents.send('avatar:command', command)
+  refreshTray()
+}
+
 function buildTrayMenu(): Menu {
   const loginItem = app.getLoginItemSettings().openAtLogin
+  const threeD = character.renderer === 'vrm' || character.renderer === 'mmd'
   return Menu.buildFromTemplate([
     { label: `${character.name} · ${brain.modelName}`, enabled: false },
     { type: 'separator' },
     { label: win?.isVisible() ? 'Hide her' : 'Show her', click: toggleWindow },
     { label: 'Look at my screen now', click: () => void observe(true) },
     { label: watching ? 'Stop watching' : 'Watch my screen', type: 'checkbox', checked: watching, click: () => void setWatching(!watching) },
+    ...(threeD
+      ? [
+          ...(trayDancing
+            ? [{ label: 'Stop dancing', click: () => sendCommand('stop_dancing') }]
+            : [
+                { label: 'Dance', click: () => sendCommand('dance') },
+                { label: 'Dance slow', click: () => sendCommand('dance_slow') },
+                { label: 'Spin', click: () => sendCommand('spin') }
+              ]),
+          ...(character.outfits?.length ? [{ label: 'Next outfit', click: () => sendCommand('next_outfit') }] : [])
+        ]
+      : []),
     {
       label: 'Character',
       submenu: characters.map((c) => ({
@@ -203,6 +225,12 @@ function createWindow(): void {
   const shot = process.env.DESKMATE_DEBUG_SHOT
   const debugSay = process.env.DESKMATE_DEBUG_SAY
   const debugTouch = process.env.DESKMATE_DEBUG_TOUCH as Touch['area'] | undefined
+  const debugCommand = process.env.DESKMATE_DEBUG_COMMAND as AvatarCommand | undefined
+  if (debugCommand) {
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(() => sendCommand(debugCommand), 12000)
+    })
+  }
   if (process.env.DESKMATE_DEBUG_LOOK) {
     win.webContents.once('did-finish-load', () => {
       setTimeout(() => void observe(true), 10000)
@@ -233,7 +261,7 @@ function createWindow(): void {
         } catch (err) {
           console.error('[debug] capture failed', err)
         }
-      }, debugSay || debugTouch || process.env.DESKMATE_DEBUG_LOOK ? 16000 : 8000)
+      }, debugSay || debugTouch || debugCommand || process.env.DESKMATE_DEBUG_LOOK ? 16000 : 8000)
     })
   }
 }

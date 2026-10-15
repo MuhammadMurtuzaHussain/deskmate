@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DeskmateApi, ReplyPayload } from '../shared/types'
+import type { AvatarCommand, DeskmateApi, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -16,6 +16,9 @@ const api: DeskmateApi = {
   },
   onStatus: (cb) => {
     ipcRenderer.on('status', (_event, text: string) => cb(text))
+  },
+  onCommand: (cb) => {
+    ipcRenderer.on('avatar:command', (_event, command: AvatarCommand) => cb(command))
   }
 }
 

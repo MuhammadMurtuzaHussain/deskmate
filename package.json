@@ -1,8 +1,8 @@
 {
   "name": "deskmate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "A Live2D AI desk companion that lives on your screen: watches what you do, talks back with a voice and expressions, remembers you. Runs fully local with Ollama + Kokoro, or on Gemini.",
+  "description": "A Live2D or 3D (VRM / MMD) AI desk companion that lives on your screen: watches what you do, talks back with a voice and expressions, dances when you ask, remembers you. Runs fully local with Ollama + Kokoro, or on Gemini.",
   "main": "./out/main/index.js",
   "scripts": {
     "ensure-electron": "node scripts/ensure-electron.cjs",
@@ -18,12 +18,16 @@
   },
   "dependencies": {
     "@pixi/unsafe-eval": "^7.4.3",
+    "@pixiv/three-vrm": "^3.5.5",
+    "@pixiv/three-vrm-animation": "^3.5.5",
     "chokidar": "^5.0.0",
     "pixi-live2d-display-lipsyncpatch": "^0.5.0-ls-8",
-    "pixi.js": "^7.4.2"
+    "pixi.js": "^7.4.2",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/three": "^0.186.0",
     "electron": "^44.7.2",
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",
@@ -44,23 +48,28 @@
     "url": "https://github.com/MuhammadMurtuzaHussain/deskmate/issues"
   },
   "keywords": [
-    "live2d",
+    "3d-avatar",
     "ai-companion",
+    "anime",
+    "desktop-companion",
     "desktop-pet",
-    "vtuber",
     "electron",
-    "ollama",
     "gemini",
     "kokoro",
-    "text-to-speech",
+    "linux",
+    "live2d",
     "local-llm",
-    "anime",
-    "waifu",
-    "desktop-companion",
-    "screen-aware",
     "macos",
-    "windows",
-    "linux"
+    "mmd",
+    "ollama",
+    "screen-aware",
+    "text-to-speech",
+    "three-js",
+    "vrm",
+    "vroid",
+    "vtuber",
+    "waifu",
+    "windows"
   ],
   "build": {
     "appId": "com.murtuza.deskmate",
@@ -75,7 +84,10 @@
       "out/**",
       "package.json",
       "!out/renderer/models/jian/**",
-      "!out/renderer/models/nicole/**"
+      "!out/renderer/models/nicole/**",
+      "!out/renderer/models/ani/**",
+      "!out/renderer/models/kim/**",
+      "!out/renderer/models/victoria/test.vrma"
     ],
     "extraResources": [
       {

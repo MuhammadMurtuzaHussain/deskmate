@@ -29,6 +29,8 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 button { padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); cursor: pointer; }
 button:hover { background: rgba(255,255,255,0.16); }
 button.on { background: var(--accent); color: #1a1030; border-color: transparent; }
+button.hidden, select.hidden { display: none; }
+#chat button { padding: 7px 8px; }
 
 #keyform { display: flex; gap: 6px; margin-bottom: 6px; }
 #keyform.hidden { display: none; }

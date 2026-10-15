@@ -19,3 +19,8 @@ src/renderer/public/models/nicole/
 # local voice runtime
 tts-local/.venv/
 tts-local/__pycache__/
+src/renderer/public/models/ani/
+character/ani/
+src/renderer/public/models/victoria/test.vrma
+src/renderer/public/models/kim/
+character/kim/
