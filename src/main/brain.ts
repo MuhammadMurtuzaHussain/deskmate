@@ -12,6 +12,8 @@ export interface Stimulus {
   touch?: Touch
   /** observe only: true when the user pressed "look" themselves (she must answer), false for the periodic watch */
   manual?: boolean
+  /** chat only: they asked about the screen but no capture was possible */
+  blind?: boolean
 }
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
@@ -28,8 +30,25 @@ Reply with ONE JSON object and nothing else, no code fences:
 - "emotion": the face you make. "flirty" when you are teasing or being sweet on them, "smug" when you are right, "shy" when they get to you.
 - "speak": for an observation, true only if you genuinely have something to say. For a direct message or a touch, always true.
 - "remember": zero to three things worth keeping about the user, their project, or your relationship. importance: 1 small talk, 3 useful detail, 5 defining fact. Usually an empty array.
-- "action": null almost always. "dance" for an upbeat dance when they ask you to dance or you feel like it; "dance_slow" when they ask for something slow, sensual or seductive, or the mood is like that; "spin" for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. If you are told you cannot move (a 2D character), leave it null.
+- Say only what you can actually see or were told. Never invent names, people, messages, files or events. If you are not sure what is on the screen, say what it looks like or ask; do not guess specifics.
+- Never repeat a phrase. One thought per line.
+- "action": null unless they explicitly ask you to move. "dance" when they ask for a dance; "dance_slow" when they ask for something slow, sensual or seductive; "spin" when they ask for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. Never dance just because they are tired, bored or asked a question.
 `.trim()
+
+/** Ollama structured-output schema for the reply (mirrors OUTPUT_CONTRACT). */
+const REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    say: { type: 'string' },
+    emotion: { type: 'string', enum: [...EMOTIONS] },
+    speak: { type: 'boolean' },
+    remember: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, importance: { type: 'integer' } }, required: ['text', 'importance'] } },
+    action: { type: ['string', 'null'], enum: [...AVATAR_COMMANDS, null] }
+  },
+  required: ['say', 'emotion', 'speak', 'remember', 'action']
+}
+
+const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null}`
 
 const TOUCH_PROMPTS: Record<Touch['area'], string> = {
   head: 'They just poked you on the head.',
@@ -173,15 +192,19 @@ export class Brain {
       ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}`
       : 'You do not know this person yet.'
     const messages: OllamaMessage[] = [
-      { role: 'system', content: `${this.persona}\n\n${OUTPUT_CONTRACT}\n\n${memoryBlock}` },
-      ...this.memory.recentTurns(10).map((t): OllamaMessage => ({ role: t.role, content: t.text }))
+      // Persona first, memory next, the output contract last so a small model has it freshest; one example anchors the shape.
+      { role: 'system', content: `${this.persona}\n\n${memoryBlock}\n\n${OUTPUT_CONTRACT}\n\n${LOCAL_EXAMPLE}` },
+      // Fewer turns for local models: their own earlier lines are the fastest way to a loop.
+      ...this.memory.recentTurns(6).map((t): OllamaMessage => ({ role: t.role, content: t.text }))
     ]
     const current: OllamaMessage = { role: 'user', content: this.promptText(stimulus) }
     if (stimulus.screenshot) current.images = [stimulus.screenshot.data]
     messages.push(current)
     let text: string
+    const started = Date.now()
     try {
-      text = await ollamaChat({ model: this.ollamaModel, messages })
+      text = await ollamaChat({ model: this.ollamaModel, messages, schema: REPLY_SCHEMA })
+      console.log(`[brain:ollama] ${this.ollamaModel} answered in ${Date.now() - started} ms`)
     } catch (err) {
       console.error('[brain:ollama]', err)
       const speak = stimulus.kind !== 'observe'
@@ -195,6 +218,9 @@ export class Brain {
       return { say: 'My local brain hiccuped. Is Ollama still running?', emotion: 'sad', speak, remember: [] }
     }
     const reply = parseReply(text, stimulus.kind === 'observe' && !stimulus.manual ? 'observe' : 'chat')
+    // Small local models ramble; keep spoken lines to a few sentences unless they were asked for help.
+    const helpAsked = stimulus.kind === 'chat' && /\b(help|fix|error|explain|how do|how to|what is|summar|draft|write)\b/i.test(stimulus.text ?? '')
+    reply.say = trimSpoken(reply.say, helpAsked ? 8 : 3)
     if (stimulus.kind === 'chat') this.memory.addTurn('user', stimulus.text ?? '')
     if (reply.speak && reply.say) this.memory.addTurn('assistant', reply.say)
     if (reply.remember.length) this.memory.remember(reply.remember)
@@ -203,9 +229,13 @@ export class Brain {
 
   private promptText(stimulus: Stimulus): string {
     if (stimulus.kind === 'chat') {
-      return stimulus.screenshot
-        ? `${stimulus.text ?? ''}\n\n[A screenshot of their screen is attached for context. Use it if the message is about what is on screen; otherwise answer the message and don't describe the screen.]`
-        : (stimulus.text ?? '')
+      if (stimulus.screenshot) {
+        return `${stimulus.text ?? ''}\n\n[A screenshot of their screen is attached for context. Use it if the message is about what is on screen; otherwise answer the message and don't describe the screen.]`
+      }
+      if (stimulus.blind) {
+        return `${stimulus.text ?? ''}\n\n[You cannot see their screen right now: screen capture is not permitted on this computer. Say that plainly in your own voice and ask them to allow Screen Recording for the app; do not guess what is on the screen.]`
+      }
+      return stimulus.text ?? ''
     }
     if (stimulus.kind === 'touch') {
       const t = stimulus.touch ?? { kind: 'tap', area: 'body' }
@@ -279,10 +309,40 @@ export class Brain {
   }
 }
 
+/** Keeps at most `maxSentences` sentences and drops a dangling fragment at the end. */
+function trimSpoken(say: string, maxSentences: number): string {
+  const parts = say.match(/[^.!?…]+[.!?…]+["')\]]*\s*|[^.!?…]+$/g) ?? [say]
+  const complete = parts.filter((p) => /[.!?…]["')\]]*\s*$/.test(p))
+  const kept = (complete.length ? complete : parts).slice(0, maxSentences)
+  return kept.join('').trim()
+}
+
+/** Pulls a string field out of JSON that a small model cut off mid-way, so a truncated reply is still usable. */
+function salvageField(text: string, field: string): string | undefined {
+  const m = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(text)
+  if (!m) return undefined
+  try {
+    return JSON.parse(`"${m[1]}"`)
+  } catch {
+    return m[1]
+  }
+}
+
 function parseReply(text: string, kind: Stimulus['kind']): Reply {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   try {
-    const obj = JSON.parse(cleaned) as Partial<Reply>
+    let obj: Partial<Reply>
+    try {
+      obj = JSON.parse(cleaned) as Partial<Reply>
+    } catch {
+      // Truncated or slightly malformed JSON: keep what we can rather than reading the braces out loud.
+      const say = salvageField(cleaned, 'say')
+      if (say === undefined) throw new Error('unparseable')
+      const emotion = salvageField(cleaned, 'emotion')
+      const action = salvageField(cleaned, 'action')
+      obj = { say: say.replace(/[,.;:\s]+$/, '').trim(), emotion: emotion as Emotion | undefined, speak: true, remember: [], action: action as AvatarCommand | undefined }
+      console.warn('[brain] salvaged a truncated reply')
+    }
     const emotion = (EMOTIONS as string[]).includes(obj.emotion ?? '') ? (obj.emotion as Emotion) : 'neutral'
     const remember = Array.isArray(obj.remember)
       ? obj.remember

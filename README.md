@@ -36,7 +36,7 @@
 - **Talks.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice. Expressions and body language follow the emotion of every line.
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
-- **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Three built-in choreographies, plus `.vrma` / `.vmd` motion files if you have them. Hair and skirts move with the model's own physics.
+- **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Built-in choreographies (upbeat groove, slow and sensual, a twirl) with smooth blends, and real motion capture when you drop clips in: Mixamo `.fbx` dances retarget straight onto any VRM character, `.vrma` plays as is, `.vmd` for MMD. Hair and skirts move with the model's own physics.
 - **Is yours to shape.** Personality is a plain-text file. Models are standard Live2D / VTube Studio folders, VRM avatars (VRoid Studio, VRoid Hub, Booth), MMD models (.pmx) or a plain .obj/.glb. Multiple characters, switchable from the panel or the tray, each with her own voice and memory.
 - **Runs offline.** With Ollama (brain) and Kokoro (voice) nothing leaves your machine, not even the screenshots.
 
@@ -93,12 +93,13 @@ npm run dev
 |---|---|---|
 | Personality | `character/<id>/persona.md` | Plain English. Who she is, how she talks, what she reacts to, how far flirting goes. |
 | Look | `character/<id>/character.json` | Live2D Cubism 3/4 (incl. VTube Studio models), VRM 0.x/1.0, MMD `.pmx`, or a static `.obj`/`.glb`. Map her expressions to nine emotions. |
-| Moves | `character/<id>/character.json` | 3D only: `dance.bpm`, `animations` (`.vrma` for VRM, `.vmd` for MMD), `outfits` (other model files, parts to hide, materials to recolour). |
+| Moves | `character/<id>/character.json` | 3D only: `dance.bpm`, `animations` (Mixamo `.fbx` or `.vrma` for VRM, `.vmd` for MMD), `outfits` (other model files, parts to hide, materials to recolour). |
+| Private tweaks | `character/<id>/local.json` | Gitignored overlay for your own clips, voice or model path, merged over `character.json`. |
 | Voice | `character/<id>/character.json` → `voice` | Kokoro preset, ElevenLabs voice id, system voice. |
 | Jiggle | `physics` in `character.json` | `sway` and `bounce` drive the model's own physics rig (hair, tail, chest). |
 | New character | copy `character/mika/` | Put it next to `mika`, or in your user-data folder so updates don't touch it. Switch from the panel dropdown or the tray. |
 
-Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Two characters ship: Mika (Live2D's free sample model Haru) and Victoria (VRoid's CC0 sample model Victoria Rubin). Want a specific character from a game or an app? Bring the model yourself: VRoid Hub and Booth are full of VRM avatars, including fan versions of popular AI companions and VTubers; MMD models (.pmx) load as they are. Check each model's licence; most fan and commissioned models are for personal use only, which is why this repository ships none.
+Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each with her own personality: Mika (Live2D, the free sample model Haru) and four 3D girls from VRoid's CC0 sample set, Victoria, Vita, Vivi and Shino, fetched on first use so the download stays small. Want a specific character from a game or an app? Bring the model yourself: VRoid Hub and Booth are full of VRM avatars, including fan versions of popular AI companions and VTubers; MMD models (.pmx) load as they are. Check each model's licence; most fan and commissioned models are for personal use only, which is why this repository ships none.
 
 ## Settings reference
 

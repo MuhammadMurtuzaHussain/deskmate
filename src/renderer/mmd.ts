@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { MMDLoader } from './vendor/mmd/MMDLoader.js'
 import { MMDAnimationHelper } from './vendor/mmd/MMDAnimationHelper.js'
 import type { CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
-import { dancePose } from './dance'
+import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
 import { resolveAsset } from './assets'
 import type { Avatar, Bounds } from './avatar'
 import { createSpeaker } from './audio'
@@ -87,6 +87,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let dancing = false
   let danceStyle: DanceStyle = 'groove'
   let danceT = 0
+  let danceWeight = 0
   let clips: THREE.AnimationClip[] = []
   let clipIndex = -1
   let playingClip = false
@@ -214,46 +215,39 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
     b.quaternion.copy(r).multiply(quat.setFromEuler(euler))
   }
 
-  function poseIdle(t: number, dt: number): void {
+  /** Applies a neutral Pose to the MMD skeleton (rest pose is an A-pose; armsDown is how far below it the arms hang). */
+  function applyPose(p: Pose): void {
+    const armsDown = character.idle?.armsDown ?? 0.55
+    const c = bones.center
+    if (c) c.position.y = centerRestY + p.hipsY * modelHeight
+    setBone('lower', p.hips.x, p.hips.y, p.hips.z)
+    setBone('upper', p.spine.x, p.spine.y, p.spine.z)
+    setBone('upper2', p.chest.x, p.chest.y, p.chest.z)
+    setBone('neck', p.neck.x, p.neck.y, p.neck.z)
+    setBone('head', p.head.x, p.head.y, p.head.z)
+    setBone('armL', p.armL.swing, p.armL.out, -(armsDown - p.armL.raise))
+    setBone('armR', p.armR.swing, -p.armR.out, armsDown - p.armR.raise)
+    setBone('elbowL', 0, -p.elbowL, -0.15)
+    setBone('elbowR', 0, p.elbowR, 0.15)
+    if (mesh) mesh.rotation.y = p.turn
+  }
+
+  function poseFrame(t: number, dt: number): void {
     let k = 0
     if (physics.impulse > 0) {
       const s = (performance.now() - physics.impulseAt) / 1000
       k = physics.impulse * Math.exp(-s * 2.4) * Math.sin(s * Math.PI * 2 * 2.2)
       if (s > 3) physics.impulse = 0
     }
-    const sw = physics.sway
-    const armsDown = character.idle?.armsDown ?? 0.55 // MMD rest pose is already an A-pose
-    const c = bones.center
-    if (dancing) {
-      danceT += dt
-      const p = dancePose(danceStyle, danceT, character.dance?.bpm ?? (danceStyle === 'slow' ? 72 : 124))
-      if (c) c.position.y = centerRestY + p.hipsY * modelHeight
-      setBone('lower', p.hips.x, p.hips.y, p.hips.z)
-      setBone('upper', p.spine.x, p.spine.y, p.spine.z)
-      setBone('upper2', p.chest.x, p.chest.y, p.chest.z)
-      setBone('neck', p.neck.x, p.neck.y, p.neck.z)
-      setBone('head', p.head.x, p.head.y, p.head.z)
-      // MMD arms rest in an A-pose; armsDown is how far below that they hang, "raise" brings them up.
-      setBone('armL', p.armL.swing, p.armL.out, -(armsDown - p.armL.raise))
-      setBone('armR', p.armR.swing, -p.armR.out, armsDown - p.armR.raise)
-      setBone('elbowL', 0, -p.elbowL, -0.15)
-      setBone('elbowR', 0, p.elbowR, 0.15)
-      if (mesh) mesh.rotation.y = p.turn
+    danceWeight += ((dancing ? 1 : 0) - danceWeight) * Math.min(1, dt * 3)
+    if (danceWeight < 0.002) danceWeight = 0
+    const idle = idlePose(t, physics.sway, k)
+    if (danceWeight === 0) {
+      applyPose(idle)
       return
     }
-
-    const breath = Math.sin(t * 1.4) * 0.5 + 0.5
-    if (mesh) mesh.rotation.y = 0
-    if (c) c.position.y = centerRestY
-    setBone('lower', 0, 0.03 * sw * Math.sin(t * 0.5), 0.02 * sw * Math.sin(t * 0.7) + 0.06 * k)
-    setBone('upper', 0.01 * breath + 0.05 * k, 0.02 * sw * Math.sin(t * 0.6 + 1), -0.02 * sw * Math.sin(t * 0.7) - 0.05 * k)
-    setBone('upper2', 0.02 * breath + 0.03 * k, 0, 0)
-    setBone('neck', 0.02 * Math.sin(t * 0.9) + 0.05 * k, 0.05 * sw * Math.sin(t * 0.4 + 2), 0.02 * sw * Math.sin(t * 0.8))
-    setBone('head', 0.03 * Math.sin(t * 1.1 + 1), 0, 0.03 * sw * Math.sin(t * 0.9 + 1) + 0.04 * k)
-    setBone('armL', 0.04 * Math.sin(t * 0.8), 0, -(armsDown + 0.03 * Math.sin(t * 0.8)))
-    setBone('armR', 0.04 * Math.sin(t * 0.8 + 1), 0, armsDown + 0.03 * Math.sin(t * 0.8 + 1))
-    setBone('elbowL', 0, -0.2 - 0.05 * breath, -0.05)
-    setBone('elbowR', 0, 0.2 + 0.05 * breath, 0.05)
+    danceT += dt
+    applyPose(blendPose(idle, dancePose(danceStyle, danceT, character.dance?.bpm ?? defaultBpm(danceStyle)), danceWeight))
   }
 
   function updateFace(dt: number): void {
@@ -295,7 +289,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
     const dt = Math.min(0.05, clock.getDelta())
     const t = clock.elapsedTime
     if (mesh) {
-      if (!playingClip) poseIdle(t, dt)
+      if (!playingClip) poseFrame(t, dt)
       updateFace(dt)
       // The helper runs IK, grants and physics on top of whatever posed the bones.
       if (playingClip || simulate) helper.update(dt)
@@ -401,7 +395,7 @@ export function createMMDAvatar(canvas: HTMLCanvasElement, character: CharacterC
       dancing = on
       danceStyle = style
       if (on) {
-        danceT = 0
+        if (danceWeight === 0) danceT = 0
         if (mesh && clips.length) {
           clipIndex = (clipIndex + 1) % clips.length
           helper.remove(mesh)

@@ -1,26 +1,24 @@
-node_modules/
-out/
-dist/
-release/
 
+# local voice runtime
+# private characters and models (bring your own; see docs/CHARACTERS.md)
 # secrets and local config
 .env
-.env.local
-.env.hidden
 .env.bak*
-
-# private characters and models (bring your own; see docs/CHARACTERS.md)
+.env.hidden
+.env.local
+character/*/local.json
+character/ani/
 character/jian/
 character/nicole/
 character/persona.*.md
+dist/
+node_modules/
+out/
+release/
+src/renderer/public/models/*/dances/
+src/renderer/public/models/ani/
 src/renderer/public/models/jian/
 src/renderer/public/models/nicole/
-
-# local voice runtime
+src/renderer/public/models/victoria/test.vrma
 tts-local/.venv/
 tts-local/__pycache__/
-src/renderer/public/models/ani/
-character/ani/
-src/renderer/public/models/victoria/test.vrma
-src/renderer/public/models/kim/
-character/kim/

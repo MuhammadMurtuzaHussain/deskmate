@@ -1,0 +1,20 @@
+{
+  "id": "vivi",
+  "name": "Vivi",
+  "renderer": "vrm",
+  "model": "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/beta/Vivi.vrm",
+  "license": "Vivi, VRoid Project sample model, CC0 (downloaded on first use from github.com/madjin/vrm-samples; the file's metadata states CC0)",
+  "expressions": { "neutral": "", "happy": "happy", "flirty": "happy+relaxed", "surprised": "surprised", "annoyed": "angry", "angry": "angry", "sad": "sad", "smug": "relaxed", "shy": "happy+sad" },
+  "motions": { "idle": "Idle", "react": "Idle" },
+  "physics": { "sway": 1.0, "bounce": 1.4 },
+  "camera": { "fov": 24, "yOffset": 0 },
+  "idle": { "armsDown": 1.18 },
+  "dance": { "bpm": 128 },
+  "animations": [],
+  "outfits": [
+    { "name": "noir", "tint": { "Tops": "#2b2733", "Bottoms": "#1c1a22", "Shoes": "#1c1a22" } },
+    { "name": "rose", "tint": { "Tops": "#ff8fb8", "Bottoms": "#d94f7e", "Shoes": "#d94f7e" } },
+    { "name": "sky", "tint": { "Tops": "#8fd0ff", "Bottoms": "#3f7fc2", "Shoes": "#3f7fc2" } }
+  ],
+  "voice": { "kokoro": "af_bella", "speed": 1.0, "elevenlabs": "cgSgspJ2msm6clMCkdW9", "say": "Samantha" }
+}

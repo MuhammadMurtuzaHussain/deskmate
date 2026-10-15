@@ -21,7 +21,7 @@ export async function ollamaModels(): Promise<string[] | null> {
   }
 }
 
-export async function ollamaChat(opts: { model: string; messages: OllamaMessage[] }): Promise<string> {
+export async function ollamaChat(opts: { model: string; messages: OllamaMessage[]; schema?: Record<string, unknown> }): Promise<string> {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -32,9 +32,10 @@ export async function ollamaChat(opts: { model: string; messages: OllamaMessage[
       messages: opts.messages,
       stream: false,
       think: false, // honoured by instruct builds; thinking builds ignore it and need a much larger num_predict
-      format: 'json',
+      format: opts.schema ?? 'json', // a schema makes small models fill the right fields instead of improvising
       keep_alive: '30m',
-      options: { temperature: 0.9, num_ctx: 8192, num_predict: 300 }
+      // Small local models drift and loop at high temperature; keep them on a short leash.
+      options: { temperature: 0.7, top_p: 0.9, repeat_penalty: 1.15, repeat_last_n: 160, num_ctx: 8192, num_predict: 320 }
     })
   })
   if (!res.ok) throw new Error(`Ollama HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)

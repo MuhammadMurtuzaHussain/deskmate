@@ -40,7 +40,16 @@ function listCharacters(): { id: string; name: string }[] {
 }
 function readCharacter(id: string): { character: CharacterConfig; persona: string } {
   const dir = join(characterDir(id) as string, id)
-  const character = { ...(JSON.parse(readFileSync(join(dir, 'character.json'), 'utf8')) as CharacterConfig), id }
+  let character = { ...(JSON.parse(readFileSync(join(dir, 'character.json'), 'utf8')) as CharacterConfig), id }
+  // local.json (gitignored) overlays private tweaks: your own dance clips, voice, outfits, model path.
+  const localPath = join(dir, 'local.json')
+  if (existsSync(localPath)) {
+    try {
+      character = { ...character, ...(JSON.parse(readFileSync(localPath, 'utf8')) as Partial<CharacterConfig>), id }
+    } catch (err) {
+      console.warn(`[character] ${id}/local.json ignored: ${(err as Error).message}`)
+    }
+  }
   const persona = readFileSync(join(dir, 'persona.md'), 'utf8')
   return { character, persona }
 }
@@ -273,7 +282,8 @@ function status(text: string): void {
 /** One downscaled JPEG of the primary display. The overlay hides itself for the instant of the capture. */
 async function captureScreen(): Promise<Stimulus['screenshot']> {
   if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
-    status('I cannot see your screen yet. System Settings → Privacy & Security → Screen Recording → allow deskmate (or Electron in dev).')
+    console.warn(`[screen] access status: ${systemPreferences.getMediaAccessStatus('screen')} (needs Screen Recording permission)`)
+    status('I cannot see your screen yet. System Settings → Privacy & Security → Screen Recording → allow Deskmate (or Electron in dev), then restart me.')
   }
   const display = screen.getPrimaryDisplay()
   const width = 1280
@@ -283,7 +293,9 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
     if (!source || source.thumbnail.isEmpty()) return undefined
-    return { data: source.thumbnail.toJPEG(60).toString('base64'), mediaType: 'image/jpeg' }
+    const jpeg = source.thumbnail.toJPEG(60)
+    if (process.env.DESKMATE_DEBUG_SAVE_CAPTURE) writeFileSync(process.env.DESKMATE_DEBUG_SAVE_CAPTURE, jpeg)
+    return { data: jpeg.toString('base64'), mediaType: 'image/jpeg' }
   } finally {
     win.setOpacity(1)
   }
@@ -362,8 +374,10 @@ ipcMain.handle('chat:send', async (_event, rawText: string): Promise<Reply> => {
   // Let her see the screen when she answers, so "what's this error" works. Always on the local brain (free);
   // on Gemini only when the message sounds like it is about the screen, to save quota.
   const aboutScreen = /\b(this|that|these|here|screen|error|tab|page|what am i|what i'm|see|look|fix|why)\b/i.test(text)
-  const screenshot = brain.mode === 'ollama' || aboutScreen ? await captureScreen().catch(() => undefined) : undefined
-  const reply = await brain.respond({ kind: 'chat', text, screenshot })
+  const wantsScreen = brain.mode === 'ollama' || aboutScreen
+  const screenshot = wantsScreen ? await captureScreen().catch(() => undefined) : undefined
+  // Without a capture she must not guess what is on screen; that is where invented "screens" came from.
+  const reply = await brain.respond({ kind: 'chat', text, screenshot, blind: aboutScreen && !screenshot })
   await deliver(reply, 'chat')
   return reply
 })

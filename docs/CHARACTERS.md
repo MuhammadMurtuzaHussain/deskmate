@@ -68,12 +68,15 @@ Example (the bundled Victoria):
 }
 ```
 
-- **Dancing** is triggered by asking her (the brain returns an `action`), by `/dance`, `/slow`, `/spin`, `/stop` in the chat box, or from the tray. Styles: `groove` (upbeat), `slow` (hip sway, body rolls), `spin`. When `animations` are listed, each dance request plays the next clip instead. Where to get motion files: for VRM, `.vrma` packs on Booth (the VRoid Project publishes a free set) or convert Mixamo FBX with a fbx-to-vrma converter; for MMD, `.vmd` dance motions from their creators' pages (read their terms; most forbid redistribution).
+- **Dancing** is triggered by asking her (the brain returns an `action`), by `/dance`, `/slow`, `/spin`, `/stop` in the chat box, or from the tray. Built-in styles: `groove` (upbeat, with phrases), `slow` (hip figure-eights, body waves, hands up into the hair), `spin`; they blend in and out over half a second. When `animations` are listed, dance requests play those clips instead (a "slow" request prefers clips whose name contains slow, rumba, waltz or belly).
+- **Real dances (VRM)**: go to [mixamo.com](https://www.mixamo.com) (free Adobe account), search "dancing", download any clip as FBX ("Without Skin" is smallest), put it in a `dances/` folder next to the model and list it: `"animations": [{ "name": "salsa", "file": "/models/<id>/dances/Salsa_Dancing.fbx" }]`. The app retargets Mixamo's skeleton onto the VRM humanoid at load. `.vrma` files (Booth, VRoid Hub) play directly. Keep clip lists in `local.json` if you don't want them in git (Mixamo's terms allow use in your projects, not redistribution of the raw files).
+- **Real dances (MMD)**: `.vmd` motions from their creators' pages; list them the same way. Most forbid redistribution.
+- **`local.json`**: a gitignored file next to `character.json` whose keys override it, for private things: `animations`, `voice`, `model`, `outfits`.
 - **Outfits**: `model` swaps the whole file; `hide`/`show` toggle meshes (VRM) or materials (MMD) by name fragment; `tint` recolours materials whose name contains the key (works on light textures). Ask her to change, type `/outfit`, or use the tray.
 - **Morphs (MMD)**: `"morphs": { "happy": "笑い+mouthSmileLeft+mouthSmileRight", "mouth": "あ", "blink": "まばたき" }`; join several with `+`.
 - **Framing**: `camera.fov` and `camera.yOffset` (fraction of body height) if she sits too high or low; `idle.armsDown` if her arms hang wrong (VRM rigs start in a T-pose, MMD rigs in an A-pose).
 
-The bundled 3D character, Victoria Rubin, is a VRoid Project sample model under CC0 (see `src/renderer/public/models/victoria/LICENSE.txt`).
+Bundled 3D characters: Victoria (bundled file) and Vita, Vivi, Shino (fetched from github.com/madjin/vrm-samples on first use). All four are VRoid Project sample models whose metadata states CC0 (see `src/renderer/public/models/victoria/LICENSE.txt`).
 
 ## VTube Studio models
 

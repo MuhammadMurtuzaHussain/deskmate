@@ -3,7 +3,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm'
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip, type VRMAnimation } from '@pixiv/three-vrm-animation'
 import type { CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
-import { dancePose } from './dance'
+import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
+import { loadMixamoAnimation } from './mixamo'
 import { resolveAsset } from './assets'
 import type { Avatar, Bounds } from './avatar'
 import { createSpeaker } from './audio'
@@ -92,6 +93,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let dancing = false
   let danceStyle: DanceStyle = 'groove'
   let danceT = 0
+  let danceWeight = 0 // 0 = idle, 1 = full choreography; ramps so starts and stops are smooth
   let mixer: THREE.AnimationMixer | null = null
   let clips: THREE.AnimationClip[] = []
   let clipIndex = -1
@@ -152,16 +154,22 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     clips = []
     for (const a of character.animations) {
       try {
-        const g = await loader.loadAsync(resolveAsset(a.file))
-        const anim = (g.userData.vrmAnimations as VRMAnimation[] | undefined)?.[0]
-        if (!anim) continue
-        const clip = createVRMAnimationClip(anim, v)
+        let clip: THREE.AnimationClip
+        if (/\.fbx$/i.test(a.file)) {
+          clip = await loadMixamoAnimation(resolveAsset(a.file), v) // Mixamo FBX retargeted onto the humanoid
+        } else {
+          const g = await loader.loadAsync(resolveAsset(a.file))
+          const anim = (g.userData.vrmAnimations as VRMAnimation[] | undefined)?.[0]
+          if (!anim) continue
+          clip = createVRMAnimationClip(anim, v)
+        }
         clip.name = a.name
         clips.push(clip)
       } catch (err) {
         console.warn('[vrm] animation failed', a.file, err)
       }
     }
+    if (clips.length) console.log(`[vrm] ${clips.length} dance clip(s) ready: ${clips.map((c) => c.name).join(', ')}`)
   }
 
   function applyOutfit(o: Outfit | null): void {
@@ -197,60 +205,51 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     })
   }
 
-  /** Arms down from the T-pose, plus breathing, weight shift and the damped impulse from taps. */
-  function poseIdle(t: number, dt: number): void {
+  /** Applies a neutral Pose to the normalized humanoid. Arms hang at ∓armDown from the T-pose. */
+  function applyPose(p: Pose): void {
+    const armDown = character.idle?.armsDown ?? 1.18
+    const hips = bone('hips')
+    const spine = bone('spine')
+    const chest = bone('chest') ?? bone('upperChest')
+    const neck = bone('neck')
+    const head = bone('head')
+    const L = bone('leftUpperArm')
+    const R = bone('rightUpperArm')
+    const LL = bone('leftLowerArm')
+    const RL = bone('rightLowerArm')
+    if (hips) {
+      hips.position.y = hipsRestY + p.hipsY * modelHeight
+      hips.rotation.set(p.hips.x, p.hips.y, p.hips.z)
+    }
+    if (spine) spine.rotation.set(p.spine.x, p.spine.y, p.spine.z)
+    if (chest) chest.rotation.set(p.chest.x, p.chest.y, p.chest.z)
+    if (neck) neck.rotation.set(p.neck.x, p.neck.y, p.neck.z)
+    if (head) head.rotation.set(p.head.x, p.head.y, p.head.z)
+    if (L) L.rotation.set(p.armL.swing, p.armL.out, -(armDown - p.armL.raise))
+    if (R) R.rotation.set(p.armR.swing, -p.armR.out, armDown - p.armR.raise)
+    if (LL) LL.rotation.set(0, -p.elbowL, -0.2)
+    if (RL) RL.rotation.set(0, p.elbowR, 0.2)
+    if (vrm) vrm.scene.rotation.y = baseRotY + p.turn
+  }
+
+  /** Idle, dance, or a blend of the two while a dance starts or stops. */
+  function poseFrame(t: number, dt: number): void {
     let k = 0
     if (physics.impulse > 0) {
       const s = (performance.now() - physics.impulseAt) / 1000
       k = physics.impulse * Math.exp(-s * 2.4) * Math.sin(s * Math.PI * 2 * 2.2)
       if (s > 3) physics.impulse = 0
     }
-    const sw = physics.sway
-    const armDown = character.idle?.armsDown ?? 1.18
-    const L = bone('leftUpperArm')
-    const R = bone('rightUpperArm')
-    const LL = bone('leftLowerArm')
-    const RL = bone('rightLowerArm')
-    const hips = bone('hips')
-    const spine = bone('spine')
-    const chest = bone('chest') ?? bone('upperChest')
-    const neck = bone('neck')
-    const head = bone('head')
-
-    if (dancing) {
-      danceT += dt
-      const p = dancePose(danceStyle, danceT, character.dance?.bpm ?? (danceStyle === 'slow' ? 72 : 124))
-      if (hips) {
-        hips.position.y = hipsRestY + p.hipsY * modelHeight
-        hips.rotation.set(p.hips.x, p.hips.y, p.hips.z)
-      }
-      if (spine) spine.rotation.set(p.spine.x, p.spine.y, p.spine.z)
-      if (chest) chest.rotation.set(p.chest.x, p.chest.y, p.chest.z)
-      if (neck) neck.rotation.set(p.neck.x, p.neck.y, p.neck.z)
-      if (head) head.rotation.set(p.head.x, p.head.y, p.head.z)
-      // VRM normalized arms hang at rotation.z = ∓armDown; "raise" brings them back up, "out" rotates around Y.
-      if (L) L.rotation.set(p.armL.swing, p.armL.out, -(armDown - p.armL.raise))
-      if (R) R.rotation.set(p.armR.swing, -p.armR.out, armDown - p.armR.raise)
-      if (LL) LL.rotation.set(0, -p.elbowL, -0.2)
-      if (RL) RL.rotation.set(0, p.elbowR, 0.2)
-      if (vrm) vrm.scene.rotation.y = baseRotY + p.turn
+    danceWeight += ((dancing ? 1 : 0) - danceWeight) * Math.min(1, dt * 3)
+    if (danceWeight < 0.002) danceWeight = 0
+    const idle = idlePose(t, physics.sway, k)
+    if (danceWeight === 0) {
+      applyPose(idle)
       return
     }
-
-    const breath = Math.sin(t * 1.4) * 0.5 + 0.5
-    if (vrm) vrm.scene.rotation.y = baseRotY
-    if (hips) {
-      hips.position.y = hipsRestY
-      hips.rotation.set(0, 0.03 * sw * Math.sin(t * 0.5), 0.025 * sw * Math.sin(t * 0.7) + 0.08 * k)
-    }
-    if (spine) spine.rotation.set(0.01 * breath + 0.05 * k, 0.02 * sw * Math.sin(t * 0.6 + 1), -0.02 * sw * Math.sin(t * 0.7) - 0.05 * k)
-    if (chest) chest.rotation.set(0.025 * breath + 0.04 * k, 0, 0)
-    if (neck) neck.rotation.set(0.02 * Math.sin(t * 0.9) + 0.06 * k, 0.05 * sw * Math.sin(t * 0.4 + 2), 0.02 * sw * Math.sin(t * 0.8))
-    if (head) head.rotation.set(0.03 * Math.sin(t * 1.1 + 1), 0, 0.03 * sw * Math.sin(t * 0.9 + 1) + 0.05 * k)
-    if (L) L.rotation.set(0.05 * Math.sin(t * 0.8), 0, -(armDown + 0.03 * Math.sin(t * 0.8)))
-    if (R) R.rotation.set(0.05 * Math.sin(t * 0.8 + 1), 0, armDown + 0.03 * Math.sin(t * 0.8 + 1))
-    if (LL) LL.rotation.set(0, -0.25 - 0.05 * breath, -0.05)
-    if (RL) RL.rotation.set(0, 0.25 + 0.05 * breath, 0.05)
+    danceT += dt
+    const dance = dancePose(danceStyle, danceT, character.dance?.bpm ?? defaultBpm(danceStyle))
+    applyPose(blendPose(idle, dance, danceWeight))
   }
 
   // VRM 0.x models name presets differently ("Surprised" as a custom group, "fun" for relaxed); resolve once per model.
@@ -304,7 +303,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       if (activeAction && mixer) {
         mixer.update(dt)
       } else {
-        poseIdle(t, dt)
+        poseFrame(t, dt)
       }
       updateFace(dt)
       vrm.update(dt)
@@ -396,22 +395,28 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       dancing = on
       danceStyle = style
       if (on) {
-        danceT = 0
-        // Prefer a real clip when the character ships one; cycle through them on repeated calls.
+        if (danceWeight === 0) danceT = 0
+        // Motion-capture clips win when the character has them (slow asks for the slowest-looking one by name).
         if (mixer && clips.length) {
-          clipIndex = (clipIndex + 1) % clips.length
-          activeAction?.stop()
-          activeAction = mixer.clipAction(clips[clipIndex])
-          activeAction.reset().setLoop(THREE.LoopRepeat, Infinity).play()
+          const slowish = clips.map((c, i) => ({ c, i })).filter(({ c }) => /slow|rumba|waltz|belly|sens/i.test(c.name))
+          const pool = style === 'slow' && slowish.length ? slowish.map((x) => x.i) : clips.map((_, i) => i)
+          clipIndex = pool[(pool.indexOf(clipIndex) + 1) % pool.length]
+          const nextAction = mixer.clipAction(clips[clipIndex])
+          nextAction.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.5).play()
+          if (activeAction && activeAction !== nextAction) activeAction.fadeOut(0.5)
+          activeAction = nextAction
           return
         }
       }
       if (!on && activeAction) {
-        activeAction.stop()
+        activeAction.fadeOut(0.4)
+        const ending = activeAction
         activeAction = null
-        mixer?.stopAllAction()
+        window.setTimeout(() => {
+          ending.stop()
+          mixer?.stopAllAction()
+        }, 450)
       }
-      if (!on && vrm) vrm.scene.rotation.y = baseRotY
     },
 
     isDancing: () => dancing,
