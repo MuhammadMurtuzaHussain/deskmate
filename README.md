@@ -47,7 +47,7 @@ Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuz
 |---|---|---|
 | macOS (Apple Silicon / Intel) | `Deskmate-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Unsigned: on first launch right-click → Open, or run `xattr -dr com.apple.quarantine /Applications/Deskmate.app`. Allow **Screen Recording** when asked so she can see your screen. |
 | Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` (installer) or `-portable.exe` | Unsigned: SmartScreen → "More info" → "Run anyway". |
-| Linux | `Deskmate-x.y.z-linux-x64.AppImage` or `.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
+| Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
 
 She starts in the bottom-right corner with a chat box. Without a brain configured she runs on canned lines and shows a field for a Gemini key; for the local brain, read on.
 
