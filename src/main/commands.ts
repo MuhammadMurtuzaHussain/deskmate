@@ -1,7 +1,7 @@
 import type { ToolCall } from '../shared/types'
 
 export interface Routed extends ToolCall {
-  /** the user named the tool outright ("ask claude to…", "/tasks"), so no model had to decide */
+  /** the user named the tool outright ("ask claude to…", "/tasks", "next tab"), so no model had to decide */
   explicit: true
 }
 
@@ -12,19 +12,42 @@ const RE_RESUME_HEAD =
 const RE_STATUS =
   /^(?:(?:hey |so )?how(?:'s| is| are)? (?:claude|the task|the job|that task|that job|it|things) ?(?:doing|going|coming along|looking)?|(?:what(?:'s| is) )?(?:the )?(?:task |job |claude )?status|(?:is )?claude (?:done|finished|still (?:working|going|running|busy))|(?:any )?(?:tasks?|jobs?)(?: update)?|claude\?)\??$/i
 const RE_CANCEL =
-  /^(?:(?:please )?(?:stop|cancel|kill|abort) (?:the |that |this )?(?:claude |current |running )?(?:task|job|run|work|it)|(?:ask|tell) claude to stop|claude[,:]? stop)[.!]?$/i
-const RE_OPEN = /^(?:please )?(?:open|launch) (.+)$/i
+  /^(?:(?:please )?(?:stop|cancel|kill|abort) (?:the |that |this )?(?:claude |current |running )?(?:task|job|run|work|it|browsing)|(?:ask|tell) claude to stop|claude[,:]? stop)[.!]?$/i
+const RE_OPEN = /^(?:please )?(?:open|launch) (.+?)(?: in (?:chrome|the browser|my browser|a (?:new )?tab))?$/i
 const NOT_A_FOLDER =
   /^(?:it|this|that|there|here|order|general|time|case|fact|short|particular|detail|english|python|typescript|javascript|rust|go|css|html|react|the end|a way|some way|place|places)$/i
 
+// Chrome: the page in front of them, tabs, and things to click or find.
+const RE_FIND_ON_PAGE = /^(?:(?:please )?(?:find|search for|look for|where(?:'s| is)) ["“']?(.+?)["”']? (?:on|in) (?:this|the|that) (?:page|tab|site))[.!?]?$/i
+const RE_PAGE_REF = /\b(?:this|the|that|current|open) (?:web ?page|page|tab|article|website|site|post|thread|doc|document)\b/i
+const RE_PAGE_LEAD = /^(?:what|summari[sz]e|read|explain|tl;?dr|tell me|give me|is there|are there|does|do|how|who|when|where|which|why|whats|what's|can you (?:summari[sz]e|read|explain|tell)|any)/i
+const RE_SEARCH =
+  /^(?:(?:please )?(?:google|web search(?: for)?|search(?: the web| online| google| chrome)?(?: for| up)?) (.+?)(?:,? (?:on|in) (?:google|chrome|the web|the internet|the browser|safari))?)[.!?]?$/i
+const RE_BROWSE_LEAD = /^(?:(?:go )?(?:online|on the web|on the internet|in chrome|in the browser|in my browser)[,:]? (?:and )?(.+))$/i
+const RE_BROWSE_TAIL = /^(.+?),? (?:online|on the web|on the internet|in chrome|in the browser|in my browser)[.!?]?$/i
+const RE_BROWSE_VERB = /^(?:(?:please )?(?:browse|surf|look up|look into|find out|find me|research|check(?: out)?|look it up[,:]?) (.+))$/i
+const RE_CLICK = /^(?:(?:please )?(?:click|press|tap|hit|choose|select) (?:on )?(?:the )?["“']?(.+?)["”']?(?: (?:button|link|tab|option|one))?)[.!?]?$/i
+const TAB_VERBS: [RegExp, string][] = [
+  [/^(?:(?:go to |switch to |show |move to )?(?:the )?(?:next|right) tab|next tab|tab right)$/i, 'next_tab'],
+  [/^(?:(?:go to |switch to |show |move to )?(?:the )?(?:previous|prev|last|left) tab|tab left)$/i, 'prev_tab'],
+  [/^(?:close (?:this |the |that |current )?tab)$/i, 'close_tab'],
+  [/^(?:go back|back|previous page|page back)$/i, 'back'],
+  [/^(?:go forward|forward|page forward)$/i, 'forward'],
+  [/^(?:reload|refresh)(?: (?:this |the )?(?:page|tab))?$/i, 'reload'],
+  [/^(?:scroll|page) down(?: (?:a bit|more|a little|please|some))?$/i, 'scroll_down'],
+  [/^(?:scroll|page) up(?: (?:a bit|more|a little|please|some))?$/i, 'scroll_up']
+]
+
 /**
  * Explicit commands take no model to understand: "ask claude to fix the build", "resume the vlog edit",
- * "how's claude doing", "stop the task", "/claude …". Anything else goes to her brain, which may still decide
- * to use a tool from context. Returns null when the text is just conversation.
+ * "how's claude doing", "stop the task", "what's on this page", "next tab", "search for …", "look up …".
+ * Anything else goes to her brain, which may still decide to use a tool from context. Returns null when the
+ * text is just conversation.
  */
 export function routeCommand(raw: string): Routed | null {
   const text = raw.replace(/\s+/g, ' ').trim()
   if (!text) return null
+  const tool = (name: ToolCall['name'], input: string, dir: string | null = null): Routed => ({ name, input, dir, explicit: true })
 
   // Slash commands, for the typed box.
   const slash = /^\/(\w+)\s*(.*)$/.exec(text)
@@ -40,20 +63,33 @@ export function routeCommand(raw: string): Routed | null {
         return parseResume(rest)
       case 'tasks':
       case 'status':
-        return { name: 'tasks', input: '', explicit: true }
+        return tool('tasks', '')
       case 'cancel':
       case 'stop':
-        return { name: 'cancel', input: '', explicit: true }
+        return tool('cancel', '')
       case 'open':
-        return rest ? { name: 'open', input: rest, explicit: true } : null
+        return rest ? tool('open', rest) : null
+      case 'browse':
+      case 'web':
+        return rest ? tool('browse', rest) : null
+      case 'page':
+      case 'read':
+        return tool('page', rest || 'What is this page about? Give me the gist.')
+      case 'search':
+      case 'google':
+        return rest ? tool('chrome', `search:${rest}`) : null
+      case 'click':
+        return rest ? tool('chrome', `click:${rest}`) : null
+      case 'tab':
+        return tool('chrome', /^(?:prev|previous|left|back)/i.test(rest) ? 'prev_tab' : /^close/i.test(rest) ? 'close_tab' : 'next_tab')
       default:
         return null
     }
   }
 
   const bare = text.toLowerCase().replace(/[.!?]+$/g, '')
-  if (RE_STATUS.test(bare)) return { name: 'tasks', input: '', explicit: true }
-  if (RE_CANCEL.test(bare)) return { name: 'cancel', input: '', explicit: true }
+  if (RE_STATUS.test(bare)) return tool('tasks', '')
+  if (RE_CANCEL.test(bare)) return tool('cancel', '')
 
   const resume = RE_RESUME_HEAD.exec(text)
   if (resume && /\b(claude|task|session|job|work|edit|editing|where (?:you|it|we) left|last time|earlier|previous)\b/i.test(text)) {
@@ -70,13 +106,33 @@ export function routeCommand(raw: string): Routed | null {
     return withDir('claude', body)
   }
 
+  // Chrome, in order from most to least specific.
+  const findOnPage = RE_FIND_ON_PAGE.exec(text)
+  if (findOnPage) return tool('chrome', `find:${findOnPage[1].trim()}`)
+  if (RE_PAGE_REF.test(text) && RE_PAGE_LEAD.test(bare)) return tool('page', text.replace(/[.!?]+$/g, ''))
+  for (const [re, verb] of TAB_VERBS) if (re.test(bare)) return tool('chrome', verb)
+  const click = RE_CLICK.exec(text)
+  if (click && click[1].split(' ').length <= 6) return tool('chrome', `click:${click[1].trim()}`)
+  const search = RE_SEARCH.exec(text)
+  if (search && search[1].trim()) return tool('chrome', `search:${search[1].trim()}`)
+
   const open = RE_OPEN.exec(text)
   if (open) {
     const target = open[1].trim().replace(/[.!]+$/g, '')
-    // Only things that look like a site, a path, or a short app name; "open your heart" is conversation.
-    if (/^(?:https?:\/\/|www\.|[\w-]+\.(?:com|org|net|io|dev|app|ai|co)\b|~|\/)/i.test(target) || target.split(' ').length <= 3) {
-      return { name: 'open', input: target.replace(/^(?:the |my )/i, ''), explicit: true }
+    // Only things that look like a site, a path, or a short app name; "open your heart" is conversation and
+    // "open my notifications and tell me what's new" is a browsing goal.
+    if (/^(?:https?:\/\/|www\.|[\w-]+\.(?:com|org|net|io|dev|app|ai|co|uk|ie|de|fr)\b|~|\/)/i.test(target) || target.split(' ').length <= 3) {
+      return tool('open', target.replace(/^(?:the |my )/i, ''))
     }
+  }
+
+  const lead = RE_BROWSE_LEAD.exec(text) ?? RE_BROWSE_TAIL.exec(text)
+  const verb = lead ? null : RE_BROWSE_VERB.exec(text)
+  // "in chrome, …" drops the preamble; "look up …" keeps its verb, the planner wants the whole sentence.
+  const goal = (lead ? lead[1] : verb ? text : '').trim().replace(/[.!?]+$/g, '')
+  if (goal) {
+    const rest = verb ? verb[1].trim() : goal
+    if (rest.split(' ').length >= 2 && !/^(?:this|that|it|these|those)\b/i.test(rest)) return tool('browse', goal)
   }
   return null
 }
@@ -99,7 +155,7 @@ function parseResume(rest: string): Routed {
   const tail = /^(.*?)(?:[,;:]| and then | then | and )(.+)$/i.exec(s)
   if (tail) {
     s = tail[1].trim()
-    next = tail[2].trim().replace(/^(?:and then|and|then)\s+/i, '').replace(/^(?:and then|and|then)\s+/i, '')
+    next = tail[2].trim().replace(/^(?:and then|and|then)\s+/i, '')
   }
   s = s.replace(/^(?:the |my |our |that |this )?(?:last |previous |earlier |old |unfinished )?/i, '').replace(/^(?:claude(?:'s)? )?/i, '')
   const inside = /^(?:task|session|job|work|edit|editing|thing|stuff|conversation|chat)?\s*(?:in|on|for|from|of|with)\s+(?:the |my |our )?(.+?)(?: (?:project|folder|repo|repository|directory|dir))?$/i.exec(s)

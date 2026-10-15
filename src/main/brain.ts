@@ -2,14 +2,15 @@ import type { Memory } from './memory'
 import type { Settings } from './settings'
 import { geminiGenerate, geminiCheckKey, GeminiBlockedError, GeminiQuotaError, type GeminiContent } from './gemini'
 import { ollamaChat, ollamaModels, type OllamaMessage } from './ollama'
-import { AVATAR_COMMANDS, EMOTIONS, TOOL_NAMES, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
+import { AVATAR_COMMANDS, BRAIN_TOOLS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
 
-/** Something her task runner wants her to tell the user about. */
+/** Something her hands want her to tell the user about: a Claude Code job or a browsing run. */
 export interface TaskReport {
+  kind?: 'claude' | 'browse'
   phase: 'confirm' | 'started' | 'done' | 'failed' | 'cancelled' | 'status'
   title: string
   folder?: string
-  /** Claude's final message, the error, or the status list */
+  /** Claude's final message, what she found online, the error, or the status list */
   detail?: string
 }
 
@@ -25,6 +26,8 @@ export interface Stimulus {
   blind?: boolean
   /** chat only: it came in through the microphone */
   voice?: boolean
+  /** chat only: the web page open in Chrome, when the question is about it */
+  page?: { url: string; title: string; text: string }
   task?: TaskReport
 }
 
@@ -36,7 +39,7 @@ const DEFAULT_OLLAMA_MODEL = 'qwen3-vl:4b-instruct'
 
 const OUTPUT_CONTRACT = `
 Reply with ONE JSON object and nothing else, no code fences:
-{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null, "tool": "claude"|"claude_resume"|"open"|"tasks"|"cancel"|null, "tool_input": string, "tool_dir": string|null}
+{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null, "tool": "claude"|"claude_resume"|"browse"|"page"|"open"|"tasks"|"cancel"|null, "tool_input": string, "tool_dir": string|null}
 
 - "say": what you say out loud. Empty string if "speak" is false.
 - "emotion": the face you make. "flirty" when you are teasing or being sweet on them, "smug" when you are right, "shy" when they get to you.
@@ -45,8 +48,8 @@ Reply with ONE JSON object and nothing else, no code fences:
 - Say only what you can actually see or were told. Never invent names, people, messages, files or events. If you are not sure what is on the screen, say what it looks like or ask; do not guess specifics.
 - Never repeat a phrase. One thought per line.
 - "action": null unless they explicitly ask you to move. "dance" when they ask for a dance; "dance_slow" when they ask for something slow, sensual or seductive; "spin" when they ask for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. Never dance just because they are tired, bored or asked a question.
-- "tool": null unless they ask you to get something done on this computer. Claude Code is the coding agent installed here and you can hand it jobs. "claude" when they want real work done: write or fix code, edit a video or vlog project, change files, run a job. "claude_resume" when they want Claude to continue, resume or follow up on an earlier job or session. "open" to open an app, folder or website they name. "tasks" when they ask how Claude or a job is doing. "cancel" when they want the running job stopped. Talking, explaining, teasing and looking at the screen never need a tool; never reach for a tool because they sound busy or stressed.
-- "tool_input": for "claude", the instruction for Claude in plain words: exactly what they asked for, nothing added. For "claude_resume", what to tell Claude next ("" to just continue). For "open", the app name or URL. Otherwise "".
+- "tool": null unless they ask you to get something done on this computer. "claude" when they want real work done by Claude Code (the coding agent installed here): write or fix code, edit a video or vlog project, change files, run a job. "claude_resume" to continue an earlier Claude job or session. "browse" when they want something done or looked up in their Chrome browser: find information on the web, open a site and dig for something, fill in a form, get somewhere. "page" when they ask about the web page open in Chrome right now ("what's this article about", "summarize this tab", "is there a price on this page"). "open" to open an app, folder or website they name. "tasks" when they ask how Claude or a job is doing. "cancel" when they want the running job stopped. Talking, explaining, teasing and looking at the screen never need a tool; never reach for a tool because they sound busy or stressed, and never use "browse" for something you can answer yourself.
+- "tool_input": for "claude", the instruction for Claude in plain words: exactly what they asked for, nothing added. For "claude_resume", what to tell Claude next ("" to just continue). For "browse", the goal in plain words. For "page", their question. For "open", the app name or URL. Otherwise "".
 - "tool_dir": the project or folder they named ("the vlog", "deskmate", "my website"), else null.
 - When "tool" is set, "say" is one short line that you are on it. Never claim the job is already done.
 `.trim()
@@ -60,7 +63,7 @@ const REPLY_SCHEMA = {
     speak: { type: 'boolean' },
     remember: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, importance: { type: 'integer' } }, required: ['text', 'importance'] } },
     action: { type: ['string', 'null'], enum: [...AVATAR_COMMANDS, null] },
-    tool: { type: ['string', 'null'], enum: [...TOOL_NAMES, null] },
+    tool: { type: ['string', 'null'], enum: [...BRAIN_TOOLS, null] },
     tool_input: { type: 'string' },
     tool_dir: { type: ['string', 'null'] }
   },
@@ -68,7 +71,8 @@ const REPLY_SCHEMA = {
 }
 
 const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null, "tool": null, "tool_input": "", "tool_dir": null}
-Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}`
+Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}
+Example when they say "find me a cheap flight to Lisbon next Friday": {"say": "give me a minute, I'm digging through Chrome.", "emotion": "neutral", "speak": true, "remember": [], "action": null, "tool": "browse", "tool_input": "Find a cheap flight to Lisbon next Friday and report the best option with price and times.", "tool_dir": null}`
 
 const TOUCH_PROMPTS: Record<Touch['area'], string> = {
   head: 'They just poked you on the head.',
@@ -127,6 +131,11 @@ export class Brain {
     return this.mode === 'gemini' ? this.model : this.mode === 'ollama' ? `${this.ollamaModel} (local)` : 'demo'
   }
 
+  /** True when some model can think right now (for tools that need a planner). */
+  get canThink(): boolean {
+    return this.useOllamaNow() || (Boolean(this.key) && this.cooldownSeconds() === 0)
+  }
+
   private useOllamaNow(): boolean {
     if (!this.ollamaReady) return false
     if (this.mode === 'ollama') return true
@@ -148,6 +157,52 @@ export class Brain {
     this.key = key
     this.mode = 'gemini'
     return { ok: true }
+  }
+
+  /**
+   * A bare planning call for her hands (the browse loop): no persona, one system prompt, one message, a JSON
+   * schema; returns the parsed object. Uses whichever model is current, like everything else.
+   */
+  async plan(system: string, user: string, schema: Record<string, unknown>): Promise<Record<string, unknown>> {
+    let text: string
+    if (this.useOllamaNow()) {
+      text = await ollamaChat({
+        model: this.ollamaModel,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ],
+        schema,
+        numPredict: 600,
+        temperature: 0.3
+      })
+    } else {
+      if (!this.key) throw new Error('no brain yet: paste a Gemini key or start Ollama')
+      if (this.cooldownSeconds() > 0) throw new Error('Gemini is out of quota for a few minutes')
+      try {
+        text = await geminiGenerate({ apiKey: this.key, model: this.model, system, contents: [{ role: 'user', parts: [{ text: user }] }] })
+      } catch (err) {
+        if (err instanceof GeminiQuotaError) {
+          this.quotaUntil = Date.now() + QUOTA_COOLDOWN_MS
+          if (this.ollamaReady) return this.plan(system, user, schema)
+        }
+        throw err
+      }
+    }
+    const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+    try {
+      return JSON.parse(cleaned) as Record<string, unknown>
+    } catch {
+      const m = /\{[\s\S]*\}/.exec(cleaned)
+      if (m) {
+        try {
+          return JSON.parse(m[0]) as Record<string, unknown>
+        } catch {
+          // fall through
+        }
+      }
+      throw new Error(`the planner returned no JSON: ${cleaned.slice(0, 120)}`)
+    }
   }
 
   async respond(stimulus: Stimulus): Promise<Reply> {
@@ -234,8 +289,10 @@ export class Brain {
     let text: string
     const started = Date.now()
     const direct = stimulus.kind === 'chat' || stimulus.kind === 'task'
+    // Page questions carry the page text and deserve a fuller answer than a quip.
+    const numPredict = stimulus.page || (stimulus.task && stimulus.task.phase === 'done') ? 480 : undefined
     try {
-      text = await ollamaChat({ model: this.ollamaModel, messages, schema: REPLY_SCHEMA })
+      text = await ollamaChat({ model: this.ollamaModel, messages, schema: REPLY_SCHEMA, numPredict })
       console.log(`[brain:ollama] ${this.ollamaModel} answered in ${Date.now() - started} ms`)
       if (direct && !salvageField(text, 'say')?.trim()) {
         // A direct message deserves an answer: one nudge before the fallback line.
@@ -243,7 +300,8 @@ export class Brain {
         text = await ollamaChat({
           model: this.ollamaModel,
           messages: [...messages, { role: 'system', content: 'They spoke to you directly. Answer them now in one or two sentences; "say" must not be empty and "speak" must be true.' }],
-          schema: REPLY_SCHEMA
+          schema: REPLY_SCHEMA,
+          numPredict
         })
       }
     } catch (err) {
@@ -267,7 +325,7 @@ export class Brain {
     }
     // Small local models ramble; keep spoken lines to a few sentences unless they were asked for help.
     const helpAsked = stimulus.kind === 'chat' && /\b(help|fix|error|explain|how do|how to|what is|summar|draft|write)\b/i.test(stimulus.text ?? '')
-    reply.say = trimSpoken(reply.say, stimulus.kind === 'task' ? 5 : helpAsked ? 8 : 3)
+    reply.say = trimSpoken(reply.say, stimulus.kind === 'task' || stimulus.page ? 5 : helpAsked ? 8 : 3)
     this.commit(stimulus, reply)
     return reply
   }
@@ -277,7 +335,7 @@ export class Brain {
   private guardTaskLine(stimulus: Stimulus, reply: Reply): void {
     if (stimulus.kind !== 'task' || !stimulus.task) return
     const phase = stimulus.task.phase
-    const claimsDone = /\b(done|ready|finished|complete[d]?|created|made|fixed|all set|sorted|handled|delivered)\b/i.test(reply.say)
+    const claimsDone = /\b(done|ready|finished|complete[d]?|created|made|fixed|all set|sorted|handled|delivered|found)\b/i.test(reply.say)
     if ((phase === 'started' && claimsDone) || (phase === 'confirm' && !/\?/.test(reply.say))) {
       console.log(`[brain] replaced an off-script ${phase} line: ${reply.say.slice(0, 80)}`)
       reply.say = this.canned(stimulus).say
@@ -285,14 +343,15 @@ export class Brain {
     }
   }
 
-  /** Writes the exchange into her memory: the user's words, what the task runner reported, her own line, new facts. */
+  /** Writes the exchange into her memory: the user's words, what her hands reported, her own line, new facts. */
   private commit(stimulus: Stimulus, reply: Reply): void {
     this.guardTaskLine(stimulus, reply)
     if (stimulus.kind === 'chat') this.memory.addTurn('user', stimulus.text ?? '')
     if (stimulus.kind === 'task' && stimulus.task && stimulus.task.phase !== 'confirm' && stimulus.task.phase !== 'status') {
       const t = stimulus.task
-      const extra = t.phase === 'done' && t.detail ? `. Claude's message: ${t.detail.slice(0, 300)}` : t.phase === 'failed' && t.detail ? `: ${t.detail.slice(0, 200)}` : ''
-      this.memory.addTurn('user', `[Claude Code job ${t.phase}: "${t.title}"${extra}]`)
+      const who = t.kind === 'browse' ? 'Browsing' : 'Claude Code job'
+      const extra = t.phase === 'done' && t.detail ? `. ${t.kind === 'browse' ? 'Found' : "Claude's message"}: ${t.detail.slice(0, 300)}` : t.phase === 'failed' && t.detail ? `: ${t.detail.slice(0, 200)}` : ''
+      this.memory.addTurn('user', `[${who} ${t.phase}: "${t.title}"${extra}]`)
     }
     if (reply.speak && reply.say) this.memory.addTurn('assistant', reply.say)
     if (reply.remember.length) this.memory.remember(reply.remember)
@@ -301,6 +360,10 @@ export class Brain {
   private promptText(stimulus: Stimulus): string {
     if (stimulus.kind === 'chat') {
       const spoken = stimulus.voice ? '\n\n[They said this out loud; it came through speech recognition, so a word may be off. Keep your answer short, it will be read aloud.]' : ''
+      if (stimulus.page) {
+        const p = stimulus.page
+        return `${stimulus.text ?? ''}\n\n[The web page open in their Chrome is "${p.title}" (${p.url}). Its text, as far as it fits:\n${p.text}\n]\nAnswer from the page. If they want the gist, give it in two to four spoken sentences; keep names, numbers and prices exact; say so if the page does not hold the answer.${spoken}`
+      }
       if (stimulus.screenshot) {
         return `${stimulus.text ?? ''}\n\n[A screenshot of their screen is attached for context. Use it if the message is about what is on screen; otherwise answer the message and don't describe the screen.]${spoken}`
       }
@@ -312,6 +375,18 @@ export class Brain {
     if (stimulus.kind === 'task' && stimulus.task) {
       const t = stimulus.task
       const where = t.folder ? ` in the folder "${t.folder}"` : ''
+      if (t.kind === 'browse') {
+        switch (t.phase) {
+          case 'started':
+            return `[You just started browsing in their Chrome for: "${t.title}". One short line in your own voice that you are on it; no results yet.]`
+          case 'done':
+            return `[You finished browsing for them. Goal: "${t.title}". What you found, exact:\n${t.detail || '(nothing)'}\n]\nTell them in your own voice in two or three sentences. Keep every fact, name, number and price exactly as written; add nothing.`
+          case 'failed':
+            return `[You could not finish browsing for "${t.title}". Where it stopped: ${t.detail || 'unknown'}]\nTell them plainly in one or two sentences, in your voice, and what they can do.`
+          default:
+            return `[Browsing update for "${t.title}": ${t.detail ?? ''}] Relay it in one short line.`
+        }
+      }
       switch (t.phase) {
         case 'confirm':
           return `[They asked you to hand a job to Claude Code${where}: "${t.title}". Before it runs, check with them in one short line in your own voice: repeat the job in a few words and ask whether to send it. Do not start anything yourself and do not add to the job.]`
@@ -377,6 +452,18 @@ export class Brain {
       const t = stimulus.task
       const where = t.folder ? ` in ${t.folder}` : ''
       const line = (say: string, emotion: Emotion): Reply => ({ say, emotion, speak: true, remember: [] })
+      if (t.kind === 'browse') {
+        switch (t.phase) {
+          case 'started':
+            return line(`On it, I'm looking in Chrome: ${t.title}.`, 'neutral')
+          case 'done':
+            return line(`Here's what I found. ${(t.detail ?? '').slice(0, 400)}`.trim(), 'happy')
+          case 'failed':
+            return line(`I couldn't finish that in Chrome: ${t.detail ?? 'unknown problem'}`, 'sad')
+          default:
+            return line(t.detail || 'Still browsing.', 'neutral')
+        }
+      }
       switch (t.phase) {
         case 'confirm':
           return line(`Send this to Claude${where}: "${t.title}"? Yes or no.`, 'neutral')
@@ -409,6 +496,9 @@ export class Brain {
           : [['Hands to yourself, hotshot.', 'smug'], ['Hey. That tickles.', 'shy'], ['Again? You are needy today.', 'flirty']]
       const [say, emotion] = lines[Math.floor(Math.random() * lines.length)]
       return { say, emotion, speak: true, remember: [] }
+    }
+    if (stimulus.page) {
+      return { say: `The page is "${stimulus.page.title}". I need a brain (a Gemini key or Ollama) to read it for you.`, emotion: 'neutral', speak: true, remember: [] }
     }
     return {
       say: 'I do not have a brain yet. Paste a Gemini API key in the panel and I will actually think about that.',
@@ -469,8 +559,8 @@ function parseReply(text: string, stimulus: Stimulus): Reply {
       : []
     const action = (AVATAR_COMMANDS as string[]).includes(String(obj.action ?? '')) ? (obj.action as AvatarCommand) : undefined
     let tool: ToolCall | undefined
-    // Only a direct message can start a job; a glance at the screen or a poke never does.
-    if (stimulus.kind === 'chat' && (TOOL_NAMES as string[]).includes(String(obj.tool ?? ''))) {
+    // Only a direct message can start a job; a glance at the screen, a poke or a page question never does.
+    if (stimulus.kind === 'chat' && !stimulus.page && (BRAIN_TOOLS as string[]).includes(String(obj.tool ?? ''))) {
       tool = {
         name: obj.tool as ToolName,
         input: String(obj.tool_input ?? '').trim(),

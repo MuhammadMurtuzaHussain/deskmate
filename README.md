@@ -35,6 +35,7 @@
 - **Actually helps.** Ask "what's this error" or "what should I do next" and she reads the screen and answers properly, then goes back to being herself.
 - **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Speech to speech, nothing sent anywhere.
 - **Puts Claude to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how is Claude doing": she hands the job to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the right project folder, follows it, and tells you in her own voice what came back. Spoken jobs are read back and wait for your yes. [docs/AGENT.md](docs/AGENT.md).
+- **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
 - **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Built-in choreographies (upbeat groove, slow and sensual, a twirl) with smooth blends, and real motion capture when you drop clips in: Mixamo `.fbx` dances retarget straight onto any VRM character, `.vrma` plays as is, `.vmd` for MMD. Hair and skirts move with the model's own physics.
@@ -77,6 +78,8 @@ Details, other models, and running both: [docs/BRAINS.md](docs/BRAINS.md).
 Without setup she uses your system voice. For a natural one: [docs/VOICES.md](docs/VOICES.md) covers the local open-source Kokoro voice (one script) and ElevenLabs (an API key). The same script installs Whisper, so with the local voice on you can talk to her: ⌘⇧Space (Ctrl+Shift+Space), the **mic** button, or **Listen hands-free** in the tray.
 
 ### Give her hands (optional)
+
+On a Mac she can also drive the Chrome you have open: say yes when macOS asks, and switch on **View → Developer → Allow JavaScript from Apple Events** in Chrome once so she can read pages and click. Details and the safety rules: [docs/AGENT.md](docs/AGENT.md#browser-she-drives-your-chrome).
 
 If [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is installed and logged in on your machine, she can give it jobs: "ask Claude to …", "resume the vlog edit", "stop the task". Pick the folder she works in from the tray menu, or name it in the sentence. How it works, what Claude is allowed to do, and how to turn the read-back confirmation on or off: [docs/AGENT.md](docs/AGENT.md).
 
@@ -121,6 +124,7 @@ Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, e
    │  desktopCapturer every N s, chokidar on your project folder
    │  mic ──► Whisper (local) ──► text · Kokoro / ElevenLabs / say ──► audio
    │  tool: claude ──► `claude -p` in the project folder (stream-json) ──► she reports back
+   │  tool: browse / page ──► Chrome over AppleScript (tabs, page text, click, type) ──► look · decide · act loop
    ▼ IPC
 Renderer: Live2D: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
           3D: three.js + three-vrm (VRM) · vendored MMDLoader + Ammo physics (MMD) · OBJ/GLTF (static)

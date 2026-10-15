@@ -60,6 +60,34 @@ The status row follows the job (`Claude · trim the intro · Edit cut.py`). When
 
 "Resume", "continue", "pick it up" in a folder reuses the Claude session she started there, or the most recent Claude Code conversation in that folder if she has none (`claude --continue`), so a job you began yourself in a terminal can be carried on by voice.
 
+## Browser: she drives your Chrome
+
+On macOS she works inside the Chrome you already have open, logged in as you, through AppleScript. No second browser, no separate profile. Two one-time things:
+
+1. The first time, macOS asks whether Deskmate may control Google Chrome. Say yes (System Settings → Privacy & Security → Automation if you change your mind).
+2. In Chrome: **View → Developer → Allow JavaScript from Apple Events.** Tabs, URLs and navigation work without it; reading the page, clicking and typing need it. She tells you if it is off.
+
+`DESKMATE_BROWSER_APP=Brave Browser` (or Microsoft Edge) switches browsers; they speak the same dictionary. Windows and Linux are not covered yet; there, "ask Claude to …" with `DESKMATE_CLAUDE_ARGS=--chrome` hands browsing to Claude Code's own Chrome integration.
+
+### Quick verbs (no thinking, instant)
+
+| you say | she does |
+|---|---|
+| "what's on this page" / "summarize this tab" / "is there a price on this page" | reads the page text and answers from it |
+| "find 'refund policy' on this page" | Chrome's find, scrolled to the match |
+| "search for Dublin weather" / "google three-vrm docs" | opens the search in a new tab |
+| "next tab" / "previous tab" / "close this tab" / "go back" / "reload" / "scroll down" | exactly that |
+| "click sign in" / "press the blue button" | clicks the first visible link or button with that label |
+| "open github.com" / "open youtube" | opens the site (or a matching app) |
+
+### Browsing goals (she thinks)
+
+"Look up the cheapest flight to Lisbon next Friday", "find out when the Dublin Marathon is", "in Chrome, open my GitHub notifications and tell me what's new", `/browse <goal>`. Her brain runs a short look-decide-act loop in the active tab: each step it sees the page text and the numbered links, buttons and fields, picks one action (search, open, click, type, scroll, back) and repeats, up to `DESKMATE_BROWSE_STEPS` (12). At the end she tells you what she found, with the facts kept exact, and the status row shows each step while it runs. Say "stop" to cut it short.
+
+Rules she keeps regardless of what the page says: never type passwords, card numbers or personal data; anything that buys, pays, sends, posts, deletes or signs is read back to you first and waits for a yes, as are clicks and typing on checkout or payment pages. A local 8B model handles simple goals (search, open the right result, read off an answer); Gemini is noticeably better at longer ones. For heavy browsing jobs, "ask Claude to …" with `--chrome` in `DESKMATE_CLAUDE_ARGS` uses Claude Code's Chrome extension instead.
+
+The log of every browsing run is in `<user data>/tasks/`.
+
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.
+Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.

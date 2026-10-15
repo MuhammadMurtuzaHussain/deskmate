@@ -1,10 +1,12 @@
 import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
 import { Brain, type Stimulus, type TaskReport } from './brain'
+import { browse } from './browse'
+import * as chrome from './chrome'
 import { routeCommand } from './commands'
 import { loadDotEnv } from './env'
 import { Memory } from './memory'
@@ -69,7 +71,7 @@ let { character, persona } = readCharacter(activeId)
 let memory = new Memory(join(app.getPath('userData'), `memory-${activeId}.json`))
 const brain = new Brain(memory, persona, settings)
 
-// Her hands and ears: Claude Code jobs, the folders they run in, and hands-free listening.
+// Her hands and ears: Claude Code jobs, the folders they run in, her Chrome, and hands-free listening.
 const agent = new Agent(join(USER_DATA, 'tasks'))
 const projects = new Projects(settings, join(USER_DATA, 'projects.json'))
 let hands = Boolean(agent.findBinary())
@@ -79,13 +81,18 @@ const LISTEN_SHORTCUT = process.env.DESKMATE_LISTEN_SHORTCUT?.trim() || 'Command
 const WAKE_NAME = /^(1|true|yes|on)$/i.test(process.env.DESKMATE_WAKE_NAME?.trim() || '')
 /** always | voice (default) | never: whether she repeats a job back and waits for a yes before Claude starts */
 const CONFIRM_JOBS = (process.env.DESKMATE_CONFIRM_JOBS?.trim().toLowerCase() || 'voice') as 'always' | 'voice' | 'never'
-/** a job she has read back and is waiting on a yes/no for */
-let pending: { call: ToolCall; project: Project; at: number } | null = null
+
+/** Something she is waiting on an answer for: a job she read back, or a risky browser action. */
+type Pending =
+  | { kind: 'job'; call: ToolCall; project: Project; at: number }
+  | { kind: 'confirm'; at: number; resolve: (yes: boolean) => void }
+let pending: Pending | null = null
 
 function switchCharacter(id: string): void {
   if (!characters.some((c) => c.id === id)) return
   activeId = id
   trayDancing = false
+  if (pending?.kind === 'confirm') pending.resolve(false)
   pending = null
   ;({ character, persona } = readCharacter(id))
   memory = new Memory(join(app.getPath('userData'), `memory-${id}.json`))
@@ -214,6 +221,7 @@ function buildTrayMenu(): Menu {
       submenu: projectsMenu()
     },
     { label: running ? `Claude jobs (${running} running)` : 'Claude jobs', enabled: hands, submenu: jobsMenu() },
+    ...(browsing ? [{ label: 'Stop browsing', click: () => void cancelJob() }] : []),
     {
       label: 'Character',
       submenu: characters.map((c) => ({
@@ -501,6 +509,8 @@ ipcMain.handle('chat:send', (_event, rawText: string): Promise<Reply> => handleC
 
 // ---- what she can do with her hands
 
+const QUIET: Reply = { say: '', emotion: 'neutral', speak: false, remember: [] }
+
 /** A plain line in her voice's place: for mechanics (nothing running, no folder) that no model needs to phrase. */
 async function sayPlain(say: string, emotion: Emotion = 'neutral'): Promise<Reply> {
   const reply: Reply = { say, emotion, speak: true, remember: [] }
@@ -517,7 +527,7 @@ async function report(task: TaskReport): Promise<Reply> {
 
 function yesNo(text: string): 'yes' | 'no' | null {
   const t = text.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').trim()
-  if (/^(?:yes|yeah|yep|yup|sure|ok|okay|go|go ahead|do it|send it|send|please|yes please|confirm|affirmative|run it|ship it)\b/.test(t)) return 'yes'
+  if (/^(?:yes|yeah|yep|yup|sure|ok|okay|go|go ahead|do it|send it|send|please|yes please|confirm|affirmative|run it|ship it|click it|type it)\b/.test(t)) return 'yes'
   if (/^(?:no|nope|nah|don't|do not|cancel|stop|never mind|nevermind|forget it|wait|hold on|not now)\b/.test(t)) return 'no'
   return null
 }
@@ -528,12 +538,33 @@ function stripName(text: string): string {
   return text.replace(new RegExp(`^(?:hey|hi|ok|okay|yo|hello|so)?[\\s,]*${name}[\\s,:!.?-]+`, 'i'), '').replace(new RegExp(`[\\s,]+${name}[.!?]*$`, 'i'), '').trim() || text
 }
 
+/** Reads a risky action back to the user and waits up to a minute for a yes; anything else is a no. */
+function confirm(question: string): Promise<boolean> {
+  if (pending?.kind === 'confirm') pending.resolve(false)
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (yes: boolean): void => {
+      if (settled) return
+      settled = true
+      if (pending?.kind === 'confirm' && pending.resolve === done) pending = null
+      resolve(yes)
+    }
+    pending = { kind: 'confirm', at: Date.now(), resolve: done }
+    setTimeout(() => done(false), 60_000).unref()
+    void sayPlain(question)
+  })
+}
+
 function jobTitle(call: ToolCall): string {
   if (call.name === 'claude_resume') return call.input ? `continue, then: ${call.input}` : 'continue the last session'
   return call.input
 }
 
 async function cancelJob(id?: string): Promise<Reply> {
+  if (browsing) {
+    browseStop = true
+    return sayPlain('Stopping. One second.')
+  }
   const task = agent.cancel(id)
   refreshTray()
   if (!task) return sayPlain("Nothing's running right now.")
@@ -551,7 +582,7 @@ async function startJob(call: ToolCall, project: Project, acknowledged: boolean)
   console.log(`[hands] job ${task.id} in ${project.path}: ${task.title}`)
   status(`Claude · ${task.title} · starting…`)
   refreshTray()
-  if (acknowledged) return { say: '', emotion: 'neutral', speak: false, remember: [] }
+  if (acknowledged) return QUIET
   return report({ phase: 'started', title: task.title, folder: project.name })
 }
 
@@ -561,7 +592,7 @@ async function openThing(raw: string): Promise<Reply> {
     .trim()
     .replace(/^(?:the |my )/i, '')
     .replace(/\s+(?:folder|project|directory|repo|app|website|site)$/i, '')
-  if (/^(?:https?:\/\/|www\.)/i.test(input) || /^[\w-]+\.(?:com|org|net|io|dev|app|ai|co)(?:\/|$)/i.test(input)) {
+  if (/^(?:https?:\/\/|www\.)/i.test(input) || /^[\w-]+\.(?:com|org|net|io|dev|app|ai|co|uk|ie|de|fr)(?:\/|$)/i.test(input)) {
     await shell.openExternal(/^https?:/i.test(input) ? input : `https://${input}`)
     return sayPlain(`Opening ${input}.`)
   }
@@ -575,8 +606,13 @@ async function openThing(raw: string): Promise<Reply> {
     await shell.openPath(expanded)
     return sayPlain(`Opening ${basename(expanded)}.`)
   }
-  const ok = await openApp(input)
-  return ok ? sayPlain(`Opening ${input}.`) : sayPlain(`I couldn't find anything called ${input} to open.`, 'sad')
+  if (await openApp(input)) return sayPlain(`Opening ${input}.`)
+  if (/^[\w-]+$/.test(input)) {
+    // Not an app, one word: most likely a site ("open youtube").
+    await shell.openExternal(`https://${input.toLowerCase()}.com`)
+    return sayPlain(`Opening ${input.toLowerCase()}.com.`)
+  }
+  return sayPlain(`I couldn't find anything called ${input} to open.`, 'sad')
 }
 
 function openApp(name: string): Promise<boolean> {
@@ -589,6 +625,124 @@ function openApp(name: string): Promise<boolean> {
   return new Promise((resolve) => execFile(cmd, args, { timeout: 10_000 }, (err) => resolve(!err)))
 }
 
+function chromeMessage(err: unknown): string {
+  return err instanceof chrome.ChromeError ? err.message : `Chrome gave me trouble: ${(err as Error).message}`
+}
+
+/** Tab, navigation and page verbs from the spoken-command router: fast, no model involved. */
+async function chromeVerb(input: string): Promise<Reply> {
+  const colon = input.indexOf(':')
+  const verb = colon >= 0 ? input.slice(0, colon) : input
+  const arg = colon >= 0 ? input.slice(colon + 1).trim() : ''
+  try {
+    switch (verb) {
+      case 'next_tab':
+        status(`tab: ${await chrome.switchTab(1)}`)
+        return QUIET
+      case 'prev_tab':
+        status(`tab: ${await chrome.switchTab(-1)}`)
+        return QUIET
+      case 'close_tab':
+        await chrome.closeTab()
+        status('closed the tab')
+        return QUIET
+      case 'back':
+      case 'forward':
+      case 'reload':
+        await chrome.navigate(verb)
+        return QUIET
+      case 'scroll_down':
+      case 'scroll_up':
+        await chrome.scroll(verb === 'scroll_down' ? 'down' : 'up')
+        return QUIET
+      case 'search':
+        await chrome.open(chrome.searchUrl(arg))
+        return sayPlain(`Searching for ${arg}.`)
+      case 'click': {
+        const result = await chrome.clickText(arg)
+        if (result === 'missing') return sayPlain(`I can't see anything called "${arg}" to click on this page.`, 'annoyed')
+        status(result)
+        return QUIET
+      }
+      case 'find': {
+        if (await chrome.find(arg)) {
+          status(`found "${arg}"`)
+          return QUIET
+        }
+        return sayPlain(`"${arg}" isn't on this page.`)
+      }
+      default:
+        return sayPlain(`I don't know how to ${verb} in Chrome.`)
+    }
+  } catch (err) {
+    return sayPlain(chromeMessage(err), 'sad')
+  }
+}
+
+/** A question about the page open in Chrome: she reads its text instead of squinting at a screenshot. */
+async function answerAboutPage(question: string, voice?: boolean): Promise<Reply> {
+  let page: Awaited<ReturnType<typeof chrome.pageText>>
+  try {
+    page = await chrome.pageText(6000)
+  } catch (err) {
+    if (err instanceof chrome.ChromeError && (err.code === 'no_window' || err.code === 'not_running' || err.code === 'unsupported')) {
+      // Not a Chrome page then; her eyes will do.
+      const screenshot = await captureScreen().catch(() => undefined)
+      const reply = await brain.respond({ kind: 'chat', text: question, screenshot, blind: !screenshot, voice })
+      await deliver(reply, 'chat')
+      return reply
+    }
+    return sayPlain(chromeMessage(err), 'sad')
+  }
+  status(`reading ${page.title.slice(0, 40) || page.url}…`)
+  const reply = await brain.respond({ kind: 'chat', text: question, voice, page: { url: page.url, title: page.title, text: page.text } })
+  await deliver(reply, 'chat')
+  return reply
+}
+
+let browsing = false
+let browseStop = false
+
+/** A browsing goal: her brain runs the look-decide-act loop in the active Chrome tab, then she reports back. */
+async function runBrowse(goal: string, acknowledged: boolean): Promise<Reply> {
+  if (!chrome.chromeAvailable()) return sayPlain('I can only drive Chrome on a Mac for now. Ask Claude to do it instead.', 'sad')
+  if (!brain.canThink) return sayPlain('I need a brain for that: paste a Gemini key or start Ollama.', 'sad')
+  if (browsing) return sayPlain("I'm already in the middle of something in Chrome. Say \"stop\" first.", 'annoyed')
+  if (!goal.trim()) return sayPlain('Browse for what?')
+  browsing = true
+  browseStop = false
+  refreshTray()
+  mkdirSync(join(USER_DATA, 'tasks'), { recursive: true })
+  const logPath = join(USER_DATA, 'tasks', `browse-${Date.now().toString(36)}.log`)
+  const log = (line: string): void => {
+    try {
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+    } catch {
+      // not her problem
+    }
+  }
+  if (!acknowledged) void report({ kind: 'browse', phase: 'started', title: goal })
+  status(`browsing · ${goal.slice(0, 40)}`)
+  try {
+    const result = await browse(goal, {
+      plan: (system, user, schema) => brain.plan(system, user, schema),
+      confirm,
+      onStep: status,
+      log,
+      stopped: () => browseStop
+    })
+    console.log(`[browse] ${result.ok ? 'done' : 'stopped'} after ${result.steps} step(s): ${result.answer.slice(0, 120)}`)
+    return report({ kind: 'browse', phase: result.ok ? 'done' : 'failed', title: goal, detail: result.answer })
+  } catch (err) {
+    console.error('[browse]', err)
+    return sayPlain(chromeMessage(err), 'sad')
+  } finally {
+    browsing = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
 async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
   switch (call.name) {
@@ -598,6 +752,12 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return cancelJob()
     case 'open':
       return openThing(call.input)
+    case 'page':
+      return answerAboutPage(call.input, opts.voice)
+    case 'browse':
+      return runBrowse(call.input, Boolean(opts.acknowledged))
+    case 'chrome':
+      return chromeVerb(call.input)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -610,10 +770,10 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       if (call.name === 'claude' && !call.input.trim()) return sayPlain('Tell me what Claude should do.')
       const busy = agent.running().find((t) => t.cwd === project.path)
       if (busy) return sayPlain(`Claude is still busy in ${project.name} with "${busy.title}". Say "stop the task", or wait.`, 'annoyed')
-      const confirm = CONFIRM_JOBS === 'always' || (CONFIRM_JOBS === 'voice' && Boolean(opts.voice))
-      if (confirm) {
+      const needsYes = CONFIRM_JOBS === 'always' || (CONFIRM_JOBS === 'voice' && Boolean(opts.voice))
+      if (needsYes) {
         // A misheard sentence must never start a job: she reads it back and waits for a yes.
-        pending = { call, project, at: Date.now() }
+        pending = { kind: 'job', call, project, at: Date.now() }
         return report({ phase: 'confirm', title: jobTitle(call), folder: project.name })
       }
       return startJob(call, project, Boolean(opts.acknowledged))
@@ -637,13 +797,20 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   }
   if (text.toLowerCase() === '/listen') {
     await setListening(!listening)
-    return { say: '', emotion: 'neutral', speak: false, remember: [] }
+    return QUIET
   }
-  // A job waiting for a yes or no.
+  // Something is waiting on a yes or no.
   if (pending) {
-    if (Date.now() - pending.at > 90_000) pending = null
-    else {
-      const answer = yesNo(stripName(text))
+    const answer = yesNo(stripName(text))
+    if (pending.kind === 'confirm') {
+      const p = pending
+      pending = null
+      p.resolve(answer === 'yes')
+      if (answer) return QUIET
+      // Not an answer: that is a no for the risky action, and a normal message otherwise.
+    } else if (Date.now() - pending.at > 90_000) {
+      pending = null
+    } else {
       if (answer === 'yes') {
         const p = pending
         pending = null
@@ -657,6 +824,9 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
       pending = null
     }
   }
+  // "stop" while something runs always means stop that.
+  if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (browsing || agent.running().length)) return cancelJob()
+
   const routed = routeCommand(stripName(text))
   if (routed) return runTool(routed, { voice: opts.voice })
 
@@ -813,6 +983,9 @@ app.whenReady().then(async () => {
     console.log(claude.ok ? `[hands] Claude Code ${claude.version} at ${agent.findBinary()}; jobs run with --permission-mode ${agent.permissionMode}` : `[hands] ${claude.error}`)
     refreshTray()
   })
+  if (chrome.chromeAvailable()) {
+    void chrome.running().then((up) => console.log(`[browser] ${chrome.BROWSER_APP} ${up ? 'is open; she can drive it' : 'is not open right now'}`))
+  }
   if (ears) {
     void sttHealthy().then((ok) => console.log(`[ears] local speech-to-text ${ok ? 'answering' : 'not answering yet (the server may still be loading)'} at ${sttUrl()}`))
     try {
@@ -832,6 +1005,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   quitting = true
+  browseStop = true
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })
