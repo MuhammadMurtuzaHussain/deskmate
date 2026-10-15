@@ -1,0 +1,20 @@
+{
+  "id": "mika",
+  "name": "Mika",
+  "model": "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru_greeter_t03.model3.json",
+  "note": "Default character. The model is Live2D's free sample 'Haru', loaded from a CDN so nothing is bundled. Swap in your own: see docs/CHARACTERS.md.",
+  "expressions": {
+    "neutral": "f00",
+    "happy": "f01",
+    "flirty": "f01",
+    "surprised": "f02",
+    "annoyed": "f03",
+    "angry": "f04",
+    "sad": "f05",
+    "smug": "f06",
+    "shy": "f07"
+  },
+  "motions": { "idle": "Idle", "react": "Tap" },
+  "physics": { "sway": 1.0, "bounce": 1.3 },
+  "voice": { "kokoro": "af_heart", "speed": 1.0, "elevenlabs": "pFZP5JQG7iQjIQuC4Bku", "say": "Samantha" }
+}

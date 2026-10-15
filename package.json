@@ -1,0 +1,183 @@
+{
+  "name": "deskmate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Live2D AI desk companion that lives on your screen: watches what you do, talks back with a voice and expressions, remembers you. Runs fully local with Ollama + Kokoro, or on Gemini.",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "ensure-electron": "node scripts/ensure-electron.cjs",
+    "dev": "node scripts/ensure-electron.cjs && electron-vite dev",
+    "build": "node scripts/ensure-electron.cjs && electron-vite build",
+    "start": "node scripts/ensure-electron.cjs && electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder",
+    "dist:mac": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --mac",
+    "dist:win": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --win",
+    "dist:linux": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --linux",
+    "pack": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@pixi/unsafe-eval": "^7.4.3",
+    "chokidar": "^5.0.0",
+    "pixi-live2d-display-lipsyncpatch": "^0.5.0-ls-8",
+    "pixi.js": "^7.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "typescript": "^5.9.0"
+  },
+  "productName": "Deskmate",
+  "author": {
+    "name": "Muhammad Murtuza Hussain",
+    "email": "muhammadmurtuzahussain@gmail.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/MuhammadMurtuzaHussain/deskmate#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MuhammadMurtuzaHussain/deskmate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MuhammadMurtuzaHussain/deskmate/issues"
+  },
+  "keywords": [
+    "live2d",
+    "ai-companion",
+    "desktop-pet",
+    "vtuber",
+    "electron",
+    "ollama",
+    "gemini",
+    "kokoro",
+    "text-to-speech",
+    "local-llm",
+    "anime",
+    "waifu",
+    "desktop-companion",
+    "screen-aware",
+    "macos",
+    "windows",
+    "linux"
+  ],
+  "build": {
+    "appId": "com.murtuza.deskmate",
+    "productName": "Deskmate",
+    "copyright": "Copyright \u00a9 2026 Muhammad Murtuza Hussain",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "out/**",
+      "package.json",
+      "!out/renderer/models/jian/**",
+      "!out/renderer/models/nicole/**"
+    ],
+    "extraResources": [
+      {
+        "from": "character/mika",
+        "to": "character/mika"
+      },
+      {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "tray*.png",
+          "tray.ico",
+          "icon.png"
+        ]
+      },
+      {
+        "from": "tts-local",
+        "to": "tts-local",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!__pycache__/**"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSScreenCaptureDescription": "Deskmate looks at your screen so your companion can react to what you are doing.",
+        "NSMicrophoneUsageDescription": "Reserved for voice input."
+      }
+    },
+    "dmg": {
+      "artifactName": "Deskmate-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Deskmate",
+      "artifactName": "Deskmate-${version}-win-${arch}-setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "artifactName": "Deskmate-${version}-linux-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "Deskmate",
+          "Comment": "AI desk companion"
+        }
+      }
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "MuhammadMurtuzaHussain",
+      "repo": "deskmate",
+      "releaseType": "release"
+    },
+    "portable": {
+      "artifactName": "Deskmate-${version}-win-${arch}-portable.${ext}"
+    }
+  }
+}

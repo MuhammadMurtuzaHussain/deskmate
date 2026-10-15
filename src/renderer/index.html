@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://cubism.live2d.com; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: blob: data: file: https://cdn.jsdelivr.net; worker-src 'self' blob:; img-src 'self' data: blob: file: https://cdn.jsdelivr.net; media-src 'self' blob: https://cdn.jsdelivr.net; font-src 'self' data:"
+    />
+    <title>deskmate</title>
+    <!-- Live2D Cubism Core: proprietary, redistributable unmodified, loaded from Live2D's own CDN -->
+    <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="grip" title="drag me"></div>
+    <div id="bubble" class="hidden"></div>
+    <div id="panel">
+      <div id="statusrow">
+        <div id="status">loading…</div>
+        <select id="character" title="switch character"></select>
+      </div>
+      <form id="keyform" class="hidden">
+        <input id="key" type="password" placeholder="paste your Gemini API key (aistudio.google.com/apikey)" autocomplete="off" />
+        <button type="submit">save</button>
+      </form>
+      <form id="chat">
+        <input id="input" type="text" placeholder="say something…" autocomplete="off" />
+        <button type="button" id="look" title="look at the screen now">look</button>
+        <button type="button" id="watch" title="watch the screen and project files">watch</button>
+      </form>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+:root {
+  --ink: #f4f1ff;
+  --dim: rgba(244, 241, 255, 0.55);
+  --panel: rgba(18, 14, 32, 0.78);
+  --accent: #b38cff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; }
+#grip { position: absolute; top: 6px; left: 50%; width: 44px; height: 6px; margin-left: -22px; border-radius: 3px; background: rgba(255,255,255,0.35); -webkit-app-region: drag; cursor: grab; }
+#bubble {
+  position: absolute; left: 14px; right: 14px; top: 20px;
+  padding: 10px 12px; border-radius: 14px; background: var(--panel); backdrop-filter: blur(10px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35); font-size: 14px; transition: opacity 0.35s;
+}
+#bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; border: 8px solid transparent; border-top-color: var(--panel); border-bottom: 0; margin-left: -8px; }
+#bubble.hidden { opacity: 0; pointer-events: none; }
+#panel {
+  position: absolute; left: 10px; right: 10px; bottom: 10px;
+  padding: 8px; border-radius: 14px; background: var(--panel); backdrop-filter: blur(10px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+#statusrow { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; }
+#status { flex: 1; min-width: 0; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#character { font-size: 11px; padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); outline: none; }
+#chat { display: flex; gap: 6px; }
+#input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); outline: none; }
+#input:focus { border-color: var(--accent); }
+button { padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); cursor: pointer; }
+button:hover { background: rgba(255,255,255,0.16); }
+button.on { background: var(--accent); color: #1a1030; border-color: transparent; }
+
+#keyform { display: flex; gap: 6px; margin-bottom: 6px; }
+#keyform.hidden { display: none; }
+#key { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.08); color: var(--ink); outline: none; font-size: 12px; }
+#key:focus { border-color: var(--accent); }
+body.dragging, body.dragging * { cursor: grabbing !important; }

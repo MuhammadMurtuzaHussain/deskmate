@@ -1,0 +1,3 @@
+# Kokoro-82M (Apache-2.0) and what it needs to serve WAV. torch and misaki[en] come in through kokoro.
+kokoro>=0.9.4
+soundfile>=0.12

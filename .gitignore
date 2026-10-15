@@ -1,0 +1,21 @@
+node_modules/
+out/
+dist/
+release/
+
+# secrets and local config
+.env
+.env.local
+.env.hidden
+.env.bak*
+
+# private characters and models (bring your own; see docs/CHARACTERS.md)
+character/jian/
+character/nicole/
+character/persona.*.md
+src/renderer/public/models/jian/
+src/renderer/public/models/nicole/
+
+# local voice runtime
+tts-local/.venv/
+tts-local/__pycache__/
