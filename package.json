@@ -1,6 +1,6 @@
 {
   "name": "deskmate",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "A Live2D or 3D (VRM / MMD) AI desk companion that lives on your screen: watches what you do, talks back with a voice and expressions, dances when you ask, remembers you. Runs fully local with Ollama + Kokoro, or on Gemini.",
   "main": "./out/main/index.js",
