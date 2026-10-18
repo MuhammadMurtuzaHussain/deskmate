@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, DraftAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, ScheduleSetupState, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -176,6 +176,7 @@ const CHECKS: [string, keyof NoticePrefs][] = [
   ['n-read', 'readMessages'],
   ['n-calendar', 'calendar'],
   ['n-reminders', 'reminders'],
+  ['n-scheduled', 'scheduled'],
   ['n-dnd', 'dnd']
 ]
 
@@ -333,6 +334,97 @@ $<HTMLButtonElement>('mcp-reload').addEventListener('click', async (e) => {
   mcpMessage(m.errors.length ? 'Loaded, with problems (see above).' : 'Loaded.', m.errors.length ? 'bad' : 'good')
 })
 
+// ---- Scheduled jobs, the heartbeat, the morning brief
+
+const scheduleMsg = $<HTMLDivElement>('schedule-msg')
+
+function ago(at: number): string {
+  const min = Math.round((Date.now() - at) / 60_000)
+  if (min < 1) return 'just now'
+  if (min < 90) return `${min} min ago`
+  const h = Math.round(min / 60)
+  return h < 36 ? `${h} h ago` : `${Math.round(h / 24)} days ago`
+}
+
+function renderSchedule(sc: ScheduleSetupState | undefined): void {
+  $<HTMLElement>('schedule').classList.toggle('hidden', !sc || !api.jobAction)
+  if (!sc) return
+  const act = (label: string, id: string, action: JobSetupAction, primary = false): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.textContent = label
+    if (primary) b.className = 'primary'
+    b.addEventListener('click', async () => {
+      if (!api.jobAction) return
+      const next = await api.jobAction(id, action)
+      renderSchedule(next)
+      scheduleMsg.textContent = { pause: 'Paused.', resume: 'Back on.', delete: 'Deleted.', run: 'Running it now.', approve: 'Doing it now.', drop: 'Dropped.' }[action]
+      scheduleMsg.className = 'msg good'
+    })
+    return b
+  }
+  const jobs = $<HTMLDivElement>('schedule-jobs')
+  jobs.replaceChildren()
+  if (!sc.jobs.length) {
+    const row = document.createElement('div')
+    row.className = 'hint dim'
+    row.textContent = 'No scheduled jobs yet.'
+    jobs.append(row)
+  }
+  for (const j of sc.jobs) {
+    const row = document.createElement('div')
+    row.className = 'pair'
+    const text = document.createElement('div')
+    const name = document.createElement('b')
+    name.textContent = j.label
+    const note = document.createElement('span')
+    const last = j.last ? ` · last ${ago(j.last.at)}: ${j.last.status}` : ''
+    note.textContent = `${j.rule}${j.mode === 'plan' ? ' (as a plan)' : ''} · ${j.paused ? 'paused' : j.next ? `next ${j.next}` : 'done'}${last}`
+    note.title = j.last?.summary ?? j.task
+    text.append(name, note)
+    row.append(text, act('Run now', j.id, 'run'), act(j.paused ? 'Resume' : 'Pause', j.id, j.paused ? 'resume' : 'pause'), act('Delete', j.id, 'delete'))
+    jobs.append(row)
+  }
+  const waiting = $<HTMLDivElement>('schedule-waiting')
+  waiting.replaceChildren()
+  for (const w of sc.waiting) {
+    const row = document.createElement('div')
+    row.className = 'pair'
+    const text = document.createElement('div')
+    const name = document.createElement('b')
+    name.textContent = `Waiting for your yes (${w.label})`
+    const note = document.createElement('span')
+    note.textContent = `${w.what} · ${ago(w.at)}`
+    text.append(name, note)
+    row.append(text, act('Do it', w.id, 'approve', true), act('Drop', w.id, 'drop'))
+    waiting.append(row)
+  }
+  const hb = sc.heartbeat
+  const lastBeat = hb.last ? ` Last check ${ago(hb.last.at)}: ${hb.last.skipped ? `skipped (${hb.last.skipped})` : hb.last.said ? `"${hb.last.said}"` : 'nothing needed you'}${hb.last.tokens ? `, ${hb.last.tokens} tokens` : ''}.` : ''
+  $<HTMLSpanElement>('hb-note').textContent = hb.minutes
+    ? `every ${hb.minutes} minutes she checks ${hb.items} thing${hb.items === 1 ? '' : 's'} from HEARTBEAT.md and stays quiet unless one needs you; skipped in quiet hours and overnight.${lastBeat}`
+    : 'off (DESKMATE_HEARTBEAT_MINUTES=0)'
+  box('brief-on').checked = sc.brief.on
+  if (document.activeElement !== box('brief-after')) box('brief-after').value = sc.brief.after
+  if (!sc.agentCore) {
+    scheduleMsg.textContent = 'Jobs and the heartbeat need Claude as her brain (section 1); without it a job only tells you it is due.'
+    scheduleMsg.className = 'msg'
+  }
+  chip($<HTMLSpanElement>('schedule-chip'), sc.waiting.length ? `${sc.waiting.length} waiting for you` : `${sc.jobs.length} job${sc.jobs.length === 1 ? '' : 's'}`, sc.waiting.length ? 'bad' : sc.jobs.length ? 'ok' : '')
+}
+
+$<HTMLButtonElement>('hb-open').addEventListener('click', (e) => {
+  e.preventDefault()
+  void api.openHeartbeat?.()
+})
+box('brief-on').addEventListener('change', async () => {
+  if (!api.setBrief) return
+  renderSchedule(await api.setBrief({ on: box('brief-on').checked }))
+})
+box('brief-after').addEventListener('change', async () => {
+  if (!api.setBrief || !/^\d{2}:\d{2}$/.test(box('brief-after').value)) return
+  renderSchedule(await api.setBrief({ after: box('brief-after').value }))
+})
+
 // ---- What she remembers and knows
 
 const learnMsg = $<HTMLDivElement>('learn-msg')
@@ -418,6 +510,7 @@ async function refresh(): Promise<void> {
   renderNotices(state.notices)
   renderMcp(state.mcp)
   renderLearn(state.learn)
+  renderSchedule(state.schedule)
 }
 
 useOllama.addEventListener('click', async () => {

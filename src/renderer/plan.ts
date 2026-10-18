@@ -28,9 +28,11 @@ function button(label: string, action: PlanAction, primary = false): HTMLButtonE
 function render(plan: Plan | null): void {
   if (!plan) return
   const skill = plan.kind === 'skill'
+  // The morning brief: lines to read, nothing to run.
+  const brief = plan.kind === 'brief'
   $('title').textContent = plan.title
   const state = $('state')
-  state.textContent = skill ? 'waiting for your yes' : STATE_LABEL[plan.status]
+  state.textContent = brief ? 'today' : skill ? 'waiting for your yes' : STATE_LABEL[plan.status]
   state.className = `chip ${plan.status}`
   const list = $('steps')
   list.innerHTML = ''
@@ -39,11 +41,11 @@ function render(plan: Plan | null): void {
     li.className = s.status
     const icon = document.createElement('span')
     icon.className = 'icon'
-    icon.textContent = s.status === 'done' ? '✓' : s.status === 'failed' ? '!' : s.status === 'pending' ? String(i + 1) : ''
+    icon.textContent = brief ? '•' : s.status === 'done' ? '✓' : s.status === 'failed' ? '!' : s.status === 'pending' ? String(i + 1) : ''
     const text = document.createElement('span')
     text.className = 'text'
     text.textContent = s.text
-    if (!skill) {
+    if (!skill && !brief) {
       const worker = document.createElement('span')
       worker.className = 'worker'
       worker.textContent = `· ${WORKER_LABEL[s.worker]}`
@@ -62,12 +64,15 @@ function render(plan: Plan | null): void {
   const buttons = $('buttons')
   buttons.innerHTML = ''
   // A skill she wrote: it is only used after a yes.
-  if (skill) buttons.append(button(plan.title.startsWith('Better') ? 'Update it' : 'Keep it', 'go', true), button('Throw away', 'stop'), button('Later', 'dismiss'))
+  if (brief) buttons.append(button('Got it', 'dismiss', true))
+  else if (skill) buttons.append(button(plan.title.startsWith('Better') ? 'Update it' : 'Keep it', 'go', true), button('Throw away', 'stop'), button('Later', 'dismiss'))
   else if (plan.status === 'draft') buttons.append(button('Go', 'go', true), button('Cancel', 'stop'))
   else if (plan.status === 'running') buttons.append(button('Pause', 'pause'), button('Stop', 'stop'))
   else if (plan.status === 'paused') buttons.append(button('Resume', 'resume', true), button('Retry step', 'retry'), button('Stop', 'stop'))
   else buttons.append(button('Close', 'dismiss'))
-  $('hint').textContent = skill
+  $('hint').textContent = brief
+    ? ''
+    : skill
     ? 'Say "yes" to keep it. Later: tray → Skills'
     : plan.status === 'draft' ? 'Say "go", "skip step 2" or "change step 3 to …"' : plan.status === 'running' ? 'Say "pause" or "stop the plan"' : ''
   // The window fits the card.

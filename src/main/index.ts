@@ -1,11 +1,11 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, screen, shell, systemPreferences, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
-import { callClaude, ClaudeError, toClaudeError } from './anthropic'
+import { callClaude, ClaudeError, replyText, toClaudeError } from './anthropic'
 import { runAgentTurn, runOneTool } from './core'
 import { fastRoute, FILEISH, RE_FIND } from './fastpath'
 import { McpHub } from './mcp'
@@ -34,6 +34,10 @@ import { agendaLine, dueEvents, eventLine, type CalendarEvent } from './calendar
 import { appAllowed, BannerWatch, messageLine } from './inbox'
 import { Journal } from './journal'
 import { NoticeCenter, noticePrefs, parseQuietHours, type Notice } from './notice'
+import { changeJob, jobsLine, nextText, resolveSchedule, ruleText, ScheduleStore, scheduledLine, type Job } from './schedule'
+import { Scheduler, type Ask, type RunResult } from './scheduler'
+import { beatRequest, HEARTBEAT_TEMPLATE, items as heartbeatItems, parseBeat, skipReason, Told, usageRecord } from './heartbeat'
+import { briefDue, briefLines, briefPrefs, briefSpoken, dayKey, noteForToday } from './brief'
 import { dueLine, listLine, parseReminder, parseWhen, ReminderStore, setLine, timeIn, timerName, toSecondPerson, whenText, type Reminder, type ReminderIntent } from './reminders'
 import { planCommand, planSummary, plannerSystem, PLAN_SCHEMA, PlanStore, reviseSystem, toPlan, type PlanCommand } from './plan'
 import { PlanCard } from './planwin'
@@ -44,7 +48,7 @@ import { loadSkills, matchSkill, runSkill, skillsForPlanner, type Skill, type Sk
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -439,6 +443,7 @@ function buildTrayMenu(): Menu {
       ]
     },
     ...remindersMenu(),
+    ...scheduledMenu(),
     {
       label: notices.quiet() && !noticeSettings().dnd ? 'Do not disturb (quiet hours now)' : 'Do not disturb',
       type: 'checkbox',
@@ -1158,17 +1163,22 @@ function stripName(text: string): string {
 
 /** Reads a risky action back to the user and waits up to a minute for a yes; anything else is a no. */
 function confirm(question: string): Promise<boolean> {
+  return ask(question).then((yes) => yes === true)
+}
+
+/** A yes-or-no question: true, false, or null when no answer came in time (a scheduled job then waits instead). */
+function ask(question: string, timeoutMs = 60_000): Promise<boolean | null> {
   if (pending?.kind === 'confirm') pending.resolve(false)
   return new Promise((resolve) => {
     let settled = false
-    const done = (yes: boolean): void => {
+    const done = (yes: boolean | null): void => {
       if (settled) return
       settled = true
       if (pending?.kind === 'confirm' && pending.resolve === done) pending = null
       resolve(yes)
     }
     pending = { kind: 'confirm', at: Date.now(), resolve: done }
-    setTimeout(() => done(false), 60_000).unref()
+    setTimeout(() => done(null), timeoutMs).unref()
     void sayPlain(question)
   })
 }
@@ -2505,7 +2515,7 @@ function setNoticePrefs(patch: Partial<NoticePrefs>): void {
 function cleanNoticePatch(raw: unknown): Partial<NoticePrefs> {
   const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const out: Partial<NoticePrefs> = {}
-  for (const k of ['jobs', 'messages', 'readMessages', 'calendar', 'reminders', 'dnd'] as const) if (typeof p[k] === 'boolean') out[k] = p[k] as boolean
+  for (const k of ['jobs', 'messages', 'readMessages', 'calendar', 'reminders', 'scheduled', 'dnd'] as const) if (typeof p[k] === 'boolean') out[k] = p[k] as boolean
   if (typeof p.quietHours === 'string') out.quietHours = p.quietHours.trim().slice(0, 40)
   if (typeof p.calendarLead === 'number' && p.calendarLead > 0) out.calendarLead = Math.min(120, Math.round(p.calendarLead))
   for (const k of ['allowApps', 'denyApps'] as const) {
@@ -2754,6 +2764,8 @@ const recentBanners: { at: number; text: string }[] = []
 let agentBusy = false
 
 function confirmFor(policy: 'always' | 'voice' | 'never', ctx: ToolCtx): boolean {
+  // The guard already asked about this exact call (a scheduled run): no second read-back.
+  if (ctx.approved) return false
   return ctx.mustConfirm || policy === 'always' || (policy === 'voice' && ctx.origin === 'voice')
 }
 
@@ -2929,6 +2941,29 @@ const workerHost: WorkerHost = {
   async makePlan(a) {
     const r = await planFor(a.goal)
     return { ok: r.ok, text: r.ok ? `${r.line} (The plan is on the card beside you; it waits for their go.)` : r.line, say: r.line }
+  },
+  async scheduleJob(a) {
+    const r = resolveSchedule(a)
+    if ('error' in r) return failed(r.error)
+    const job = scheduleStore.add({ task: a.task, rule: r.rule, when: a.when, mode: a.as_plan ? 'plan' : 'agent' })
+    console.log(`[schedule] new job "${job.label}": ${ruleText(job.rule, job.tz)}, first run ${job.nextAt ? new Date(job.nextAt).toString() : 'never'}`)
+    journal.add('schedule', `set up "${job.label}" ${ruleText(job.rule, job.tz)}`)
+    refreshTray()
+    setupChanged()
+    const line = scheduledLine(job, Date.now())
+    return done(useAgentCore() ? line : `${line} (Without Claude as my brain I can only remind you when it comes round.)`, line)
+  },
+  async listJobs() {
+    const line = jobsLine(scheduleStore.list(), scheduleStore.waiting(), Date.now())
+    return done(line, line)
+  },
+  async changeJob(a) {
+    const r = changeJob(scheduleStore, a)
+    if (r.ok) journal.add('schedule', r.text)
+    if (r.run) scheduler.runNow(r.run)
+    refreshTray()
+    setupChanged()
+    return { ok: r.ok, text: r.text, say: r.text }
   },
   async calendar(a) {
     const r = await calendarLine(a.which)
@@ -3180,6 +3215,384 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     agentBusy = acting = false
     refreshTray()
     status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+// ---- scheduled jobs (schedule.ts, scheduler.ts), the heartbeat (heartbeat.ts) and the morning brief (brief.ts)
+
+/** minutes without the keyboard or mouse before she counts the user as away (DESKMATE_AWAY_MINUTES, default 10) */
+const AWAY_MS = Math.max(1, Number(process.env.DESKMATE_AWAY_MINUTES) || 10) * 60_000
+/** how long a question from a scheduled run waits on the phone before the step waits for the desk instead */
+const PHONE_ASK_MS = 15 * 60_000
+let screenLocked = false
+let macAsleep = false
+let wasPresent = true
+
+/** How long since the keyboard or mouse was touched. */
+function idleMs(): number {
+  try {
+    return powerMonitor.getSystemIdleTime() * 1000
+  } catch {
+    return 0
+  }
+}
+
+/** At the desk: the screen unlocked, the Mac awake, and the keyboard or mouse touched in the last few minutes. */
+function userPresent(): boolean {
+  return !screenLocked && !macAsleep && idleMs() < AWAY_MS
+}
+
+function phoneReady(): boolean {
+  return Boolean(remote?.paired && remote.running)
+}
+
+/** She is in the middle of something with the user. */
+function busyWithUser(): boolean {
+  return agentBusy || acting || planRunning || browsing || Boolean(pending) || herSpeaking || hearing
+}
+
+const scheduleStore = new ScheduleStore(join(USER_DATA, 'schedule.json'), (job, info) => scheduler.due(job, info), {
+  graceMs: Math.max(1, Number(process.env.DESKMATE_SCHEDULE_CATCHUP_HOURS) || 24) * 3_600_000,
+  onMissed: (job, lateMs) => {
+    console.log(`[schedule] missed "${job.label}" (${Math.round(lateMs / 3_600_000)} h late)`)
+    journal.add('schedule', `missed "${job.label}": the Mac was off or asleep`)
+  }
+})
+
+const scheduler = new Scheduler({
+  store: scheduleStore,
+  canRun: () => useAgentCore(),
+  runTurn: (job, askFn, lateMs) => runJobTurn(job, askFn, lateMs),
+  async makePlan(job) {
+    const r = await planFor(job.task)
+    return { ok: r.ok, line: r.line }
+  },
+  async runTool(name, input) {
+    const { out } = await runOneTool(currentTools(), name, input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting })
+    refreshTray()
+    return { ok: out.ok, line: out.say ?? (out.untrusted ? (out.ok ? 'Done.' : "That didn't work.") : out.text) }
+  },
+  present: userPresent,
+  phone: phoneReady,
+  quiet: () => notices.quiet(),
+  busy: busyWithUser,
+  async say(line, job) {
+    notices.post({
+      kind: 'schedule',
+      key: `schedule:${job?.id ?? 'back'}:${line.toLowerCase()}`,
+      text: line,
+      brief: job ? `${job.label} ran` : undefined,
+      log: false,
+      speak: async () => {
+        await sayPlain(line)
+      }
+    })
+    refreshTray()
+    setupChanged()
+  },
+  async toPhone(line) {
+    const r = remote
+    if (r) await r.run(async () => r.say(line))
+  },
+  ask: (question, where) => (where === 'phone' && remote ? remote.run(() => ask(question, PHONE_ASK_MS)) : ask(question)),
+  log: (kind, text) => journal.add(kind, text),
+  console: (line) => console.log(line)
+})
+
+/** One scheduled job as its own agent turn: nothing of the conversation in it, her notes and skills as usual. */
+async function runJobTurn(job: Job, askFn: Ask, lateMs: number): Promise<RunResult> {
+  const claude = brain.claudeForAgent
+  if (!claude) throw new Error('no Claude brain')
+  agentBusy = acting = true
+  actStop = false
+  refreshTray()
+  status(`scheduled · ${job.label}`)
+  const log = taskLogger('schedule')
+  log(`job ${job.id} "${job.task}" (${ruleText(job.rule, job.tz)})`)
+  try {
+    const late = lateMs > 5 * 60_000 ? ` It was due ${Math.round(lateMs / 60_000)} minutes ago (the Mac was asleep or off); say so in a few words.` : ''
+    const r = await runAgentTurn(
+      { text: job.task, origin: 'schedule', persona, memory: memory.notesBlock(), skills: skillLines(), history: [], now: new Date(), context: `[Scheduled job "${job.label}", ${ruleText(job.rule, job.tz)}.${late}]` },
+      {
+        model: (req) => callClaude(claude.client, { ...req, model: claude.model, effort: claude.effort, maxTokens: 16000 }),
+        tools: currentTools(),
+        confirm,
+        confirmCall: askFn,
+        onStep: (line) => status(line),
+        log,
+        stopped: () => actStop || quitting,
+        maxRounds: AGENT_ROUNDS
+      }
+    )
+    console.log(`[schedule] "${job.label}": ${r.rounds} round(s)${r.calls.length ? `: ${r.calls.map((c) => `${c.name}${c.deferred ? ' (waits)' : c.ok ? '' : ' ✗'}`).join(', ')}` : ''}`)
+    return { ok: r.ok, say: r.say, calls: r.calls }
+  } finally {
+    agentBusy = acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+/** Away → back at the desk: what was kept for them, then the morning brief, then the steps waiting for a yes. */
+async function presenceTick(why: 'tick' | 'unlock' | 'resume' | 'start'): Promise<void> {
+  const here = userPresent()
+  const back = here && (!wasPresent || why === 'unlock' || why === 'resume' || why === 'start')
+  wasPresent = here
+  if (!back) return
+  await maybeBrief()
+  await scheduler.userBack()
+}
+
+function scheduledMenu(): Electron.MenuItemConstructorOptions[] {
+  const list = scheduleStore.list()
+  const waiting = scheduleStore.waiting()
+  const now = Date.now()
+  return [
+    {
+      label: `Scheduled (${list.length})${waiting.length ? ' · waiting for you' : ''}`,
+      submenu: [
+        ...list.slice(0, 15).map((j) => ({
+          label: `${j.label} · ${j.paused ? 'paused' : j.nextAt ? nextText(j.nextAt, now, j.tz) : 'done'}`,
+          toolTip: `${ruleText(j.rule, j.tz)}${j.last ? ` · last: ${j.last.status}` : ''}`,
+          submenu: [
+            { label: 'Run now', click: () => scheduler.runNow(j) },
+            { label: j.paused ? 'Resume' : 'Pause', click: () => jobAction(j.id, j.paused ? 'resume' : 'pause') },
+            { label: 'Delete', click: () => jobAction(j.id, 'delete') }
+          ]
+        })),
+        ...(waiting.length ? [{ type: 'separator' as const }, ...waiting.slice(0, 6).map((w) => ({ label: `Waiting: ${w.what.slice(0, 60)}`, click: () => void scheduler.userBack() }))] : []),
+        ...(list.length || waiting.length ? [{ type: 'separator' as const }] : []),
+        { label: list.length ? 'Say "every weekday at 9 …" to add one' : 'Say "every weekday at 9 summarise my Slack"', enabled: false },
+        { label: `Heartbeat: ${HEARTBEAT_MINUTES ? `every ${HEARTBEAT_MINUTES} min` : 'off'} · edit the checklist`, click: openHeartbeat },
+        { label: 'Morning brief', type: 'checkbox', checked: briefPrefs(settings.get().brief).on, click: () => setBrief({ on: !briefPrefs(settings.get().brief).on }) }
+      ]
+    }
+  ]
+}
+
+/** A job from the tray or Setup: pause, resume, delete, run now; or a waiting step: approve, drop. */
+function jobAction(id: string, action: JobSetupAction): void {
+  const job = scheduleStore.get(id)
+  if (action === 'run' && job) scheduler.runNow(job)
+  else if ((action === 'pause' || action === 'resume') && job) {
+    scheduleStore.setPaused(id, action === 'pause')
+    journal.add('schedule', `${action === 'pause' ? 'paused' : 'resumed'} "${job.label}"`)
+  } else if (action === 'delete' && job) {
+    scheduleStore.remove(id)
+    journal.add('schedule', `deleted "${job.label}"`)
+  } else if (action === 'approve' || action === 'drop') {
+    const w = scheduleStore.takeWaiting(id)
+    if (w && action === 'approve') {
+      void runOneTool(currentTools(), w.tool, w.input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting }).then(({ out }) => {
+        journal.add('schedule', `${out.ok ? 'done' : 'failed'} after your yes: ${w.what}`)
+        void sayPlain(out.say ?? (out.ok ? 'Done.' : "That didn't work."), out.ok ? 'happy' : 'sad')
+        setupChanged()
+      })
+    } else if (w) journal.add('schedule', `not done (your no): ${w.what}`)
+  }
+  refreshTray()
+  setupChanged()
+}
+
+// The heartbeat: a cheap look at HEARTBEAT.md every DESKMATE_HEARTBEAT_MINUTES (default 30; 0 off).
+const HEARTBEAT_MINUTES = (() => {
+  const n = Number(process.env.DESKMATE_HEARTBEAT_MINUTES?.trim() || 30)
+  return Number.isFinite(n) && n >= 0 ? n : 30
+})()
+const HEARTBEAT_PATH = join(MEMORY_DIR, 'HEARTBEAT.md')
+const HEARTBEAT_LOG = join(USER_DATA, 'log', 'heartbeat-usage.jsonl')
+const told = new Told()
+let lastBeat = Date.now()
+let beating = false
+let beatInfo: ScheduleSetupState['heartbeat']['last'] = null
+
+function heartbeatText(): string {
+  try {
+    if (!existsSync(HEARTBEAT_PATH)) {
+      mkdirSync(MEMORY_DIR, { recursive: true })
+      writeFileSync(HEARTBEAT_PATH, HEARTBEAT_TEMPLATE)
+    }
+    return readFileSync(HEARTBEAT_PATH, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+function openHeartbeat(): void {
+  heartbeatText()
+  void shell.openPath(HEARTBEAT_PATH)
+}
+
+/** How things stand, for the heartbeat: the next few hours, what came in, how the jobs went. */
+async function beatSnapshot(): Promise<string> {
+  const now = new Date()
+  const lines = [`Now: ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} local time. The user is ${userPresent() ? 'at the desk' : 'away from the desk'}.`]
+  if (calendarAccess === 'fullAccess' && appHands.available) {
+    const events = await appHands.calendarEvents(180, 0).catch(() => [] as CalendarEvent[])
+    const soon = events.filter((e) => !e.cancelled && !e.allDay && e.start > now.getTime())
+    lines.push(soon.length ? `Calendar, next 3 hours: ${soon.slice(0, 5).map((e) => `${e.title || 'an event'} at ${new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${e.location ? ` (${e.location.split('\n')[0].slice(0, 60)})` : ''}`).join('; ')}` : 'Calendar: nothing in the next 3 hours.')
+  } else lines.push('Calendar: not readable.')
+  const rem = reminderStore.list().filter((r) => r.at - now.getTime() < 3 * 3_600_000)
+  lines.push(rem.length ? `Reminders set for the next 3 hours: ${rem.map((r) => `${r.text || 'a timer'} ${whenText(r.at, now.getTime())}`).join('; ')}` : 'Reminders: none in the next 3 hours.')
+  const fresh = recentBanners.filter((b) => now.getTime() - b.at < 3 * 3_600_000)
+  lines.push(fresh.length ? `Message notifications in the last 3 hours:\n${untrusted('notification', fresh.map((b) => `${Math.round((now.getTime() - b.at) / 60_000)} min ago: ${b.text}`).join('\n'))}` : 'Message notifications: none lately.')
+  const running = agent.running()
+  if (running.length) lines.push(`Claude Code jobs running: ${running.map((t) => `"${t.title}"`).join('; ')}`)
+  const recentJob = agent.describe().split('\n')[0]
+  if (recentJob) lines.push(`Latest Claude Code job: ${recentJob.slice(0, 200)}`)
+  const jobs = scheduleStore.list().filter((j) => j.last && now.getTime() - j.last.at < 12 * 3_600_000 && (j.last.status === 'failed' || j.last.status === 'waiting'))
+  if (jobs.length) lines.push(`Scheduled jobs that need a look: ${jobs.map((j) => `"${j.label}" ${j.last?.status}`).join('; ')}`)
+  const waiting = scheduleStore.waiting()
+  if (waiting.length) lines.push(`Steps waiting for the user's yes: ${waiting.map((w) => w.what).join('; ')}`)
+  const said = told.recent()
+  lines.push(said.length ? `Already told them: ${said.join(' / ')}` : 'Already told them: nothing yet.')
+  return lines.join('\n')
+}
+
+/** One heartbeat: skipped for free when nothing could need them, else one small call; silent unless something does. */
+async function heartbeat(force = false): Promise<void> {
+  if (beating) return
+  const list = heartbeatItems(heartbeatText())
+  const reason = skipReason({
+    minutes: force ? Math.max(1, HEARTBEAT_MINUTES) : HEARTBEAT_MINUTES,
+    now: new Date(),
+    lastAt: force ? 0 : lastBeat,
+    idleMs: idleMs(),
+    quiet: notices.quiet(),
+    hasItems: list.length > 0,
+    canThink: Boolean(brain.claudeForAgent),
+    busy: busyWithUser() || Boolean(scheduler.current),
+    away: screenLocked || macAsleep
+  })
+  if (reason === 'off' || reason === 'not yet') return
+  lastBeat = Date.now()
+  if (reason) {
+    beatInfo = { at: lastBeat, said: null, tokens: 0, skipped: reason }
+    console.log(`[heartbeat] skipped: ${reason}`)
+    return
+  }
+  const claude = brain.claudeForAgent
+  if (!claude) return
+  beating = true
+  const started = Date.now()
+  const model = process.env.DESKMATE_HEARTBEAT_MODEL?.trim() || claude.model
+  try {
+    const req = beatRequest(list.map((i) => `- ${i}`).join('\n'), await beatSnapshot())
+    const res = await callClaude(claude.client, { ...req, model, effort: 'low', maxTokens: 600 })
+    let said = parseBeat(replyText(res))
+    if (said && told.has(said)) said = null
+    const rec = usageRecord(started, res.usage, said, model, Date.now() - started)
+    try {
+      mkdirSync(join(USER_DATA, 'log'), { recursive: true })
+      appendFileSync(HEARTBEAT_LOG, `${JSON.stringify(rec)}\n`)
+    } catch (err) {
+      console.warn('[heartbeat] log:', (err as Error).message)
+    }
+    const tokens = Number(rec.input) + Number(rec.output) + Number(rec.cacheRead) + Number(rec.cacheWrite)
+    console.log(`[heartbeat] ${said ? `says: ${said.slice(0, 90)}` : 'nothing needs you'} · tokens ${rec.input} in, ${rec.cacheRead} cached, ${rec.cacheWrite} cache write, ${rec.output} out (${rec.ms} ms)`)
+    beatInfo = { at: started, said, tokens }
+    if (said) {
+      const line = said
+      told.add(line)
+      journal.add('heartbeat', line)
+      notices.post({ kind: 'schedule', key: `heartbeat:${line.toLowerCase()}`, text: line, brief: line.slice(0, 60), log: false, speak: async () => void (await sayPlain(line)) })
+    }
+  } catch (err) {
+    const e = toClaudeError(err)
+    console.warn(`[heartbeat] ${e.code}: ${e.message}`)
+    beatInfo = { at: started, said: null, tokens: 0, skipped: `error: ${e.message.slice(0, 80)}` }
+  } finally {
+    beating = false
+    setupChanged()
+  }
+}
+
+// The morning brief (Setup → Scheduled): the first time they are at the Mac after the set hour, once a day.
+let briefing = false
+
+function setBrief(patch: { on?: boolean; after?: string }): void {
+  const cur = settings.get().brief ?? {}
+  const next = { ...cur }
+  if (typeof patch.on === 'boolean') next.on = patch.on
+  if (typeof patch.after === 'string' && /^\d{1,2}:\d{2}$/.test(patch.after.trim())) next.after = patch.after.trim().padStart(5, '0')
+  settings.set({ brief: next })
+  refreshTray()
+  setupChanged()
+}
+
+async function maybeBrief(force = false): Promise<void> {
+  const prefs = briefPrefs(settings.get().brief)
+  const now = new Date()
+  if (briefing || (!force && !briefDue(prefs, settings.get().brief?.lastDay, now))) return
+  briefing = true
+  settings.set({ brief: { ...(settings.get().brief ?? {}), lastDay: dayKey(now) } })
+  try {
+    const since = new Date(now)
+    since.setDate(since.getDate() - 1)
+    since.setHours(18, 0, 0, 0)
+    let events: CalendarEvent[] = []
+    let calendarProblem: string | undefined
+    if (calendarAccess === 'fullAccess' && appHands.available) {
+      const sinceMidnight = now.getHours() * 60 + now.getMinutes()
+      events = await appHands.calendarEvents(24 * 60 - sinceMidnight, sinceMidnight).catch(() => {
+        calendarProblem = "I couldn't read your calendar this morning."
+        return []
+      })
+    } else if (appHands.available) calendarProblem = "I can't see your calendar yet: allow it in Setup, under What she tells you about."
+    const entries = [...memFiles.entries('user'), ...memFiles.entries('memory')]
+    const lines = briefLines(
+      {
+        events,
+        reminders: reminderStore.list().map((r) => ({ text: r.text, at: r.at })),
+        results: scheduler.takeResults(since.getTime()).map((r) => ({ label: r.label, line: r.line })),
+        waiting: scheduleStore.waiting().length,
+        messages: recentBanners.filter((b) => b.at >= since.getTime()).map((b) => b.text.split(':')[0].replace(/ (?:messaged|wrote to) you/i, '').slice(0, 60)),
+        note: noteForToday(entries.map((e) => e.text), now, entries.filter((e) => /project/i.test(e.section)).map((e) => e.text)),
+        calendarProblem
+      },
+      now
+    )
+    console.log(`[brief] ${lines.length} line(s)`)
+    journal.add('brief', lines.join(' | ').slice(0, 380))
+    if (!plan || plan.status === 'done' || plan.status === 'stopped') {
+      planCard.show({
+        id: `brief:${dayKey(now)}`,
+        goal: 'morning brief',
+        title: now.getHours() < 12 ? 'Good morning' : 'Your day',
+        steps: lines.map((text) => ({ text, worker: 'say' as PlanWorker, input: '', status: 'pending' as const })),
+        status: 'draft',
+        current: 0,
+        createdAt: Date.now(),
+        kind: 'brief'
+      })
+    }
+    const plain = briefSpoken(lines, now)
+    notices.post({
+      kind: 'schedule',
+      key: `brief:${dayKey(now)}`,
+      text: plain,
+      brief: 'your morning brief',
+      log: false,
+      speak: async () => {
+        if (brain.canThink) await report({ kind: 'notice', phase: 'status', title: 'morning brief', detail: `Your morning brief for the user. Say it in two or three short, warm sentences (only what matters most today): ${lines.join(' ')}` })
+        else await sayPlain(plain)
+      }
+    })
+  } finally {
+    briefing = false
+    setupChanged()
+  }
+}
+
+function scheduleState(): ScheduleSetupState {
+  const now = Date.now()
+  const b = briefPrefs(settings.get().brief)
+  return {
+    jobs: scheduleStore.list().map((j) => ({ id: j.id, label: j.label, task: j.task, when: j.when, rule: ruleText(j.rule, j.tz), next: j.paused || j.nextAt === null ? null : nextText(j.nextAt, now, j.tz), paused: j.paused, mode: j.mode, last: j.last ?? null })),
+    waiting: scheduleStore.waiting().map((w) => ({ id: w.id, label: w.label, what: w.what, at: w.at })),
+    heartbeat: { minutes: HEARTBEAT_MINUTES, path: HEARTBEAT_PATH, items: heartbeatItems(heartbeatText()).length, last: beatInfo },
+    brief: { on: b.on, after: b.after, lastDay: settings.get().brief?.lastDay ?? null },
+    agentCore: useAgentCore()
   }
 }
 
@@ -3526,6 +3939,11 @@ ipcMain.on('bar:hide', () => bar.hide())
 ipcMain.on('plan:action', (_event, action: PlanAction) => {
   // The card may be showing a skill she wrote instead of a plan.
   const shown = planCard.shown
+  // The morning brief's card only closes.
+  if (shown?.kind === 'brief') {
+    planCard.hide()
+    return
+  }
   if (shown?.kind === 'skill' && shown.id.startsWith('skill:')) {
     const name = shown.id.slice('skill:'.length)
     if (action === 'go' || action === 'stop') void settleDraft(name, action === 'go').then((line) => sayPlain(line, action === 'go' ? 'happy' : 'neutral'))
@@ -3752,7 +4170,8 @@ async function setupState(): Promise<SetupState> {
     },
     notices: noticeState(),
     mcp: mcpState(),
-    learn: learnState()
+    learn: learnState(),
+    schedule: scheduleState()
   }
 }
 
@@ -3849,6 +4268,15 @@ ipcMain.handle('setup:mcp-reload', async () => {
 })
 ipcMain.handle('setup:mcp-open', () => openMcpConfig())
 ipcMain.handle('setup:memory-open', () => openMemoryFolder())
+ipcMain.handle('setup:job', (_event, id: string, action: JobSetupAction) => {
+  if (['pause', 'resume', 'delete', 'run', 'approve', 'drop'].includes(String(action))) jobAction(String(id), action)
+  return scheduleState()
+})
+ipcMain.handle('setup:brief', (_event, patch: { on?: unknown; after?: unknown }) => {
+  setBrief({ ...(typeof patch?.on === 'boolean' ? { on: patch.on } : {}), ...(typeof patch?.after === 'string' ? { after: patch.after.slice(0, 5) } : {}) })
+  return scheduleState()
+})
+ipcMain.handle('setup:heartbeat-open', () => openHeartbeat())
 ipcMain.handle('setup:skills-open', () => {
   mkdirSync(USER_SKILLS, { recursive: true })
   void shell.openPath(USER_SKILLS)
@@ -3929,6 +4357,35 @@ app.whenReady().then(async () => {
   startRemote()
   // What she comes to tell you about on her own: reminders (kept across restarts), messages, the calendar.
   reminderStore.start()
+  // Scheduled jobs: whatever came due while she was off runs now, once. Sleep, wake and the lock screen tell her
+  // when the user is away; coming back brings what was kept for them and the morning brief.
+  scheduleStore.start()
+  powerMonitor.on('suspend', () => {
+    macAsleep = true
+  })
+  powerMonitor.on('resume', () => {
+    macAsleep = false
+    scheduleStore.check()
+    reminderStore.start()
+    void presenceTick('resume')
+  })
+  powerMonitor.on('lock-screen', () => {
+    screenLocked = true
+  })
+  powerMonitor.on('unlock-screen', () => {
+    screenLocked = false
+    void presenceTick('unlock')
+  })
+  setInterval(() => {
+    void presenceTick('tick')
+    void heartbeat()
+  }, 30_000).unref()
+  setTimeout(() => void presenceTick('start'), 20_000).unref()
+  heartbeatText()
+  {
+    const jobs = scheduleStore.list()
+    console.log(`[schedule] ${jobs.length} job(s)${jobs.length ? `: ${jobs.map((j) => `"${j.label}" ${ruleText(j.rule, j.tz)}${j.paused ? ' (paused)' : ''}`).join('; ')}` : ''}; heartbeat ${HEARTBEAT_MINUTES ? `every ${HEARTBEAT_MINUTES} min (${heartbeatItems(heartbeatText()).length} item(s) in HEARTBEAT.md)` : 'off'}; morning brief ${briefPrefs(settings.get().brief).on ? `after ${briefPrefs(settings.get().brief).after}` : 'off'}`)
+  }
   // Tool servers connect in the background; Setup shows how each one is doing.
   void mcp.start().then(() => {
     const ready = mcp.status().filter((m) => m.state === 'ready')
@@ -3969,6 +4426,7 @@ app.on('before-quit', () => {
   actStop = true
   appHands.stop()
   reminderStore.stop()
+  scheduleStore.stop()
   void mcp.close()
   remote?.stop()
   bar.destroy()

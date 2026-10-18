@@ -9,7 +9,8 @@ import type { NoticePrefs } from '../shared/types'
  * No Electron in here, so it can be tested on its own.
  */
 
-export type NoticeKind = 'job' | 'plan' | 'message' | 'calendar' | 'reminder'
+/** schedule: a scheduled job's result, the heartbeat's check-in, the morning brief */
+export type NoticeKind = 'job' | 'plan' | 'message' | 'calendar' | 'reminder' | 'schedule'
 
 export interface Notice {
   kind: NoticeKind
@@ -57,6 +58,7 @@ export const DEFAULT_NOTICE_PREFS: NoticePrefs = {
   calendar: true,
   calendarLead: 10,
   reminders: true,
+  scheduled: true,
   quietHours: '',
   dnd: false,
   allowApps: [],
@@ -155,6 +157,8 @@ export class NoticeCenter {
         return p.calendar
       case 'reminder':
         return p.reminders
+      case 'schedule':
+        return p.scheduled
     }
   }
 

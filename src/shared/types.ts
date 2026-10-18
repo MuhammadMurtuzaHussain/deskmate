@@ -100,7 +100,8 @@ export interface Plan {
   /** why it paused, or how it ended */
   note?: string
   /** 'skill': not a plan but a skill she wrote, shown on the same card with Keep it / Throw away */
-  kind?: 'skill'
+  /** skill: a skill she wrote, waiting for a yes · brief: the morning brief (it only closes) */
+  kind?: 'skill' | 'brief'
 }
 
 /** What her body is doing on the desktop, beyond idle and dancing. */
@@ -282,7 +283,20 @@ export interface SetupState {
   mcp?: McpSetupState
   /** her notes, what she can search, her skills and the drafts waiting for a yes; missing from an older main process */
   learn?: LearnSetupState
+  /** scheduled jobs, the heartbeat and the morning brief; missing from an older main process */
+  schedule?: ScheduleSetupState
 }
+
+export interface ScheduleSetupState {
+  jobs: { id: string; label: string; task: string; when: string; rule: string; next: string | null; paused: boolean; mode: 'agent' | 'plan'; last: { status: string; summary: string; at: number } | null }[]
+  waiting: { id: string; label: string; what: string; at: number }[]
+  heartbeat: { minutes: number; path: string; items: number; last: { at: number; said: string | null; tokens: number; skipped?: string } | null }
+  brief: { on: boolean; after: string; lastDay: string | null }
+  /** jobs run through the agent core: without a Claude brain they only announce themselves */
+  agentCore: boolean
+}
+
+export type JobSetupAction = 'pause' | 'resume' | 'delete' | 'run' | 'approve' | 'drop'
 
 export interface LearnSetupState {
   memoryDir: string
@@ -323,6 +337,8 @@ export interface NoticePrefs {
   calendarLead: number
   /** reminders and timers you set ("remind me in 20 minutes to stretch") */
   reminders: boolean
+  /** what scheduled jobs found, the heartbeat's check-ins, and the morning brief */
+  scheduled: boolean
   /** "23-8": she keeps quiet between these hours (reminders still ring); '' for none (DESKMATE_QUIET_HOURS) */
   quietHours: string
   /** do not disturb, from the tray: like quiet hours, until switched off */
@@ -401,6 +417,10 @@ export interface DeskmateApi {
   openMemory?(): Promise<void>
   openSkills?(): Promise<void>
   draftAction?(name: string, action: DraftAction): Promise<LearnSetupState>
+  /** Setup → Scheduled: a job (pause, resume, delete, run now) or a waiting step (approve, drop) */
+  jobAction?(id: string, action: JobSetupAction): Promise<ScheduleSetupState>
+  setBrief?(patch: { on?: boolean; after?: string }): Promise<ScheduleSetupState>
+  openHeartbeat?(): Promise<void>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
   /** Setup → Characters */

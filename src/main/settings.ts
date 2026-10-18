@@ -30,6 +30,8 @@ export interface SettingsData {
   mcpDisabled?: string[]
   /** skills whose scripts the user allowed to run, with a fingerprint of the scripts they said yes to (skillmd.ts) */
   skillScripts?: Record<string, string>
+  /** the morning brief (Setup → Scheduled): on, not before this hour ("07:00"), and the day it last ran */
+  brief?: { on?: boolean; after?: string; lastDay?: string }
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

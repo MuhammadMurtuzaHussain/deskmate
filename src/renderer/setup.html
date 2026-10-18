@@ -99,6 +99,7 @@
       </div>
       <label class="toggle"><input type="checkbox" id="n-calendar" /><div><b>Calendar</b><span>a nudge <input id="n-lead" class="tiny" type="number" min="1" max="120" /> minutes before an event</span></div><span class="chip" id="n-cal-chip"></span><button id="n-cal-allow" class="hidden">Allow</button></label>
       <label class="toggle"><input type="checkbox" id="n-reminders" /><div><b>Reminders and timers</b><span>"remind me in 20 minutes to stretch", "set a timer for 5 minutes"; they ring even in quiet hours</span></div></label>
+      <label class="toggle"><input type="checkbox" id="n-scheduled" /><div><b>Scheduled jobs and check-ins</b><span>what a scheduled job found, the heartbeat's "this needs you", the morning brief</span></div></label>
       <div class="row quiet">
         <div class="grow"><b>Quiet hours</b><span class="hint" id="n-quiet-note">she keeps things to herself and tells you after</span></div>
         <input id="n-quiet" class="narrow" placeholder="23-8" />
@@ -113,6 +114,19 @@
       <div id="mcp-list" class="sub flat"></div>
       <div class="row"><button id="mcp-open">Edit mcp.json…</button><button id="mcp-reload" class="link">Reload</button></div>
       <div class="msg" id="mcp-msg"></div>
+    </section>
+
+    <section id="schedule" class="hidden">
+      <div class="head"><h2>7 · Scheduled</h2><span class="chip" id="schedule-chip">…</span></div>
+      <div class="hint">Things she does on her own: say <b>"every weekday at 9 summarise my Slack"</b> or <b>"every hour check if the build is green"</b>. Each run is its own Claude turn; the result is said out loud when you're at the desk, sent to your phone when you're away (if the phone remote is on), and always written in her day log. Anything that sends, deletes, buys or runs something waits for your yes.</div>
+      <div id="schedule-jobs" class="sub flat"></div>
+      <div id="schedule-waiting" class="sub flat"></div>
+      <div class="row quiet">
+        <div class="grow"><b>Heartbeat</b><span class="hint" id="hb-note">…</span></div>
+        <button id="hb-open">Edit the checklist…</button>
+      </div>
+      <label class="toggle"><input type="checkbox" id="brief-on" /><div><b>Morning brief</b><span>the first time you're at the Mac after <input id="brief-after" class="narrow" type="time" />: today's calendar, reminders, what jobs did overnight, messages, one line from her notes</span></div></label>
+      <div class="msg" id="schedule-msg"></div>
     </section>
 
     <section id="learn" class="hidden">

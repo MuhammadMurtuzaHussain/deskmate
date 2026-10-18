@@ -55,6 +55,9 @@ const api: DeskmateApi = {
   openMemory: () => ipcRenderer.invoke('setup:memory-open'),
   openSkills: () => ipcRenderer.invoke('setup:skills-open'),
   draftAction: (name, action) => ipcRenderer.invoke('setup:draft', name, action),
+  jobAction: (id, action) => ipcRenderer.invoke('setup:job', id, action),
+  setBrief: (patch) => ipcRenderer.invoke('setup:brief', patch),
+  openHeartbeat: () => ipcRenderer.invoke('setup:heartbeat-open'),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
   },
