@@ -80,6 +80,13 @@ export interface BodyState {
   target?: { x: number; y: number }
 }
 
+/** A short one-off movement played over whatever she is doing: getting up from a seat, or an idle touch. */
+export interface Gesture {
+  kind: 'stretch' | 'yawn' | 'glance'
+  /** for a glance: where to look, in CSS pixels relative to her window */
+  target?: { x: number; y: number }
+}
+
 /** Where parts of her are inside her window, in CSS pixels; the main process places the window by them. */
 export interface Anchors {
   head: { x: number; y: number }
@@ -222,6 +229,8 @@ export interface DeskmateApi {
   openSetup?(): void
   /** her body on the desktop: walking, pointing, sitting, sleeping */
   onBody?(cb: (state: BodyState) => void): void
+  /** a stretch, a yawn, a glance at the pointer */
+  onGesture?(cb: (gesture: Gesture) => void): void
   reportAnchors?(anchors: Anchors): void
 }
 

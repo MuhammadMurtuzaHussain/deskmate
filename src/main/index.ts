@@ -109,7 +109,13 @@ let appTrusted: boolean | null = null
 const SELF_IDS = ['com.github.Electron', 'com.murtuza.deskmate']
 
 // Her body on the desktop: walking, pointing, sitting on windows, sleeping, wandering.
-const body = new Body({ win: () => win ?? null, hands: appHands, selfIds: SELF_IDS, log: (line) => console.log(`[body] ${line}`) })
+const body = new Body({
+  win: () => win ?? null,
+  hands: appHands,
+  selfIds: SELF_IDS,
+  log: (line) => console.log(`[body] ${line}`),
+  busy: () => acting || browsing || herSpeaking || hearing
+})
 /** minutes without anything happening before she nods off; 0 keeps her awake (DESKMATE_SLEEP_AFTER) */
 const SLEEP_AFTER_MIN = Number(process.env.DESKMATE_SLEEP_AFTER ?? 10)
 let lastActivity = Date.now()
@@ -1722,6 +1728,7 @@ app.whenReady().then(async () => {
   createWindow()
   body.rememberHome()
   if (/^(1|true|yes|on)$/i.test(process.env.DESKMATE_WANDER?.trim() || '')) body.wander(true, () => !acting && !browsing && !herSpeaking)
+  if (!/^(0|false|no|off)$/i.test(process.env.DESKMATE_IDLE_TOUCHES?.trim() || '')) body.idleTouches(true)
   if (SLEEP_AFTER_MIN > 0) {
     setInterval(() => {
       if (body.mode === 'idle' || body.mode === 'sit') {

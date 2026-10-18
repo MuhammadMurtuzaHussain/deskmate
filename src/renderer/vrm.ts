@@ -2,10 +2,10 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm'
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip, type VRMAnimation } from '@pixiv/three-vrm-animation'
-import type { Anchors, BodyState, CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
+import type { Anchors, BodyState, CharacterConfig, DanceStyle, Emotion, Gesture, Outfit } from '../shared/types'
 import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
 import { loadRig } from './rig'
-import { danglePose, pointPose, sitPose, sleepPose, walkPose } from './body'
+import { danglePose, gestureWeight, glancePose, pointPose, sitPose, sleepPose, stretchPose, walkPose, yawnPose } from './body'
 import { loadMixamoAnimation } from './mixamo'
 import { resolveAsset } from './assets'
 import type { Avatar, Bounds } from './avatar'
@@ -260,6 +260,11 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let carried: number | null = null
   let carrySway = 0
   let carryWeight = 0
+  // a stretch, yawn or glance in progress: starts on the next frame, lasts `dur` seconds
+  let gesture: (Gesture & { start: number; dur: number }) | null = null
+  let gestureFace = { mouth: 0, eyes: 0 }
+  let eyesHeld = 0
+  const GESTURE_S: Record<Gesture['kind'], number> = { stretch: 2.6, yawn: 2.8, glance: 1.8 }
 
   function bodyFrame(t: number): Pose | null {
     const armDown = character.idle?.armsDown ?? rigArmsDown ?? 1.18
@@ -315,6 +320,27 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       bodyPose = null
     }
     let out = bodyPose && bodyWeight > 0 ? blendPose(base, bodyPose, bodyWeight) : base
+    gestureFace = { mouth: 0, eyes: 0 }
+    if (gesture) {
+      if (gesture.start < 0) gesture.start = t
+      const k = (t - gesture.start) / gesture.dur
+      if (k >= 1 || body.mode === 'walk' || body.mode === 'sleep') gesture = null
+      else {
+        const w = gestureWeight(k)
+        if (gesture.kind === 'stretch') {
+          out = blendPose(out, stretchPose(out, k), w)
+          gestureFace.eyes = 0.7 * w
+        } else if (gesture.kind === 'yawn') {
+          out = blendPose(out, yawnPose(out, k), w)
+          gestureFace = { mouth: 0.85 * w * Math.sin(Math.min(1, k * 1.25) * Math.PI), eyes: 0.75 * w }
+        } else {
+          const a = avatar.anchors?.()
+          const from = a?.head ?? { x: window.innerWidth / 2, y: window.innerHeight * 0.2 }
+          const to = gesture.target ?? from
+          out = blendPose(out, glancePose(out, to.x - from.x, from.y - to.y), w)
+        }
+      }
+    }
     // Carried: a damped pendulum driven by how fast the cursor moves her.
     const goal = carried === null ? 0 : Math.max(-0.6, Math.min(0.6, -carried / 1800))
     carrySway += (goal - carrySway) * Math.min(1, dt * 5)
@@ -360,10 +386,15 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       blinkT += dt
       const v = blinkT < 0.08 ? blinkT / 0.08 : Math.max(0, 1 - (blinkT - 0.08) / 0.1)
       const blink = expressionName('blink')
-      if (blink) em.setValue(blink, v)
+      if (blink) em.setValue(blink, Math.max(v, gestureFace.eyes))
       if (blinkT > 0.2) blinkT = -1
+    } else if (gestureFace.eyes > 0 || eyesHeld > 0) {
+      // eyes squeezed half shut through a stretch or a yawn (and open again once, after)
+      const blink = expressionName('blink')
+      if (blink) em.setValue(blink, gestureFace.eyes)
+      eyesHeld = gestureFace.eyes
     }
-    const m = speaker.level() || fakeMouth
+    const m = speaker.level() || fakeMouth || gestureFace.mouth
     mouth += (m - mouth) * Math.min(1, dt * 18)
     const aa = expressionName('aa')
     if (aa) em.setValue(aa, mouth)
@@ -381,7 +412,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       } else {
         poseFrame(t, dt)
       }
-      if (!activeAction && (body.mode !== 'idle' || bodyWeight > 0 || carried !== null || carryWeight > 0.002)) {
+      if (!activeAction && (body.mode !== 'idle' || bodyWeight > 0 || carried !== null || carryWeight > 0.002 || gesture)) {
         // poseFrame applied idle/dance; redo the frame with the body layer on top (cheap: a few bone writes).
         applyPose(bodyLayer(t, dt, lastPose ?? idlePose(t, physics.sway, 0)))
       }
@@ -478,6 +509,13 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
 
     setCarried(velocity: number | null) {
       carried = velocity
+    },
+
+    gesture(g: Gesture) {
+      // Not over a dance, a motion clip, or while she walks or sleeps.
+      if (dancing || activeAction || body.mode === 'walk' || body.mode === 'sleep') return
+      gesture = { ...g, start: -1, dur: GESTURE_S[g.kind] }
+      if (g.kind === 'glance' && g.target) avatar.pointerMove(g.target.x, g.target.y)
     },
 
     anchors(): Anchors | null {

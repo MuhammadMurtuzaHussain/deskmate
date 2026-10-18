@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Anchors, AvatarCommand, BodyState, DeskmateApi, PermissionKind, ReplyPayload } from '../shared/types'
+import type { Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -40,6 +40,9 @@ const api: DeskmateApi = {
   openSetup: () => ipcRenderer.send('setup:open'),
   onBody: (cb) => {
     ipcRenderer.on('avatar:body', (_event, state: BodyState) => cb(state))
+  },
+  onGesture: (cb) => {
+    ipcRenderer.on('avatar:gesture', (_event, gesture: Gesture) => cb(gesture))
   },
   reportAnchors: (anchors: Anchors) => ipcRenderer.send('avatar:anchors', anchors)
 }

@@ -1,9 +1,10 @@
 import * as PIXI from 'pixi.js'
 import '@pixi/unsafe-eval'
 import { Cubism4ModelSettings, Live2DModel, MotionPriority } from 'pixi-live2d-display-lipsyncpatch/cubism4'
-import type { Anchors, BodyState, CharacterConfig, Emotion } from '../shared/types'
+import type { Anchors, BodyState, CharacterConfig, Emotion, Gesture } from '../shared/types'
 import type { Avatar, Bounds } from './avatar'
 import { resolveAsset } from './assets'
+import { gestureWeight } from './body'
 
 // Pixi 7 builds shader code with `new Function`; importing @pixi/unsafe-eval self-installs a CSP-safe path.
 // pixi-live2d-display finds the Pixi ticker through the global.
@@ -71,6 +72,9 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   const poseWeight = new Map<string, number>()
   let savedBlink: unknown = undefined
   let sleptSitting = false
+  // a stretch, yawn or glance in progress (ms timestamps on the model's clock; start is set on the next frame)
+  let gesture: (Gesture & { start: number; dur: number }) | null = null
+  const GESTURE_MS: Record<Gesture['kind'], number> = { stretch: 2600, yawn: 2800, glance: 1800 }
 
   async function loadPoses(): Promise<void> {
     if (!model || !character.poses) return
@@ -130,6 +134,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     } else if (body.mode === 'sit') {
       core.addParameterValueById('ParamAngleZ', Math.sin(t * 0.6) * 4)
     }
+    offsetY += gestureFrame(core, now)
     if (dancing) {
       const b = beats * Math.PI
       offsetY += -Math.abs(Math.sin(b)) * 12
@@ -156,6 +161,45 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     carrySway += (goal - carrySway) * Math.min(1, dt * 6)
     model.rotation = carrySway
     model.y = baseY + offsetY
+  }
+
+  /**
+   * Gestures as parameter offsets (no arms to raise): a stretch leans back and sways with the head up while she rises a
+   * little; a yawn tips the head back with the mouth open; a glance turns head and eyes toward a spot. Returns the
+   * vertical offset in pixels.
+   */
+  function gestureFrame(core: Core, now: number): number {
+    if (!gesture || !model) return 0
+    if (gesture.start < 0) gesture.start = now
+    const k = (now - gesture.start) / gesture.dur
+    if (k >= 1 || body.mode === 'walk' || body.mode === 'sleep') {
+      gesture = null
+      return 0
+    }
+    const w = gestureWeight(k)
+    if (gesture.kind === 'stretch') {
+      core.addParameterValueById('ParamAngleY', 14 * w)
+      core.addParameterValueById('ParamBodyAngleY', 5 * w)
+      core.addParameterValueById('ParamBodyAngleZ', Math.sin(k * Math.PI * 2) * 7 * w)
+      core.addParameterValueById('ParamAngleZ', -Math.sin(k * Math.PI * 2) * 5 * w)
+      return -10 * w
+    }
+    if (gesture.kind === 'yawn') {
+      const open = Math.sin(Math.min(1, k * 1.25) * Math.PI)
+      core.addParameterValueById('ParamAngleY', 12 * w)
+      core.addParameterValueById('ParamAngleZ', 7 * w)
+      if (fakeMouth === 0) core.setParameterValueById('ParamMouthOpenY', 0.85 * w * open)
+      return 0
+    }
+    const a = avatar.anchors?.()
+    const from = a?.head ?? { x: app.screen.width / 2, y: app.screen.height * 0.2 }
+    const to = gesture.target ?? from
+    const nx = Math.max(-1, Math.min(1, (to.x - from.x) / 300))
+    const ny = Math.max(-1, Math.min(1, (from.y - to.y) / 300))
+    model.internalModel.focusController.focus(nx * w, ny * w)
+    core.addParameterValueById('ParamAngleX', nx * 14 * w)
+    core.addParameterValueById('ParamAngleY', ny * 8 * w)
+    return 0
   }
 
   function hasMotions(group: string): boolean {
@@ -307,6 +351,11 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
 
     setCarried(velocity: number | null) {
       carried = velocity
+    },
+
+    gesture(g: Gesture) {
+      if (dancing || body.mode === 'walk' || body.mode === 'sleep') return
+      gesture = { ...g, start: -1, dur: GESTURE_MS[g.kind] }
     },
 
     anchors(): Anchors | null {
