@@ -25,7 +25,7 @@ import { ACKNOWLEDGEMENTS, Brain, type Stimulus, type TaskReport } from './brain
 import { browse } from './browse'
 import * as chrome from './chrome'
 import { routeCommand } from './commands'
-import { loadDotEnv } from './env'
+import { guiPath, loadDotEnv } from './env'
 import { Memory } from './memory'
 import { MemoryFiles } from './memfiles'
 import { describeHits, PastIndex, type PastCategory } from './past'
@@ -62,7 +62,8 @@ import { runComputerTask } from './computer'
 import { Hands, HandsError, type DesktopHands } from './hands'
 import { WinHands } from './hands-win'
 import { loadSkills, matchSkill, runSkill, skillsForPlanner, skillTool, type Skill, type SkillMatch } from './skills'
-import { newerRelease, updateCheckEnabled, type Release } from './updates'
+import { newerRelease, updateCheckEnabled } from './updates'
+import { macSignature, updateMode, Updates, type UpdateState } from './updater'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
 import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch, type ActivityView, type SafetySetupState, type SpendSetupState } from '../shared/types'
@@ -73,6 +74,7 @@ const RESOURCES = app.isPackaged ? process.resourcesPath : ROOT
 const USER_DATA = app.getPath('userData')
 const REPO_URL = 'https://github.com/MuhammadMurtuzaHussain/deskmate'
 loadDotEnv(USER_DATA, ROOT)
+if (process.platform === 'darwin') process.env.PATH = guiPath(process.env.PATH, homedir())
 
 // Characters live in character/<id>/{character.json, persona.md}. Each has her own persona, voice and memory file.
 // Two roots: the user's own under <user data>/character (added in Setup; editable, survives updates), and the ones
@@ -476,7 +478,6 @@ function buildTrayMenu(): Menu {
   const loginItem = app.getLoginItemSettings().openAtLogin
   const threeD = character.renderer === 'vrm' || character.renderer === 'mmd'
   const running = agent.running().length
-  const next = update
   return Menu.buildFromTemplate([
     { label: `${character.name} · ${brain.modelName}`, enabled: false },
     { type: 'separator' },
@@ -601,25 +602,55 @@ function buildTrayMenu(): Menu {
       ]
     },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
-    ...(next ? [{ label: `Update available: v${next.version}`, click: () => void shell.openExternal(next.url) }] : []),
+    ...updateMenu(),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])
 }
 
-// ---- update check: a tray item and one status line when a newer release is on GitHub (DESKMATE_UPDATE_CHECK=0: off).
-let update: Release | null = null
+// ---- updates (updater.ts): a signed build downloads in the background and installs on quit ("Restart to update");
+// an unsigned one gets a status line and a tray item that opens the release page. DESKMATE_UPDATE_CHECK=0: neither.
+let updates: Updates | null = null
 const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
 
-async function checkForUpdate(): Promise<void> {
-  const found = await newerRelease(app.getVersion())
-  if (!found || found.version === update?.version) return
-  update = found
-  console.log(`[update] Deskmate ${found.version} is out (running ${app.getVersion()}): ${found.url}`)
+async function startUpdates(): Promise<void> {
+  const signature = process.platform === 'darwin' && app.isPackaged ? await macSignature(process.execPath) : null
+  const mode = updateMode({ enabled: updateCheckEnabled(), packaged: app.isPackaged, platform: process.platform, signature, env: process.env })
+  console.log(`[update] ${mode.mode === 'auto' ? 'installs updates itself' : mode.mode === 'notify' ? 'tells you about updates' : 'off'} (${mode.why})`)
+  if (mode.mode === 'off') return
+  updates = new Updates({
+    version: app.getVersion(),
+    mode,
+    loadUpdater: async () => (await import('electron-updater')).autoUpdater,
+    newerRelease,
+    onChange: updateChanged,
+    log: (line) => console.log(line)
+  })
+  // after the window has loaded, so the status line has somewhere to go
+  setTimeout(() => void updates?.check(), 15_000).unref()
+  setInterval(() => void updates?.check(), UPDATE_EVERY_MS).unref()
+}
+
+function updateChanged(state: UpdateState): void {
   refreshTray()
-  if (settings.get().updateNotified === found.version) return
-  settings.set({ updateNotified: found.version })
-  status(`Deskmate ${found.version} is out · tray menu → Update available`)
+  if ((state.phase !== 'ready' && state.phase !== 'available') || !state.version) return
+  console.log(`[update] Deskmate ${state.version} ${state.phase === 'ready' ? 'is downloaded; it installs when she quits' : `is out (running ${app.getVersion()}): ${state.url}`}`)
+  const key = `${state.version}${state.phase === 'ready' ? ':ready' : ''}`
+  if (settings.get().updateNotified === key) return
+  settings.set({ updateNotified: key })
+  status(state.phase === 'ready' ? `Deskmate ${state.version} is ready · tray menu → Restart to update` : `Deskmate ${state.version} is out · tray menu → Update available`)
+}
+
+function updateMenu(): Electron.MenuItemConstructorOptions[] {
+  const u = updates?.state
+  if (!u?.version) return []
+  if (u.phase === 'ready') return [{ label: `Restart to update (v${u.version})`, click: () => void updates?.restart() }]
+  if (u.phase === 'downloading') return [{ label: `Downloading v${u.version}… ${u.percent ?? 0}%`, enabled: false }]
+  if (u.phase === 'available' && u.url) {
+    const url = u.url
+    return [{ label: `Update available: v${u.version}`, toolTip: u.why, click: () => void shell.openExternal(url) }]
+  }
+  return []
 }
 
 function refreshTray(): void {
@@ -5304,11 +5335,7 @@ app.whenReady().then(async () => {
   if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
-  if (updateCheckEnabled()) {
-    // after the window has loaded, so the status line has somewhere to go
-    setTimeout(() => void checkForUpdate(), 15_000).unref()
-    setInterval(() => void checkForUpdate(), UPDATE_EVERY_MS).unref()
-  }
+  void startUpdates()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else win.show()
