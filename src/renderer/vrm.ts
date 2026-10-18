@@ -4,6 +4,7 @@ import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm'
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip, type VRMAnimation } from '@pixiv/three-vrm-animation'
 import type { Anchors, BodyState, CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
 import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
+import { loadRig } from './rig'
 import { danglePose, pointPose, sitPose, sleepPose, walkPose } from './body'
 import { loadMixamoAnimation } from './mixamo'
 import { resolveAsset } from './assets'
@@ -71,6 +72,8 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   loader.register((parser) => new VRMAnimationLoaderPlugin(parser))
 
   let vrm: VRM | null = null
+  /** for a rig whose rest pose already has the arms part way down (A-pose), how much further they go */
+  let rigArmsDown: number | null = null
   let baseRotY = 0 // Math.PI for VRM 0.x after rotateVRM0; our sway adds to it instead of replacing it
   let hipsRestY = 0 // the normalized hips node's rest offset; bounce is added to it, never written over it
   let modelHeight = 1.6
@@ -110,11 +113,21 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   }
 
   async function loadModel(url: string): Promise<void> {
-    const gltf = await loader.loadAsync(resolveAsset(url))
-    const next = gltf.userData.vrm as VRM
-    VRMUtils.removeUnnecessaryVertices(gltf.scene)
-    VRMUtils.combineSkeletons(gltf.scene)
-    VRMUtils.rotateVRM0(next) // VRM 0.x faces -Z; after this both versions face the camera at +Z
+    let next: VRM
+    if (!/\.vrm$/i.test(url)) {
+      // A rigged FBX / Collada / glTF character: its skeleton mapped onto a VRM humanoid (see rig.ts).
+      const rig = await loadRig(resolveAsset(url), character.hide ?? [])
+      if (!rig) throw new Error(`no humanoid skeleton found in ${url.split('/').pop()}`)
+      next = rig.vrm
+      rigArmsDown = rig.armsDown
+    } else {
+      const gltf = await loader.loadAsync(resolveAsset(url))
+      next = gltf.userData.vrm as VRM
+      VRMUtils.removeUnnecessaryVertices(gltf.scene)
+      VRMUtils.combineSkeletons(gltf.scene)
+      VRMUtils.rotateVRM0(next) // VRM 0.x faces -Z; after this both versions face the camera at +Z
+      rigArmsDown = null
+    }
     next.scene.traverse((o) => {
       o.frustumCulled = false
       const mesh = o as THREE.Mesh
@@ -208,7 +221,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
 
   /** Applies a neutral Pose to the normalized humanoid. Arms hang at ∓armDown from the T-pose. */
   function applyPose(p: Pose): void {
-    const armDown = character.idle?.armsDown ?? 1.18
+    const armDown = character.idle?.armsDown ?? rigArmsDown ?? 1.18
     // VRM 0.x models face -Z and are turned around (rotateVRM0), which mirrors their bones' X and Z axes: without
     // this, "arms down" put Victoria's arms straight up, and every lean went the wrong way.
     const f = vrm?.meta.metaVersion === '0' ? -1 : 1
@@ -249,7 +262,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let carryWeight = 0
 
   function bodyFrame(t: number): Pose | null {
-    const armDown = character.idle?.armsDown ?? 1.18
+    const armDown = character.idle?.armsDown ?? rigArmsDown ?? 1.18
     switch (body.mode) {
       case 'walk':
         return walkPose(t, body.facing ?? 1)

@@ -10,6 +10,9 @@ character/*/local.json
 character/ani/
 character/jian/
 character/nicole/
+character/serena/
+character/tifa/
+character/chunli/
 character/persona.*.md
 dist/
 native/bin/
@@ -20,6 +23,9 @@ src/renderer/public/models/*/dances/
 src/renderer/public/models/ani/
 src/renderer/public/models/jian/
 src/renderer/public/models/nicole/
+src/renderer/public/models/serena/
+src/renderer/public/models/tifa/
+src/renderer/public/models/chunli/
 src/renderer/public/models/victoria/test.vrma
 tts-local/.venv/
 tts-local/__pycache__/

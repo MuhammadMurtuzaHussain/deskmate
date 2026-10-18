@@ -111,6 +111,8 @@ export interface CharacterConfig {
   morphs?: Partial<Record<Emotion | 'mouth' | 'blink', string>>
   /** shown in the character list and docs */
   license?: string
+  /** 3D: meshes or materials to leave out at load, by name fragment (a rip's broken wings, a prop) */
+  hide?: string[]
   /** Live2D: expressions that are really poses (VTube Studio toggles), layered on top of her emotion */
   poses?: { sit?: string; point?: string; sleep?: string; dance?: string[] }
 }
