@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { boxHolds, chatLabel, EDITABLE_ROLES, titleMatches, words } from './checks'
-import { HandsError, type DesktopHands, type FocusedElement } from './hands'
+import { boxHolds, chatLabel, EDITABLE_ROLES, titleMatches, words } from './checks.ts'
+import { HandsError, type DesktopHands, type FocusedElement } from './hands.ts'
 
 /**
  * Her hands in desktop apps: a message to someone on Discord or Slack, a prompt typed into the Claude app, or just
@@ -408,11 +408,10 @@ async function promptClaude(req: AppRequest, deps: RoutineDeps, step: (label: st
 // ---- apps with a scripting dictionary
 
 class ScriptError extends Error {
-  constructor(
-    message: string,
-    readonly notAllowed: boolean
-  ) {
+  readonly notAllowed: boolean
+  constructor(message: string, notAllowed: boolean) {
     super(message)
+    this.notAllowed = notAllowed
   }
 }
 

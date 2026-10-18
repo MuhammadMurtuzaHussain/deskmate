@@ -1,6 +1,6 @@
 import type { ToolCall } from '../shared/types'
-import { parseAppRequest } from './apps'
-import { parseReminder } from './reminders'
+import { parseAppRequest } from './apps.ts'
+import { parseReminder } from './reminders.ts'
 
 export interface Routed extends ToolCall {
   /** the user named the tool outright ("ask claude to…", "/tasks", "next tab"), so no model had to decide */
