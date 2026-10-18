@@ -85,6 +85,9 @@ export function routeCommand(raw: string): Routed | null {
         return tool('chrome', /^(?:prev|previous|left|back)/i.test(rest) ? 'prev_tab' : /^close/i.test(rest) ? 'close_tab' : 'next_tab')
       case 'app':
         return rest ? tool('app', rest) : null
+      case 'computer':
+      case 'agent':
+        return rest ? tool('computer', rest) : null
       case 'discord':
       case 'slack':
         // /discord sam: running late · /slack #general

@@ -11,6 +11,38 @@ const modelSelect = $<HTMLSelectElement>('ollama-model')
 const useOllama = $<HTMLButtonElement>('use-ollama')
 const geminiForm = $<HTMLFormElement>('gemini')
 const geminiKey = $<HTMLInputElement>('gemini-key')
+const claudeForm = $<HTMLFormElement>('claude')
+const claudeKey = $<HTMLInputElement>('claude-key')
+const claudePick = $<HTMLDivElement>('claude-pick')
+const claudeModel = $<HTMLSelectElement>('claude-model')
+const useClaude = $<HTMLButtonElement>('use-claude')
+
+/** What each current model is good for here; anything else the key offers is listed after these. */
+const CLAUDE_NOTES: Record<string, string> = {
+  'claude-opus-5-5': 'best at getting things done',
+  'claude-sonnet-5-5': 'quicker, cheaper',
+  'claude-haiku-5-5': 'quickest, cheapest',
+  'claude-fable-5-1': 'most capable, priciest'
+}
+
+function fillClaudeModels(models: { id: string; name: string }[], current: string): void {
+  const order = Object.keys(CLAUDE_NOTES)
+  const sorted = [...models].sort((a, b) => {
+    const ia = order.indexOf(a.id)
+    const ib = order.indexOf(b.id)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+  const keep = claudeModel.value || current
+  claudeModel.innerHTML = ''
+  for (const m of sorted) {
+    const opt = document.createElement('option')
+    opt.value = m.id
+    opt.textContent = CLAUDE_NOTES[m.id] ? `${m.name} · ${CLAUDE_NOTES[m.id]}` : m.name
+    opt.selected = m.id === keep
+    claudeModel.appendChild(opt)
+  }
+  claudePick.classList.toggle('hidden', !sorted.length)
+}
 
 /** Vision models first: she looks at your screen, and a text-only model cannot. */
 function looksVisual(name: string): boolean {
@@ -49,6 +81,12 @@ function render(state: SetupState): void {
     }
   }
   geminiKey.placeholder = b.geminiKey ? 'a key is saved; paste a new one to replace it' : 'paste your Gemini key'
+  // An older main process (development hot reload) does not send this part.
+  if (b.claude) {
+    claudeKey.placeholder = b.claude.key ? 'a key is saved; paste a new one to replace it' : 'paste your Anthropic API key (sk-ant-…)'
+    fillClaudeModels(b.claude.models, b.claude.model)
+    if (b.claude.error) message(`Claude: ${b.claude.error}`, 'bad')
+  }
 
   const v = state.voice
   const voiceChip = $<HTMLSpanElement>('voice-chip')
@@ -102,6 +140,28 @@ geminiForm.addEventListener('submit', async (e) => {
   const result = await api.useGemini(key)
   if (result.ok) geminiKey.value = ''
   message(result.ok ? 'Key works. She thinks with Gemini now.' : `Key problem: ${result.error ?? 'unknown'}`, result.ok ? 'good' : 'bad')
+  await refresh()
+})
+
+claudeForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const key = claudeKey.value.trim()
+  if (!key || !api.useClaude) return
+  message('Checking the key…')
+  const result = await api.useClaude(key, claudeModel.value || 'claude-opus-5-5')
+  if (result.models?.length) fillClaudeModels(result.models, claudeModel.value || 'claude-opus-5-5')
+  if (result.ok) claudeKey.value = ''
+  message(result.ok ? `Key works. She thinks with ${claudeModel.value} now.` : (result.error ?? 'That did not work.'), result.ok ? 'good' : 'bad')
+  await refresh()
+})
+
+useClaude.addEventListener('click', async () => {
+  if (!api.useClaude || !claudeModel.value) return
+  useClaude.disabled = true
+  message(`Switching to ${claudeModel.value}…`)
+  const result = await api.useClaude(null, claudeModel.value)
+  useClaude.disabled = false
+  message(result.ok ? `She thinks with ${claudeModel.value} now.` : (result.error ?? 'That did not work.'), result.ok ? 'good' : 'bad')
   await refresh()
 })
 

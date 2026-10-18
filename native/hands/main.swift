@@ -288,6 +288,126 @@ func textInputs(_ pid: pid_t, limit: Int = 4000) -> [AXUIElement] {
   return out
 }
 
+// MARK: - Snapshots for the agent
+
+/// Elements from the last snapshot, by the number the agent saw. Only touched from the worker queue.
+var snapshotElements: [AXUIElement] = []
+var snapshotPid: pid_t = 0
+
+let ACTIONABLE_ROLES: Set<String> = [
+  "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXComboBox", "AXCheckBox", "AXRadioButton", "AXPopUpButton",
+  "AXMenuButton", "AXTab", "AXMenuItem", "AXSlider", "AXDisclosureTriangle", "AXIncrementor", "AXSegment", "AXSwitch",
+  "AXSearchField", "AXRow", "AXCell", "AXTabButton",
+]
+
+func frame(_ el: AXUIElement) -> CGRect? {
+  var posV: AnyObject?
+  var sizeV: AnyObject?
+  guard AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posV) == .success,
+        AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeV) == .success else { return nil }
+  var p = CGPoint.zero
+  var z = CGSize.zero
+  // swiftlint:disable force_cast
+  AXValueGetValue(posV as! AXValue, .cgPoint, &p)
+  AXValueGetValue(sizeV as! AXValue, .cgSize, &z)
+  // swiftlint:enable force_cast
+  return CGRect(origin: p, size: z)
+}
+
+func label(_ el: AXUIElement) -> String {
+  let parts = [kAXTitleAttribute, kAXDescriptionAttribute, "AXPlaceholderValue", kAXHelpAttribute].compactMap { axString(el, $0) }
+  var seen = Set<String>()
+  return parts.filter { seen.insert($0).inserted }.joined(separator: " · ")
+}
+
+/// What the agent sees of the front window: numbered things it can act on, and the text it can read, bounded.
+/// Rows and cells only count when they say something; a role with no label and no value is skipped.
+func snapshot(_ pid: pid_t, maxElements: Int, maxText: Int) -> Json {
+  enableElectronAccessibility(pid)
+  let app = axApp(pid)
+  guard let winV = axAttr(app, kAXFocusedWindowAttribute) ?? (axAttr(app, kAXWindowsAttribute) as? [AXUIElement])?.first else {
+    snapshotElements = []
+    return ["title": NSNull(), "elements": [], "text": ""]
+  }
+  // swiftlint:disable:next force_cast
+  let win = winV as! AXUIElement
+  var elements: [AXUIElement] = []
+  var lines: [String] = []
+  var text: [String] = []
+  var textLen = 0
+  var seenText = Set<String>()
+  var visited = 0
+  let winFrame = frame(win)
+  func walk(_ el: AXUIElement, _ depth: Int) {
+    visited += 1
+    if depth > 70 || visited > 9000 { return }
+    let role = axString(el, kAXRoleAttribute) ?? ""
+    let subrole = axString(el, kAXSubroleAttribute) ?? ""
+    if role == "AXStaticText" || role == "AXHeading" {
+      if let v = axString(el, kAXValueAttribute) ?? axString(el, kAXTitleAttribute) ?? axString(el, kAXDescriptionAttribute) {
+        let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty, textLen < maxText, seenText.insert(t).inserted {
+          text.append(role == "AXHeading" ? "## \(t)" : t)
+          textLen += t.count + 1
+        }
+      }
+    } else if ACTIONABLE_ROLES.contains(role) || subrole == "AXSearchField", elements.count < maxElements {
+      let name = label(el)
+      let value = axString(el, kAXValueAttribute).map { String($0.prefix(80)) }
+      let onScreen = frame(el).map { f in f.width > 1 && f.height > 1 && (winFrame?.intersects(f) ?? true) } ?? false
+      let meaningful = !name.isEmpty || value != nil || ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(role)
+      if onScreen && meaningful {
+        let enabled = (axAttr(el, kAXEnabledAttribute) as? NSNumber)?.boolValue ?? true
+        let focused = (axAttr(el, kAXFocusedAttribute) as? NSNumber)?.boolValue ?? false
+        let kind = role == "AXTextField" && subrole == "AXSecureTextField" ? "PasswordField" : role.replacingOccurrences(of: "AX", with: "")
+        var line = "[\(elements.count)] \(kind)"
+        if !name.isEmpty { line += " \"\(name.prefix(100))\"" }
+        if let v = value, !v.isEmpty, v != name { line += " = \"\(v)\"" }
+        if !enabled { line += " (disabled)" }
+        if focused { line += " (focused)" }
+        lines.append(line)
+        elements.append(el)
+      }
+    }
+    for child in axChildren(el) { walk(child, depth + 1) }
+  }
+  walk(win, 0)
+  snapshotElements = elements
+  snapshotPid = pid
+  return ["title": axString(win, kAXTitleAttribute) ?? NSNull(), "elements": lines, "text": text.joined(separator: "\n")]
+}
+
+func mouseClick(at p: CGPoint) {
+  for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+    guard let ev = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left) else { continue }
+    ev.post(tap: .cghidEventTap)
+    sleepMs(type == .mouseMoved ? 40 : 30)
+  }
+}
+
+/// Finds an installed app by name: running apps first, then the usual Applications folders.
+func resolveApp(_ raw: String) -> (String, String)? {
+  let want = raw.lowercased().replacingOccurrences(of: ".app", with: "").trimmingCharacters(in: .whitespaces)
+  for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+    if let n = app.localizedName?.lowercased(), n == want, let id = app.bundleIdentifier { return (id, app.localizedName ?? raw) }
+  }
+  let fm = FileManager.default
+  let dirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+  var loose: (String, String)?
+  for dir in dirs {
+    guard let names = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+    for name in names where name.hasSuffix(".app") {
+      let base = String(name.dropLast(4))
+      let b = base.lowercased()
+      guard b == want || (loose == nil && (b.hasPrefix(want) || b.contains(want))) else { continue }
+      guard let id = Bundle(path: "\(dir)/\(name)")?.bundleIdentifier else { continue }
+      if b == want { return (id, base) }
+      loose = (id, base)
+    }
+  }
+  return loose
+}
+
 // MARK: - Menus
 
 struct MenuEntry {
@@ -390,6 +510,33 @@ func handle(_ req: Json) throws -> Json {
     let err = AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     if err != .success { throw HandsError("focus_failed: \(err.rawValue)") }
     return ["element": describe(target)]
+  case "resolve":
+    guard let name = str(req, "name"), let (id, appName) = resolveApp(name) else { throw HandsError("not_installed") }
+    return ["bundleId": id, "name": appName]
+  case "snapshot":
+    guard let app = (str(req, "bundleId").flatMap { runningApp($0) }) ?? frontmost() else { throw HandsError("not_running") }
+    var r = snapshot(app.processIdentifier, maxElements: int(req, "maxElements") ?? 120, maxText: int(req, "maxText") ?? 3500)
+    r["app"] = app.localizedName ?? ""
+    r["bundleId"] = app.bundleIdentifier ?? ""
+    return r
+  case "act":
+    // press | focus | click on element n of the last snapshot
+    guard let n = int(req, "index"), n >= 0, n < snapshotElements.count else { throw HandsError("no_such_element: take a new snapshot") }
+    let el = snapshotElements[n]
+    var pid: pid_t = 0
+    AXUIElementGetPid(el, &pid)
+    if pid != snapshotPid { throw HandsError("no_such_element: take a new snapshot") }
+    let action = str(req, "action") ?? "press"
+    let info = describe(el)
+    if action == "focus" {
+      let err = AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+      if err != .success, let f = frame(el) { mouseClick(at: CGPoint(x: f.midX, y: f.midY)) }
+      return ["element": info]
+    }
+    if action == "press", AXUIElementPerformAction(el, kAXPressAction as CFString) == .success { return ["element": info, "via": "press"] }
+    guard let f = frame(el) else { throw HandsError("cannot_click: no position") }
+    mouseClick(at: CGPoint(x: f.midX, y: f.midY))
+    return ["element": info, "via": "click"]
   case "key":
     guard let combo = str(req, "combo") else { throw HandsError("no_combo") }
     try pressCombo(combo)

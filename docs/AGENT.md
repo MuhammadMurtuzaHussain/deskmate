@@ -26,6 +26,24 @@ Then just talk. She listens for a pause, transcribes the sentence on your machin
 
 `DESKMATE_WAKE_NAME=1` is the older switch: the same name gate, with listening still started by hand.
 
+## Claude brain and the agent on your Mac
+
+Pick **Claude** in the setup window (menu-bar icon → Setup…), paste an Anthropic API key, and choose a model from the list your key can use. Claude Opus 5.5 is the default and the most dependable at multi-step work; Claude Sonnet 5.5 and Claude Haiku 5.5 answer faster and cost less. Or in `.env`: `DESKMATE_BRAIN=anthropic`, `ANTHROPIC_API_KEY=…`, `ANTHROPIC_MODEL=claude-opus-5-5`. Usage is billed to your Anthropic account (an API key is separate from a Claude.ai subscription).
+
+With Claude as her brain:
+
+- **Chat** uses the same reply format as the other brains (structured output), sees your screen when you ask about it, and keeps her persona cached between turns so replies stay quick and cheap. Requests Anthropic's safety filters decline are retried on the model Anthropic recommends (server-side fallback, on the models that support it). If Claude is rate limited or unreachable and Ollama is running, the local model answers instead.
+- **The agent.** For anything that takes several steps across apps, she hands the goal to Claude with her hands as tools: open an app by name, read its front window as numbered elements plus its text, click an element, type into a field, press keys and shortcuts, pick a menu item, take a screenshot, open or read a web page, the Discord/Slack/Claude-app routines, and a yes/no question to you. Claude works in a loop (look, act, look again to check) for up to `DESKMATE_AGENT_STEPS` (25) rounds, and she says what happened. Say it, type it, or `/computer <goal>` (also `/agent`).
+
+The rules live in the tools, so the model cannot talk its way past them:
+
+- Keys, clicks and typing only go to the app the agent last looked at; if you switch apps, the next step is refused and it has to look again.
+- Password managers, Keychain, System Settings and terminals are off limits, and so is Deskmate itself.
+- Clicking anything labelled send, post, delete, buy, pay, confirm, share (and similar), choosing such a menu item, and pressing Return in a messaging app (Discord, Slack, Messages, WhatsApp, Telegram, Mail, Teams, Signal) all wait for your yes.
+- It never types passwords or card numbers, and never into a password field.
+- Spoken goals are read back before the run starts (`DESKMATE_CONFIRM_JOBS`). "Stop" ends a run at the next step.
+- Every run is logged in `<user data>/tasks/computer-*.log`.
+
 ## Hands: jobs for Claude Code
 
 You need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in (`claude` once in a terminal, then `/login`). Deskmate finds it on PATH or in the usual install folders; `DESKMATE_CLAUDE_BIN` points at it otherwise. The tray menu shows **Claude works in: …** when she has found it.

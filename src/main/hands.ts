@@ -22,6 +22,15 @@ export interface FocusedElement {
   value?: string
 }
 
+export interface Snapshot {
+  app: string
+  bundleId: string
+  title: string | null
+  /** "[3] Button "Send"", numbered for act() */
+  elements: string[]
+  text: string
+}
+
 type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
 
 /**
@@ -156,6 +165,30 @@ export class Hands {
   async pressMenu(bundleId: string, path: string[], expect?: string): Promise<string[]> {
     const r = await this.call('menu', { bundleId, press: path, expect })
     return (r.pressed as string[]) ?? []
+  }
+
+  /** An installed app by name ("spotify" → com.spotify.client). */
+  async resolve(name: string): Promise<{ bundleId: string; name: string }> {
+    const r = await this.call('resolve', { name })
+    return { bundleId: String(r.bundleId), name: String(r.name) }
+  }
+
+  /** The front window as the agent sees it: numbered things to act on, and its visible text. */
+  async snapshot(bundleId?: string, limits: { maxElements?: number; maxText?: number } = {}): Promise<Snapshot> {
+    const r = await this.call('snapshot', { bundleId, ...limits }, 25_000)
+    return {
+      app: String(r.app ?? ''),
+      bundleId: String(r.bundleId ?? ''),
+      title: r.title ? String(r.title) : null,
+      elements: (r.elements as string[]) ?? [],
+      text: String(r.text ?? '')
+    }
+  }
+
+  /** press (default), focus or click element n of the last snapshot; with `expect`, only while that app is in front. */
+  async act(index: number, action: 'press' | 'focus' | 'click', expect?: string): Promise<{ element: FocusedElement; via?: string }> {
+    const r = await this.call('act', { index, action, expect })
+    return { element: r.element as FocusedElement, via: r.via ? String(r.via) : undefined }
   }
 
   stop(): void {

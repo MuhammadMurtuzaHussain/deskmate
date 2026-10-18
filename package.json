@@ -18,6 +18,7 @@
     "pack": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder --dir"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@pixi/unsafe-eval": "^7.4.3",
     "@pixiv/three-vrm": "^3.5.5",
     "@pixiv/three-vrm-animation": "^3.5.5",

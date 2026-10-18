@@ -16,6 +16,7 @@ import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
+import { runComputerTask } from './computer'
 import { Hands, HandsError } from './hands'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
@@ -902,6 +903,71 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
   }
 }
 
+/**
+ * A multi-step goal on this Mac, worked by Claude through her hands (Claude brain only): it opens apps, reads their
+ * windows, clicks, types and checks, asking before anything that sends, posts, deletes or pays.
+ */
+async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
+  const agentBrain = brain.claudeForAgent
+  if (!agentBrain) return sayPlain('That needs Claude as my brain. Pick it in Setup, from my menu, with your Anthropic key.', 'sad')
+  if (!appHands.available) return sayPlain(handsMessage(new HandsError('', 'unavailable')), 'sad')
+  if (acting) return sayPlain("I'm already doing something on your Mac. Say \"stop\" first.", 'annoyed')
+  if (!goal.trim()) return sayPlain('Do what on your Mac?')
+  if (!(await checkAppTrust())) {
+    askForAccessibility()
+    return sayPlain('I need Accessibility to work your apps. Turn it on in the window I just opened, then ask me again.', 'sad')
+  }
+  const confirmJobs = CONFIRM_JOBS === 'always' || (CONFIRM_JOBS === 'voice' && Boolean(opts.voice))
+  // A misheard sentence must not start a run on the computer.
+  if (confirmJobs && !(await confirm(`On your Mac: ${goal}. Go ahead?`))) return sayPlain('Okay, leaving it.')
+  acting = true
+  actStop = false
+  refreshTray()
+  mkdirSync(join(USER_DATA, 'tasks'), { recursive: true })
+  const logPath = join(USER_DATA, 'tasks', `computer-${Date.now().toString(36)}.log`)
+  const log = (line: string): void => {
+    try {
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+    } catch {
+      // not her problem
+    }
+  }
+  log(`goal: ${goal} (model ${agentBrain.model})`)
+  console.log(`[computer] ${agentBrain.model}: ${goal}`)
+  const stopped = (): boolean => actStop || quitting
+  try {
+    const result = await runComputerTask(goal, {
+      client: agentBrain.client,
+      model: agentBrain.model,
+      hands: appHands,
+      confirm,
+      screenshot: () => captureScreen().catch(() => undefined),
+      runApp: (req) =>
+        runApp(req, { hands: appHands, confirm, confirmMessages: CONFIRM_SENDS !== 'never', confirmPrompts: false, onStep: status, log, stopped }),
+      openUrl: async (url) => {
+        if (chrome.chromeAvailable()) await chrome.open(url)
+        else await shell.openExternal(url)
+      },
+      readWebPage: async () => {
+        const page = await chrome.pageText(8000)
+        return `${page.title}\n${page.url}\n\n${page.text}`
+      },
+      onStep: (text) => status(`on your Mac · ${text}`),
+      log,
+      stopped,
+      selfBundleIds: ['com.github.Electron', 'com.murtuza.deskmate'],
+      maxSteps: Math.max(5, Number(process.env.DESKMATE_AGENT_STEPS) || 25)
+    })
+    console.log(`[computer] ${result.ok ? 'done' : 'not done'} after ${result.steps} step(s): ${result.answer.slice(0, 160)}`)
+    memory.addTurn('user', `[On the Mac, "${goal}": ${result.answer.slice(0, 300)}]`)
+    return sayPlain(result.answer, result.ok ? 'happy' : 'sad')
+  } finally {
+    acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
 async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
   switch (call.name) {
@@ -919,6 +985,8 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return chromeVerb(call.input)
     case 'app':
       return runAppTool(call.input, opts)
+    case 'computer':
+      return runComputer(call.input, opts)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -1282,7 +1350,11 @@ async function setupState(): Promise<SetupState> {
       mode: brain.mode,
       modelName: brain.modelName,
       ollama: { running: ollama.running, models: ollama.models, current: brain.ollamaModel },
-      geminiKey: brain.hasGeminiKey
+      geminiKey: brain.hasGeminiKey,
+      claude: await (async () => {
+        const list = await brain.claudeModelList()
+        return { key: brain.hasClaudeKey, model: brain.claudeModel, models: list.models, error: list.error }
+      })()
     },
     voice: {
       provider: localVoice ? 'local' : process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs' : 'system',
@@ -1322,6 +1394,14 @@ ipcMain.handle('setup:ollama', async (_event, model: string) => {
 ipcMain.handle('setup:gemini', async (_event, key: string) => {
   const result = await brain.useGemini(String(key))
   if (result.ok) status(`${character.name} is thinking with ${brain.modelName} now`)
+  return result
+})
+ipcMain.handle('setup:claude', async (_event, key: string | null, model: string) => {
+  const result = await brain.useClaude(key ? String(key) : null, String(model ?? ''))
+  if (result.ok) {
+    status(`${character.name} is thinking with ${brain.modelName} now`)
+    refreshTray()
+  }
   return result
 })
 ipcMain.handle('setup:allow', (_event, kind: PermissionKind) => allow(kind))

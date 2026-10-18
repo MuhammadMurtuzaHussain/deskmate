@@ -9,8 +9,10 @@ export type DanceStyle = 'groove' | 'slow' | 'spin'
  * Things she can do on the computer, beyond talking. `claude` hands a job to Claude Code (the coding agent
  * installed on the machine) in a project folder; `claude_resume` continues an earlier session there.
  */
-export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app'
-export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app']
+export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer'
+export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer']
+/** Only a Claude brain may pick `computer` (a multi-step agent run across desktop apps); small models would overreach. */
+export const CLAUDE_ONLY_TOOLS: ToolName[] = ['computer']
 /** The ones her brain may pick. `chrome` (tab and page verbs) only ever comes from the spoken-command router. */
 export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app']
 export interface ToolCall {
@@ -91,7 +93,7 @@ export interface CharacterConfig {
   license?: string
 }
 
-export type BrainMode = 'gemini' | 'ollama' | 'demo'
+export type BrainMode = 'gemini' | 'ollama' | 'anthropic' | 'demo'
 
 export interface Touch {
   kind: 'tap' | 'drag'
@@ -151,6 +153,7 @@ export interface SetupState {
     modelName: string
     ollama: { running: boolean; models: string[]; current: string }
     geminiKey: boolean
+    claude: { key: boolean; model: string; models: { id: string; name: string }[]; error?: string }
   }
   voice: { provider: 'local' | 'elevenlabs' | 'system'; localServer: boolean }
   /** granted / denied / not-determined / restricted / unknown, as macOS reports them; keys is null without the helper */
@@ -188,6 +191,8 @@ export interface DeskmateApi {
   getSetup?(): Promise<SetupState>
   useOllama?(model: string): Promise<{ ok: boolean; error?: string }>
   useGemini?(key: string): Promise<{ ok: boolean; error?: string }>
+  /** checks the key (when given), lists its models, and switches her brain to Claude with that model */
+  useClaude?(key: string | null, model: string): Promise<{ ok: boolean; error?: string; models?: { id: string; name: string }[] }>
   allow?(kind: PermissionKind): Promise<void>
   finishSetup?(): Promise<void>
   openSetup?(): void

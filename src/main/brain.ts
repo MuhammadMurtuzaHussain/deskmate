@@ -1,8 +1,10 @@
 import type { Memory } from './memory'
 import type { Settings } from './settings'
 import { geminiGenerate, geminiCheckKey, GeminiBlockedError, GeminiQuotaError, type GeminiContent } from './gemini'
+import type Anthropic from '@anthropic-ai/sdk'
+import { callClaude, claudeClient, ClaudeError, DEFAULT_CLAUDE_MODEL, listClaudeModels, replyText, type ClaudeModelInfo } from './anthropic'
 import { ollamaChat, ollamaModels, type OllamaMessage } from './ollama'
-import { AVATAR_COMMANDS, BRAIN_TOOLS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
+import { AVATAR_COMMANDS, BRAIN_TOOLS, CLAUDE_ONLY_TOOLS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
 
 /** Something her hands want her to tell the user about: a Claude Code job or a browsing run. */
 export interface TaskReport {
@@ -70,6 +72,57 @@ const REPLY_SCHEMA = {
   required: ['say', 'emotion', 'speak', 'remember', 'action', 'tool', 'tool_input', 'tool_dir']
 }
 
+/** With a Claude brain she has one more tool: a real agent run across the apps on this Mac. */
+const CLAUDE_TOOLS_NOTE = `- With Claude as your brain you also have "tool": "computer": for anything on this Mac that takes several steps across apps and is not covered by the tools above ("find the PDF Sam sent on WhatsApp and open it", "open Spotify and play my liked songs", "in Notion, add 'call mum' to my todo page"). "tool_input" is the goal in their words, with every detail they gave. Simple app messages still use "app"; web lookups still use "browse"; code work still uses "claude".`
+
+/** The reply contract as a strict schema for structured output: every field required, no extras, nulls spelled out. */
+const CLAUDE_REPLY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    say: { type: 'string' },
+    emotion: { type: 'string', enum: [...EMOTIONS] },
+    speak: { type: 'boolean' },
+    remember: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { text: { type: 'string' }, importance: { type: 'integer', enum: [1, 2, 3, 4, 5] } },
+        required: ['text', 'importance']
+      }
+    },
+    action: { anyOf: [{ type: 'string', enum: [...AVATAR_COMMANDS] }, { type: 'null' }] },
+    tool: { anyOf: [{ type: 'string', enum: [...BRAIN_TOOLS, ...CLAUDE_ONLY_TOOLS] }, { type: 'null' }] },
+    tool_input: { type: 'string' },
+    tool_dir: { anyOf: [{ type: 'string' }, { type: 'null' }] }
+  },
+  required: ['say', 'emotion', 'speak', 'remember', 'action', 'tool', 'tool_input', 'tool_dir']
+}
+
+/** Planner schemas written for Ollama ("type": [..., "null"], no additionalProperties) made strict for Claude. */
+export function strictSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit)
+    if (!node || typeof node !== 'object') return node
+    const n: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) n[k] = visit(v)
+    if (Array.isArray(n.type)) {
+      const types = n.type as string[]
+      const { type: _t, enum: en, ...rest } = n
+      return {
+        anyOf: types.map((t) => (t === 'null' ? { type: 'null' } : { ...rest, type: t, ...(en ? { enum: (en as unknown[]).filter((e) => e !== null) } : {}) }))
+      }
+    }
+    if (n.type === 'object' && n.properties) {
+      n.additionalProperties = false
+      n.required = Object.keys(n.properties as object)
+    }
+    return n
+  }
+  return visit(schema) as Record<string, unknown>
+}
+
 const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null, "tool": null, "tool_input": "", "tool_dir": null}
 Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}
 Example when they say "let ana know on slack the deploy is done": {"say": "telling ana.", "emotion": "neutral", "speak": true, "remember": [], "action": null, "tool": "app", "tool_input": "Slack: tell ana the deploy is done", "tool_dir": null}
@@ -104,6 +157,11 @@ export class Brain {
   ollamaModel: string
   private ollamaReady = false
   private preferOllama: boolean
+  /** Claude (Anthropic API): key, chosen model, and a client made from the key */
+  private claudeKey: string | null = null
+  claudeModel: string
+  private claude: Anthropic | null = null
+  private claudeModels: { at: number; list: ClaudeModelInfo[] } | null = null
   readonly model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
   readonly fallbackModel = process.env.GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL
   mode: BrainMode = 'demo'
@@ -120,10 +178,16 @@ export class Brain {
     this.ollamaModel = process.env.OLLAMA_MODEL?.trim() || saved.ollamaModel || DEFAULT_OLLAMA_MODEL
     const brainEnv = process.env.DESKMATE_BRAIN?.trim().toLowerCase()
     this.preferOllama = brainEnv ? brainEnv === 'ollama' : saved.brain === 'ollama'
+    this.claudeModel = process.env.ANTHROPIC_MODEL?.trim() || saved.anthropicModel || DEFAULT_CLAUDE_MODEL
+    this.claudeKey = (process.env.ANTHROPIC_API_KEY || saved.anthropicApiKey || '').trim() || null
     const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || saved.geminiApiKey || '').trim()
     if (key) {
       this.key = key
       this.mode = 'gemini'
+    }
+    if (this.claudeKey && (brainEnv ? brainEnv === 'anthropic' || brainEnv === 'claude' : saved.brain === 'anthropic')) {
+      this.claude = claudeClient(this.claudeKey)
+      this.mode = 'anthropic'
     }
   }
 
@@ -133,7 +197,7 @@ export class Brain {
     const running = models !== null
     const hasModel = Boolean(models?.some((m) => m === this.ollamaModel || m.split(':')[0] === this.ollamaModel.split(':')[0]))
     this.ollamaReady = running && hasModel
-    if (this.ollamaReady && (this.preferOllama || !this.key)) this.mode = 'ollama'
+    if (this.ollamaReady && this.mode !== 'anthropic' && (this.preferOllama || !this.key)) this.mode = 'ollama'
     return { running, hasModel, models: models ?? [] }
   }
 
@@ -149,6 +213,7 @@ export class Brain {
     }
     this.preferOllama = true
     this.mode = 'ollama'
+    this.claude = null
     this.settings.set({ brain: 'ollama', ollamaModel: this.ollamaModel })
     return { ok: true }
   }
@@ -158,8 +223,52 @@ export class Brain {
     const result = await this.setKey(key)
     if (!result.ok) return result
     this.preferOllama = false
+    this.claude = null
     this.settings.set({ brain: 'gemini' })
     return result
+  }
+
+  /** Setup window: think with Claude. A new key is checked by listing its models; the model must be one of them. */
+  async useClaude(key: string | null, model: string): Promise<{ ok: boolean; error?: string; models?: ClaudeModelInfo[] }> {
+    const useKey = key?.trim() || this.claudeKey
+    if (!useKey) return { ok: false, error: 'Paste an Anthropic API key first (console.anthropic.com → API keys).' }
+    let models: ClaudeModelInfo[]
+    try {
+      models = await listClaudeModels(useKey)
+    } catch (err) {
+      return { ok: false, error: err instanceof ClaudeError && err.code === 'auth' ? 'That key was not accepted.' : (err as Error).message }
+    }
+    this.claudeModels = { at: Date.now(), list: models }
+    const pick = model?.trim() || this.claudeModel
+    if (!models.some((m) => m.id === pick)) return { ok: false, error: `This key cannot use ${pick}.`, models }
+    this.claudeKey = useKey
+    this.claudeModel = pick
+    this.claude = claudeClient(useKey)
+    this.mode = 'anthropic'
+    this.settings.set({ brain: 'anthropic', anthropicApiKey: useKey, anthropicModel: pick })
+    return { ok: true, models }
+  }
+
+  /** The models the saved key can use (cached for ten minutes); empty without a key. */
+  async claudeModelList(): Promise<{ models: ClaudeModelInfo[]; error?: string }> {
+    if (!this.claudeKey) return { models: [] }
+    if (this.claudeModels && Date.now() - this.claudeModels.at < 600_000) return { models: this.claudeModels.list }
+    try {
+      const list = await listClaudeModels(this.claudeKey)
+      this.claudeModels = { at: Date.now(), list }
+      return { models: list }
+    } catch (err) {
+      return { models: [], error: (err as Error).message }
+    }
+  }
+
+  get hasClaudeKey(): boolean {
+    return Boolean(this.claudeKey)
+  }
+
+  /** The client the computer agent uses, when her brain is Claude. */
+  get claudeForAgent(): { client: Anthropic; model: string } | null {
+    return this.mode === 'anthropic' && this.claude ? { client: this.claude, model: this.claudeModel } : null
   }
 
   get hasGeminiKey(): boolean {
@@ -173,11 +282,13 @@ export class Brain {
   }
 
   get modelName(): string {
+    if (this.mode === 'anthropic') return this.claudeModel
     return this.mode === 'gemini' ? this.model : this.mode === 'ollama' ? `${this.ollamaModel} (local)` : 'demo'
   }
 
   /** True when some model can think right now (for tools that need a planner). */
   get canThink(): boolean {
+    if (this.mode === 'anthropic') return true
     return this.useOllamaNow() || (Boolean(this.key) && this.cooldownSeconds() === 0)
   }
 
@@ -210,7 +321,17 @@ export class Brain {
    */
   async plan(system: string, user: string, schema: Record<string, unknown>): Promise<Record<string, unknown>> {
     let text: string
-    if (this.useOllamaNow()) {
+    if (this.mode === 'anthropic' && this.claude) {
+      const res = await callClaude(this.claude, {
+        model: this.claudeModel,
+        system: [{ type: 'text', text: system }],
+        messages: [{ role: 'user', content: user }],
+        schema: strictSchema(schema),
+        effort: 'low',
+        maxTokens: 8000
+      })
+      text = replyText(res)
+    } else if (this.useOllamaNow()) {
       text = await ollamaChat({
         model: this.ollamaModel,
         messages: [
@@ -266,6 +387,7 @@ export class Brain {
       const [say, emotion] = lines[Math.floor(Math.random() * lines.length)]
       return { say, emotion, speak: true, remember: [] }
     }
+    if (this.mode === 'anthropic' && this.claude) return this.respondClaude(stimulus)
     if (this.useOllamaNow()) return this.respondLocal(stimulus)
     if (!this.key) return this.canned(stimulus)
     if (this.cooldownSeconds() > 0) {
@@ -315,6 +437,66 @@ export class Brain {
     }
 
     const reply = parseReply(text, stimulus)
+    if (!reply.say && (stimulus.kind === 'chat' || stimulus.kind === 'task')) {
+      reply.say = this.canned(stimulus).say
+      reply.speak = true
+    }
+    this.commit(stimulus, reply)
+    return reply
+  }
+
+  /**
+   * Claude: the persona and the output contract are the stable, cached part of the system prompt; memory follows,
+   * then the recent turns. Structured output holds her to the reply contract. A rate limit or an outage hands this
+   * reply to the local model when there is one.
+   */
+  private async respondClaude(stimulus: Stimulus): Promise<Reply> {
+    const client = this.claude as Anthropic
+    const facts = this.memory.recall()
+    const memoryBlock = facts.length
+      ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}`
+      : 'You do not know this person yet.'
+    const messages: Anthropic.Beta.BetaMessageParam[] = this.memory
+      .recentTurns()
+      .map((t): Anthropic.Beta.BetaMessageParam => ({ role: t.role === 'assistant' ? 'assistant' : 'user', content: t.text }))
+    while (messages.length && messages[0].role !== 'user') messages.shift()
+    const content: Anthropic.Beta.BetaContentBlockParam[] = []
+    if (stimulus.screenshot) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: stimulus.screenshot.mediaType, data: stimulus.screenshot.data } })
+    }
+    content.push({ type: 'text', text: this.promptText(stimulus) })
+    messages.push({ role: 'user', content })
+    let text: string
+    try {
+      const res = await callClaude(client, {
+        model: this.claudeModel,
+        system: [
+          { type: 'text', text: `${this.persona}\n\n${OUTPUT_CONTRACT}\n${CLAUDE_TOOLS_NOTE}`, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: memoryBlock }
+        ],
+        messages,
+        schema: CLAUDE_REPLY_SCHEMA,
+        effort: 'low',
+        maxTokens: 8000
+      })
+      text = replyText(res)
+    } catch (err) {
+      const claudeErr = err as ClaudeError
+      console.warn(`[brain:claude] ${claudeErr.message}`)
+      if ((claudeErr.code === 'rate' || claudeErr.code === 'overloaded' || claudeErr.code === 'network') && this.ollamaReady) return this.respondLocal(stimulus)
+      if (stimulus.kind === 'touch' || stimulus.kind === 'task') return this.canned(stimulus)
+      if (stimulus.kind === 'observe') return { say: '', emotion: 'neutral', speak: false, remember: [] }
+      const say =
+        claudeErr.code === 'auth'
+          ? 'My Anthropic key stopped working. Fix it in Setup, from my menu.'
+          : claudeErr.code === 'refusal'
+            ? "Mm, I'm not touching that one."
+            : claudeErr.code === 'bad_request'
+              ? `Claude did not like that request: ${claudeErr.message.slice(0, 120)}`
+              : `I can't reach Claude right now (${claudeErr.message}). Try me again in a minute.`
+      return { say, emotion: 'sad', speak: true, remember: [] }
+    }
+    const reply = parseReply(text, stimulus, true)
     if (!reply.say && (stimulus.kind === 'chat' || stimulus.kind === 'task')) {
       reply.say = this.canned(stimulus).say
       reply.speak = true
@@ -587,7 +769,7 @@ function salvageField(text: string, field: string): string | undefined {
   }
 }
 
-function parseReply(text: string, stimulus: Stimulus): Reply {
+function parseReply(text: string, stimulus: Stimulus, claude = false): Reply {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   const quietAllowed = stimulus.kind === 'observe' && !stimulus.manual
   try {
@@ -619,7 +801,8 @@ function parseReply(text: string, stimulus: Stimulus): Reply {
     const action = (AVATAR_COMMANDS as string[]).includes(String(obj.action ?? '')) ? (obj.action as AvatarCommand) : undefined
     let tool: ToolCall | undefined
     // Only a direct message can start a job; a glance at the screen, a poke or a page question never does.
-    if (stimulus.kind === 'chat' && !stimulus.page && (BRAIN_TOOLS as string[]).includes(String(obj.tool ?? ''))) {
+    const allowed = claude ? [...BRAIN_TOOLS, ...CLAUDE_ONLY_TOOLS] : BRAIN_TOOLS
+    if (stimulus.kind === 'chat' && !stimulus.page && (allowed as string[]).includes(String(obj.tool ?? ''))) {
       tool = {
         name: obj.tool as ToolName,
         input: String(obj.tool_input ?? '').trim(),

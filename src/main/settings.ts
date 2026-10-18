@@ -7,8 +7,11 @@ export interface SettingsData {
   /** folder Claude jobs run in unless the user names another */
   activeProject?: string
   /** chosen in the first-run window; DESKMATE_BRAIN / OLLAMA_MODEL in .env win over these */
-  brain?: 'ollama' | 'gemini'
+  brain?: 'ollama' | 'gemini' | 'anthropic'
   ollamaModel?: string
+  /** Claude through the Anthropic API (ANTHROPIC_API_KEY / ANTHROPIC_MODEL in .env win) */
+  anthropicApiKey?: string
+  anthropicModel?: string
   /** the first-run window was finished or closed once */
   setupDone?: boolean
 }

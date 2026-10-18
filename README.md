@@ -59,6 +59,8 @@ She starts in the bottom-right corner. The first time, a **setup window** walks 
 
 ### Give her a brain (2 minutes)
 
+**Claude (best at doing things):** paste an [Anthropic API key](https://console.anthropic.com/settings/keys) into the setup window and pick a model (Claude Opus 5.5 by default; Sonnet 5.5 and Haiku 5.5 are quicker and cheaper). Billed per use to your Anthropic account. With Claude she also gets a real agent for multi-step jobs on your Mac ("open Spotify and play my liked songs", "in Notes, start a shopping list with milk and eggs"): it works your apps step by step, checks each step, and asks before anything that sends, posts, deletes or pays. [docs/AGENT.md](docs/AGENT.md#claude-brain-and-the-agent-on-your-mac).
+
 **Local, free, private (recommended):** install [Ollama](https://ollama.com), then
 
 ```bash

@@ -15,6 +15,17 @@
     <section id="brain">
       <div class="head"><h2>1 · Her brain</h2><span class="chip" id="brain-chip">…</span></div>
       <div class="option">
+        <div class="label"><b>Claude</b> through the Anthropic API: the one that can really work your apps for you. Key from <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>; paid per use on your account.</div>
+        <form id="claude" class="row" autocomplete="off">
+          <input id="claude-key" type="password" placeholder="paste your Anthropic API key (sk-ant-…)" />
+          <button type="submit">Check key</button>
+        </form>
+        <div id="claude-pick" class="row hidden">
+          <select id="claude-model"></select>
+          <button id="use-claude">Use this model</button>
+        </div>
+      </div>
+      <div class="option">
         <div class="label"><b>On this Mac</b> with Ollama: free, private, nothing leaves your computer.</div>
         <div id="ollama-on" class="row hidden">
           <select id="ollama-model"></select>
