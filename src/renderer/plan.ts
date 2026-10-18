@@ -9,6 +9,7 @@ const WORKER_LABEL: Record<PlanStep['worker'], string> = {
   browse: 'Chrome',
   claude: 'Claude Code',
   app: 'app',
+  skill: 'skill',
   find: 'Finder',
   open: 'open',
   say: 'tell you',

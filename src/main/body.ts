@@ -1,5 +1,5 @@
 import { BrowserWindow, screen } from 'electron'
-import type { Hands, Rect } from './hands'
+import type { DesktopHands, Rect } from './hands'
 import type { Anchors, BodyState, Gesture } from '../shared/types'
 import { HoverSwat, nearHead } from './hover'
 
@@ -14,7 +14,7 @@ import { HoverSwat, nearHead } from './hover'
 
 export interface BodyDeps {
   win(): BrowserWindow | null
-  hands: Hands
+  hands: DesktopHands
   /** bundle ids of her own app, so she never sits on herself */
   selfIds: string[]
   log(line: string): void

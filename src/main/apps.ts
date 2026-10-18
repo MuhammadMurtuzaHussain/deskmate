@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { Hands, HandsError, type FocusedElement } from './hands'
+import { boxHolds, chatLabel, EDITABLE_ROLES, titleMatches, words } from './checks'
+import { HandsError, type DesktopHands, type FocusedElement } from './hands'
 
 /**
  * Her hands in desktop apps: a message to someone on Discord or Slack, a prompt typed into the Claude app, or just
@@ -190,7 +191,7 @@ export function fromPlan(obj: Record<string, unknown>): AppRequest | null {
 // ---- doing it
 
 export interface RoutineDeps {
-  hands: Hands
+  hands: DesktopHands
   /** reads the question out and waits for a yes */
   confirm(question: string): Promise<boolean>
   /** whether a message waits for a yes before it is sent (prompts to the Claude app have their own switch) */
@@ -218,49 +219,8 @@ class Stopped extends Error {}
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-function words(s: string): string[] {
-  return s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim()
-    .split(' ')
-    .filter(Boolean)
-}
-
-/** True when every word of what they named shows up in the window title ("general chat" ↔ "#general-chat | …"). */
-export function titleMatches(target: string, title: string | null): boolean {
-  if (!title) return false
-  const have = new Set(words(title))
-  const want = words(target)
-  return want.length > 0 && want.every((w) => have.has(w) || [...have].some((h) => h.startsWith(w) && w.length >= 3))
-}
-
-/** "(3) #general | My Server - Discord" → "#general"; "general (Channel) - Acme - Slack" → "general". */
-export function chatLabel(title: string, appName: string): string {
-  const parts = title
-    .replace(/^\(\d+\)\s*/, '')
-    .replace(/^•\s*/, '')
-    .split(/\s+[|–—-]\s+/)
-    .map((p) => p.trim())
-    .filter((p) => p && p.toLowerCase() !== appName.toLowerCase())
-  return (parts[0] ?? title).replace(/\s*\((?:channel|dm|group dm)\)$/i, '').trim()
-}
-
-const EDITABLE_ROLES = new Set(['AXTextArea', 'AXTextField', 'AXComboBox'])
-
-function squash(s: string | undefined): string {
-  return (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
-}
-
-/** True unless the box reports a value that does not hold `text` (a box that reports nothing gets the benefit). */
-function boxHolds(box: FocusedElement | null, text: string): boolean {
-  if (box?.value === undefined) return true
-  return squash(box.value).includes(squash(text).slice(0, 40))
-}
-
 /** Puts the caret in a text box: the one that has focus, else the one labelled `hint` ("message"). Null if none. */
-async function ensureInput(hands: Hands, id: string, hint: string, log: (line: string) => void): Promise<FocusedElement | null> {
+async function ensureInput(hands: DesktopHands, id: string, hint: string, log: (line: string) => void): Promise<FocusedElement | null> {
   const focus = await hands.focused(id).catch(() => null)
   log(`focused: ${JSON.stringify(focus)}`)
   if (focus?.role && EDITABLE_ROLES.has(focus.role)) return focus
@@ -276,7 +236,7 @@ async function ensureInput(hands: Hands, id: string, hint: string, log: (line: s
 }
 
 /** Backs out of a quick switcher: the first Escape clears its search, the second closes it (measured in Discord). */
-async function backOut(hands: Hands, id: string): Promise<void> {
+async function backOut(hands: DesktopHands, id: string): Promise<void> {
   await hands.key('escape', id).catch(() => undefined)
   await sleep(200)
   await hands.key('escape', id).catch(() => undefined)
@@ -647,7 +607,9 @@ export function handsMessage(err: unknown, appName = 'the app'): string {
   if (!(err instanceof HandsError)) return `Something went wrong in ${appName}: ${(err as Error).message}`
   switch (err.code) {
     case 'unavailable':
-      return "I can only work other apps on a Mac, and my hands helper isn't built yet (npm run build)."
+      return process.platform === 'darwin'
+        ? "My hands helper isn't built yet, so I can't work other apps (npm run build compiles it)."
+        : 'I can only work other apps on a Mac, or on Windows (experimental) for now.'
     case 'not_installed':
       return `${appName} isn't installed on this Mac.`
     case 'focus_changed':

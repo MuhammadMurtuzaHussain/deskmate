@@ -1,0 +1,33 @@
+{
+  "name": "whatsapp-message",
+  "title": "WhatsApp message",
+  "description": "Send a WhatsApp message to a person or group",
+  "app": { "name": "WhatsApp", "bundleId": "net.whatsapp.WhatsApp", "windows": "WhatsApp" },
+  "slots": [
+    { "name": "to", "description": "The person or group, as named in WhatsApp" },
+    { "name": "text", "description": "Exactly what to send" }
+  ],
+  "triggers": [
+    "whatsapp[:] (message|text|tell|ping) {to}[:|,] [that|saying] {text}",
+    "whatsapp[:] {to}: {text}",
+    "(message|text|tell|ping|send a message to|send a whatsapp to|whatsapp) {to} (on|in|over|via) whatsapp[:|,] [that|saying] {text}",
+    "(on|in|over) whatsapp[,|:] (message|text|tell|ping) {to}[:|,] [that|saying] {text}",
+    "send {text} to {to} (on|in|over|via) whatsapp"
+  ],
+  "steps": [
+    { "do": "launch", "waitMs": 4000 },
+    { "do": "key", "combo": "cmd+f", "note": "File › Search" },
+    { "do": "wait", "ms": 400 },
+    { "do": "type", "text": "{to}" },
+    { "do": "wait", "ms": 1200 },
+    { "do": "key", "combo": "return", "send": false, "note": "opens the top search result" },
+    { "do": "wait", "ms": 800 },
+    { "do": "locate", "text": "{to}", "fail": "I couldn't see a chat with {to} in WhatsApp, so I didn't type anything." },
+    { "do": "confirm", "question": "Send \"{text}\" to {to} on WhatsApp?", "no": "Okay, not sent." },
+    { "do": "focusInput", "hint": "message" },
+    { "do": "paste", "text": "{text}" },
+    { "do": "readBack", "text": "{text}" },
+    { "do": "key", "combo": "return", "send": true }
+  ],
+  "done": "Sent to {to} on WhatsApp."
+}

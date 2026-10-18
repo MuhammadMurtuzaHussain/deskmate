@@ -1,0 +1,33 @@
+{
+  "name": "telegram-message",
+  "title": "Telegram message",
+  "description": "Send a Telegram message to a person, group or channel",
+  "app": { "name": "Telegram", "bundleId": "ru.keepcoder.Telegram", "windows": "Telegram" },
+  "slots": [
+    { "name": "to", "description": "The person, group or channel, as named in Telegram" },
+    { "name": "text", "description": "Exactly what to send" }
+  ],
+  "triggers": [
+    "telegram[:] (message|text|tell|ping) {to}[:|,] [that|saying] {text}",
+    "telegram[:] {to}: {text}",
+    "(message|text|tell|ping|send a message to|send a telegram to) {to} (on|in|over|via) telegram[:|,] [that|saying] {text}",
+    "(on|in|over) telegram[,|:] (message|text|tell|ping) {to}[:|,] [that|saying] {text}",
+    "send {text} to {to} (on|in|over|via) telegram"
+  ],
+  "steps": [
+    { "do": "launch", "waitMs": 3000 },
+    { "do": "key", "combo": "cmd+k", "note": "Quick Search" },
+    { "do": "wait", "ms": 400 },
+    { "do": "type", "text": "{to}" },
+    { "do": "wait", "ms": 1200 },
+    { "do": "key", "combo": "return", "send": false, "note": "opens the top result" },
+    { "do": "wait", "ms": 800 },
+    { "do": "locate", "text": "{to}", "fail": "I couldn't see a chat with {to} in Telegram, so I didn't type anything." },
+    { "do": "confirm", "question": "Send \"{text}\" to {to} on Telegram?", "no": "Okay, not sent." },
+    { "do": "focusInput", "hint": "message" },
+    { "do": "paste", "text": "{text}" },
+    { "do": "readBack", "text": "{text}" },
+    { "do": "key", "combo": "return", "send": true }
+  ],
+  "done": "Sent to {to} on Telegram."
+}

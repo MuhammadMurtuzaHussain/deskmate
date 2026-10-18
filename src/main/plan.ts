@@ -8,23 +8,25 @@ import type { Plan, PlanStep, PlanWorker } from '../shared/types'
  * failed step pauses the plan, and "skip step 2", "change step 3 to …", "pause", "stop the plan" work by voice.
  */
 
-export const WORKERS: PlanWorker[] = ['computer', 'browse', 'claude', 'app', 'find', 'open', 'say', 'ask']
+export const WORKERS: PlanWorker[] = ['computer', 'browse', 'claude', 'app', 'skill', 'find', 'open', 'say', 'ask']
 
 const WORKER_HELP: Record<PlanWorker, string> = {
   computer: 'work any app on this Mac step by step (open apps, click, type, read windows): Notes, Finder, Mail, WhatsApp, Settings-free tasks',
   browse: 'look something up or get something done in their Chrome browser',
   claude: 'a coding or file job for Claude Code in a project folder (write or fix code, edit files, run scripts); set "dir" to the folder they named',
   app: 'one quick action: a Discord, Slack or Messages message ("Discord: tell sam I am late"), Spotify play / pause / skip, or a prompt to the Claude app',
+  skill: 'one ready-made app routine from the skills listed below; write "input" the way its example shows, with the real names and words',
   find: 'find a file or folder on this Mac by name and show it',
   open: 'open an app, a folder or a website by name',
   say: 'tell them something at the end: a summary of what the earlier steps found or did',
   ask: 'ask them a yes/no question before going on (only when a real decision is needed)'
 }
 
-export function plannerSystem(workers: PlanWorker[]): string {
+/** `skills`: one line per skill (skillsForPlanner in skills.ts), shown under the "skill" worker. */
+export function plannerSystem(workers: PlanWorker[], skills = ''): string {
   return `You plan a job on the user's Mac for their desk companion, who then does it one step at a time.
 Workers she can hand a step to:
-${workers.map((w) => `- "${w}": ${WORKER_HELP[w]}`).join('\n')}
+${workers.map((w) => `- "${w}": ${WORKER_HELP[w]}${w === 'skill' && skills ? `\n${skills}` : ''}`).join('\n')}
 
 Reply with ONE JSON object: {"title": string, "steps": [{"text": string, "worker": string, "input": string, "dir": string|null}]}
 - "title": the goal in four to seven words.
@@ -56,8 +58,8 @@ export const PLAN_SCHEMA = {
   required: ['title', 'steps']
 }
 
-export function reviseSystem(workers: PlanWorker[]): string {
-  return `${plannerSystem(workers)}
+export function reviseSystem(workers: PlanWorker[], skills = ''): string {
+  return `${plannerSystem(workers, skills)}
 
 You are revising an existing plan: you get the plan as JSON and the change they asked for. Return the whole revised plan in the same shape; keep the steps they did not mention as they are.`
 }

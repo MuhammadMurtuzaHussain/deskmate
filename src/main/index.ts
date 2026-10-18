@@ -28,7 +28,9 @@ import { dueLine, listLine, parseReminder, parseWhen, ReminderStore, setLine, ti
 import { planCommand, planSummary, plannerSystem, PLAN_SCHEMA, PlanStore, reviseSystem, toPlan, type PlanCommand } from './plan'
 import { PlanCard } from './planwin'
 import { runComputerTask } from './computer'
-import { Hands, HandsError } from './hands'
+import { Hands, HandsError, type DesktopHands } from './hands'
+import { WinHands } from './hands-win'
+import { loadSkills, matchSkill, runSkill, skillsForPlanner, type Skill, type SkillMatch } from './skills'
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
@@ -153,8 +155,9 @@ const CONFIRM_JOBS = (process.env.DESKMATE_CONFIRM_JOBS?.trim().toLowerCase() ||
 /** always (default) | voice | never: whether a Discord or Slack message is read back and waits for a yes before it goes */
 const CONFIRM_SENDS = (process.env.DESKMATE_CONFIRM_SENDS?.trim().toLowerCase() || 'always') as 'always' | 'voice' | 'never'
 
-// Her hands in desktop apps (macOS): the native helper that launches apps, presses keys and reads window titles.
-const appHands = new Hands(Hands.locate(RESOURCES, ROOT))
+// Her hands in desktop apps: the native helper on macOS that launches apps, presses keys and reads window titles;
+// PowerShell and UI Automation on Windows (experimental).
+const appHands: DesktopHands = process.platform === 'win32' ? new WinHands() : new Hands(Hands.locate(RESOURCES, ROOT))
 // From a checkout, the helper asks macOS for Calendars itself (see Hands.calendarDisclaim).
 appHands.calendarDisclaim = !app.isPackaged
 /** Accessibility granted to the app that runs her (null until checked); without it macOS drops her key presses. */
@@ -191,6 +194,24 @@ async function swatLine(): Promise<void> {
   if (herSpeaking || hearing || acting || browsing) return
   await deliver({ say, emotion, speak: true, remember: [] }, 'touch')
 }
+// Skills: app routines from skills/ in the app and <user data>/skills (see docs/SKILLS.md).
+let skills: Skill[] = []
+const USER_SKILLS = join(USER_DATA, 'skills')
+
+async function reloadSkills(): Promise<void> {
+  const loaded = await loadSkills(
+    [
+      { dir: join(RESOURCES, 'skills'), source: 'bundled' },
+      { dir: USER_SKILLS, source: 'user' }
+    ],
+    { allowUserCode: process.env.DESKMATE_SKILL_CODE?.trim() === '1' }
+  )
+  skills = loaded.skills
+  console.log(`[skills] ${skills.length ? skills.map((s) => `${s.name}${s.source === 'user' ? ' (yours)' : ''}`).join(', ') : 'none'}`)
+  for (const p of loaded.problems) console.warn(`[skills] ${p.dir} not loaded: ${p.errors.join('; ')}`)
+  refreshTray()
+}
+
 // What she did, by day ("what did you do today?"), and the plan she is showing or working through.
 const journal = new Journal(join(USER_DATA, 'log'))
 const plans = new PlanStore(join(USER_DATA, 'plans'))
@@ -435,6 +456,22 @@ function buildTrayMenu(): Menu {
     { label: 'Setup…', click: () => openSetup() },
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
+    {
+      label: `Skills (${skills.length})`,
+      submenu: [
+        ...skills.map((s) => ({ label: `${s.title} · ${s.app.name}${s.source === 'user' ? ' (yours)' : ''}`, enabled: false })),
+        ...(skills.length ? [{ type: 'separator' as const }] : []),
+        {
+          label: 'Open my skills folder',
+          click: () => {
+            mkdirSync(USER_SKILLS, { recursive: true })
+            void shell.openPath(USER_SKILLS)
+          }
+        },
+        { label: 'Reload skills', click: () => void reloadSkills() },
+        { label: 'How to write a skill', click: () => void shell.openExternal(`${REPO_URL}/blob/main/docs/SKILLS.md`) }
+      ]
+    },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
     ...(next ? [{ label: `Update available: v${next.version}`, click: () => void shell.openExternal(next.url) }] : []),
     { type: 'separator' },
@@ -1302,8 +1339,52 @@ async function checkAppTrust(): Promise<boolean> {
   return appTrusted
 }
 
+/** The deps a skill runs with: her hands, her read-back, her status line, a log in <user data>/tasks. */
+function skillDeps(log: (line: string) => void, stopped: () => boolean, confirmSends: boolean): Parameters<typeof runSkill>[2] {
+  return {
+    hands: appHands,
+    platform: process.platform,
+    confirm,
+    confirmSends,
+    onStep: status,
+    log,
+    stopped
+  }
+}
+
+/** A phrase that matched a skill's trigger: run the skill, like an app routine. */
+async function runSkillTool(hit: SkillMatch, said: string, opts: { voice?: boolean }): Promise<Reply> {
+  if (!appHands.available) return sayPlain(handsMessage(new HandsError('', 'unavailable')), 'sad')
+  if (acting) return sayPlain("I'm already doing something in an app. Say \"stop\" first.", 'annoyed')
+  if (!(await checkAppTrust())) {
+    askForAccessibility()
+    return sayPlain('I need Accessibility to press keys for you. Turn it on in the window I just opened, then ask me again.', 'sad')
+  }
+  acting = true
+  actStop = false
+  refreshTray()
+  const log = taskLogger(`skill-${hit.skill.name}`)
+  console.log(`[skills] ${hit.skill.name} ${JSON.stringify(hit.slots).slice(0, 120)}`)
+  try {
+    // Read-backs follow DESKMATE_CONFIRM_SENDS, as for Discord and Slack messages.
+    const confirmSends = CONFIRM_SENDS === 'always' || (CONFIRM_SENDS === 'voice' && Boolean(opts.voice))
+    const result = await runSkill(hit.skill, hit.slots, skillDeps(log, () => actStop || quitting, confirmSends), said)
+    console.log(`[skills] ${result.ok ? 'done' : 'not done'}: ${result.summary}`)
+    journal.add('app', result.summary)
+    memory.addTurn('user', `[${hit.skill.app.name}: ${result.ok ? result.say : `not done: ${result.say}`}]`)
+    return sayPlain(result.say, result.ok ? 'happy' : 'sad')
+  } finally {
+    acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
 /** Something to do inside a desktop app: a Discord or Slack message, a chat to open, a prompt for the Claude app. */
 async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
+  // A skill names its app in its triggers, so it goes first ("message sam on whatsapp…" is not a Messages text).
+  const skillHit = matchSkill(skills, input)
+  if (skillHit) return runSkillTool(skillHit, input, opts)
   if (!appHands.available) return sayPlain(handsMessage(new HandsError('', 'unavailable')), 'sad')
   if (acting) return sayPlain("I'm already doing something in an app. Say \"stop\" first.", 'annoyed')
   let req: AppRequest | null = parseAppRequest(input)
@@ -1442,6 +1523,8 @@ async function agentGoal(goal: string, log: (line: string) => void, stopped: () 
       log,
       stopped,
       selfBundleIds: ['com.github.Electron', 'com.murtuza.deskmate'],
+      skills,
+      runSkill: (skill, slots) => runSkill(skill, slots, skillDeps(log, stopped, CONFIRM_SENDS !== 'never')),
       maxSteps: Math.max(5, Number(process.env.DESKMATE_AGENT_STEPS) || 25)
     })
     return result
@@ -1600,7 +1683,9 @@ function planWorkers(): PlanWorker[] {
   if (brain.claudeForAgent && appHands.available) w.push('computer')
   if (chrome.chromeAvailable()) w.push('browse')
   if (hands) w.push('claude')
-  w.push('app', 'find', 'open', 'say', 'ask')
+  w.push('app')
+  if (skills.length && appHands.available) w.push('skill')
+  w.push('find', 'open', 'say', 'ask')
   return w
 }
 
@@ -1620,7 +1705,7 @@ async function makePlan(goal: string): Promise<Reply> {
   const workers = planWorkers()
   let obj: Record<string, unknown>
   try {
-    obj = await brain.plan(plannerSystem(workers), `Goal: ${what}`, PLAN_SCHEMA)
+    obj = await brain.plan(plannerSystem(workers, skillsForPlanner(skills)), `Goal: ${what}`, PLAN_SCHEMA)
   } catch (err) {
     return sayPlain(`I couldn't plan that: ${(err as Error).message.slice(0, 120)}`, 'sad')
   }
@@ -1648,7 +1733,7 @@ async function revisePlan(instruction: string): Promise<Reply> {
   let obj: Record<string, unknown>
   try {
     obj = await brain.plan(
-      reviseSystem(workers),
+      reviseSystem(workers, skillsForPlanner(skills)),
       `Goal: ${p.goal}\nPlan: ${JSON.stringify({ title: p.title, steps: rest.map(({ text, worker, input, dir }) => ({ text, worker, input, dir: dir ?? null })) })}\nChange: ${instruction}`,
       PLAN_SCHEMA
     )
@@ -1713,7 +1798,32 @@ async function runStep(step: Plan['steps'][number], earlier: string): Promise<{ 
       const end = await jobEnded(task.id)
       return { ok: end.status === 'done', result: (end.result || end.lastText || end.error || '').slice(0, 600) }
     }
+    case 'skill': {
+      let hit = matchSkill(skills, step.input)
+      if (!hit && brain.canThink && skills.length) {
+        // The planner wrote the step its own way: one call picks the skill and fills its slots.
+        const names = [...new Set(skills.flatMap((s) => s.slots.map((x) => x.name)))]
+        const picked = await brain
+          .plan(
+            `Pick the app routine for this step and fill in its slots exactly as the step says them. Routines:\n${skills.map((s) => `- "${s.name}": ${s.description} (slots: ${s.slots.map((x) => `${x.name} = ${x.description}`).join('; ')})`).join('\n')}\nReply with ONE JSON object: {"skill": string, ${names.map((n) => `"${n}": string`).join(', ')}}; "skill" is "none" when no routine fits, and a slot the routine does not have is "".`,
+            step.input,
+            { type: 'object', properties: { skill: { type: 'string', enum: [...skills.map((s) => s.name), 'none'] }, ...Object.fromEntries(names.map((n) => [n, { type: 'string' }])) }, required: ['skill', ...names] }
+          )
+          .catch(() => null)
+        const skill = skills.find((s) => s.name === picked?.skill)
+        if (skill && picked) hit = { skill, slots: Object.fromEntries(skill.slots.map((x) => [x.name, String(picked[x.name] ?? '').trim()])) }
+      }
+      if (!hit) return runStep({ ...step, worker: 'app' }, earlier)
+      if (!(await checkAppTrust())) {
+        askForAccessibility()
+        return { ok: false, result: 'I need Accessibility to work your apps' }
+      }
+      const r = await runSkill(hit.skill, hit.slots, skillDeps(log, stopped, CONFIRM_SENDS !== 'never'), step.input)
+      return { ok: r.ok, result: r.ok ? r.say : r.summary }
+    }
     case 'app': {
+      const skillHit = matchSkill(skills, step.input)
+      if (skillHit) return runStep({ ...step, worker: 'skill' }, earlier)
       let req = parseAppRequest(step.input)
       if (!req && brain.canThink) req = fromPlan(await brain.plan(APP_PLAN_SYSTEM, step.input, APP_PLAN_SCHEMA).catch(() => ({})))
       if (!req) {
@@ -2081,6 +2191,10 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     if (/^where/i.test(said) || FILEISH.test(lookFor[1]) || FILEISH.test(said)) return findAndShow(lookFor[1])
   }
 
+  // Skills: "message sam on whatsapp: running late", "make a note saying …" (their triggers name the app).
+  const skillHit = matchSkill(skills, stripName(text))
+  if (skillHit) return runSkillTool(skillHit, text, { voice: opts.voice })
+
   const routed = routeCommand(stripName(text))
   if (routed) return runTool(routed, { voice: opts.voice })
 
@@ -2102,7 +2216,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     // confirmation is the line.
     return runTool(reply.tool, { voice: opts.voice, said: text })
   }
-  if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude|messages?|imessages?|imsg|texts?|texting|spotify|music|song|track)\b/i.test(text)) {
+  if (reply.tool?.name === 'app' && !matchSkill(skills, reply.tool.input) && !/\b(?:discord|slack|claude|messages?|imessages?|imsg|texts?|texting|spotify|music|song|track)\b/i.test(text)) {
     // The quick routines only cover Discord, Slack and the Claude app. A request for another app ("text Notepad on
     // Messages") is real work for the agent when Claude is her brain. Otherwise it is either a small model replaying an
     // old request from memory ("what's on my screen?" once re-sent a Discord message), or something she cannot do yet.
@@ -3047,6 +3161,7 @@ app.whenReady().then(async () => {
     console.log(claude.ok ? `[hands] Claude Code ${claude.version} at ${agent.findBinary()}; jobs run with --permission-mode ${agent.permissionMode}` : `[hands] ${claude.error}`)
     refreshTray()
   })
+  await reloadSkills()
   if (appHands.available) {
     void checkAppTrust().then((ok) =>
       console.log(`[apps] app control ready (Discord, Slack, Claude); Accessibility ${ok ? 'granted' : 'NOT granted: she will ask the first time'}`)
@@ -3054,6 +3169,7 @@ app.whenReady().then(async () => {
   } else if (process.platform === 'darwin') {
     console.log('[apps] native/bin/deskmate-hands missing: app control is off (npm run build compiles it)')
   }
+  if (process.platform === 'win32') console.log('[apps] Windows hands (experimental): PowerShell + UI Automation')
   if (chrome.chromeAvailable()) {
     void chrome.running().then((up) => console.log(`[browser] ${chrome.BROWSER_APP} ${up ? 'is open; she can drive it' : 'is not open right now'}`))
   }

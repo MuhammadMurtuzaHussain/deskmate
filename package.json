@@ -106,6 +106,10 @@
         "to": "character/mika"
       },
       {
+        "from": "skills",
+        "to": "skills"
+      },
+      {
         "from": "build",
         "to": "build",
         "filter": [

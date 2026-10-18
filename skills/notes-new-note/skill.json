@@ -1,0 +1,23 @@
+{
+  "name": "notes-new-note",
+  "title": "New note",
+  "description": "Write a new note in Apple Notes",
+  "app": { "name": "Notes", "bundleId": "com.apple.Notes" },
+  "slots": [
+    { "name": "text", "description": "What the note says" }
+  ],
+  "triggers": [
+    "notes: {text}",
+    "(make|create|add|write|take|start) a [new] note[:|,] [saying|that says|with] {text}",
+    "(note down|jot down|write down) {text} in [apple] notes",
+    "(add|put) {text} (in|to|into) [apple] notes"
+  ],
+  "steps": [
+    { "do": "launch", "waitMs": 2500 },
+    { "do": "menu", "path": ["File", "New Note"] },
+    { "do": "wait", "ms": 700 },
+    { "do": "paste", "text": "{text}" },
+    { "do": "readBack", "text": "{text}" }
+  ],
+  "done": "Added it to Notes."
+}

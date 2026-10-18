@@ -1,7 +1,9 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { callClaude, ClaudeError } from './anthropic'
 import type { AppRequest, RoutineResult } from './apps'
-import { Hands, HandsError, type Snapshot } from './hands'
+import { DENY_APPS, MESSAGING_APPS, NEVER_TYPE, RISKY_LABEL, SEND_KEY } from './checks'
+import { HandsError, type DesktopHands, type Snapshot } from './hands'
+import { skillTool, skillToolName, type Skill, type SkillResult } from './skills'
 
 /**
  * Her agent with a Claude brain: a goal in, Claude works the Mac through her hands (open an app, look at its window,
@@ -15,7 +17,7 @@ export interface ComputerDeps {
   client: Anthropic
   model: string
   effort: 'low' | 'medium' | 'high'
-  hands: Hands
+  hands: DesktopHands
   /** reads the question out and waits for a yes */
   confirm(question: string): Promise<boolean>
   /** a downscaled capture of the screen with her own window greyed out */
@@ -33,6 +35,9 @@ export interface ComputerDeps {
   stopped(): boolean
   /** her own app, so the agent never drives it */
   selfBundleIds: string[]
+  /** ready-made app routines (skills/), each offered as a tool; they keep their own read-backs */
+  skills?: Skill[]
+  runSkill?(skill: Skill, slots: Record<string, string>): Promise<SkillResult>
   maxSteps?: number
 }
 
@@ -43,36 +48,6 @@ export interface ComputerResult {
   steps: number
 }
 
-/** Off limits whatever the goal: secrets, system settings, and shells (Claude Code jobs exist for real terminal work). */
-const DENY_APPS = new Set([
-  'com.apple.keychainaccess',
-  'com.1password.1password',
-  'com.agilebits.onepassword7',
-  'com.bitwarden.desktop',
-  'com.apple.systempreferences',
-  'com.apple.SecurityAgent',
-  'com.apple.Terminal',
-  'com.googlecode.iterm2',
-  'dev.warp.Warp-Stable',
-  'com.mitchellh.ghostty'
-])
-/** Where Return sends something to other people. */
-const MESSAGING_APPS = new Set([
-  'com.hnc.Discord',
-  'com.tinyspeck.slackmacgap',
-  'com.apple.MobileSMS',
-  'net.whatsapp.WhatsApp',
-  'desktop.WhatsApp',
-  'ru.keepcoder.Telegram',
-  'org.telegram.desktop',
-  'com.apple.mail',
-  'com.microsoft.Outlook',
-  'com.microsoft.teams2',
-  'org.whispersystems.signal-desktop'
-])
-const RISKY_LABEL = /\b(send|post|publish|tweet|reply|submit|delete|remove|trash|erase|buy|pay|purchase|checkout|check out|order|transfer|donate|subscribe|unsubscribe|confirm|sign out|log out|accept|agree|share|invite|call|leave)\b/i
-const NEVER_TYPE = /\b(?:\d[ -]?){13,19}\b|password|passcode|cvv|cvc|social security|iban/i
-
 const SYSTEM = `You operate the user's Mac for them through tools, one careful step at a time, the way a person at the keyboard would.
 
 How to work:
@@ -80,6 +55,7 @@ How to work:
 - Prefer the app's own keyboard shortcuts and search (⌘K quick switchers, ⌘F, ⌘L in browsers, ⌘N) over long chains of clicks. Use choose_menu when you know the menu item.
 - To type into a field: type_text with its element number. To submit, press_keys "return" afterwards.
 - For a message on Discord, Slack or Messages (iMessage) use send_message; for a question to the Claude desktop app use ask_claude_app. For web pages use open_url and read_web_page.
+- Tools named skill_… are ready-made routines for one app (a WhatsApp message, a new note); when one fits, use it instead of driving that app by hand.
 - When they want a photo or picture of the companion ("of yourself", "of you") in another app, use paste_my_picture where the attachment should go (a message box), then send as usual.
 - If look shows few or no elements for what you can see (canvas apps, games, some web apps), use read_text_on_screen and click_text. If even that is not enough, take a screenshot.
 - Never enter passwords, card numbers or personal data; never buy, pay, or delete anything the user did not ask for. When a step needs their decision or a detail you don't have, ask_user (yes/no questions only).
@@ -220,7 +196,7 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         const no = needTarget()
         if (no) return no
         const combo = String(input.combo).toLowerCase().replace(/\s+/g, '')
-        const sends = /^(?:cmd\+|ctrl\+|shift\+)?(?:return|enter)$/.test(combo) && MESSAGING_APPS.has(target as string)
+        const sends = SEND_KEY.test(combo) && MESSAGING_APPS.has(target as string)
         if (sends) {
           const where = last?.title ? ` in ${last.title}` : ''
           if (!(await deps.confirm(`Send that message${where}?`))) return 'The user said no. Do not send it.'
@@ -305,11 +281,20 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         const yes = await deps.confirm(String(input.question))
         return yes ? 'The user said yes.' : 'The user said no.'
       }
-      default:
-        return `Unknown tool ${name}.`
+      default: {
+        const skill = deps.skills?.find((s) => skillToolName(s) === name)
+        if (!skill || !deps.runSkill) return `Unknown tool ${name}.`
+        const slots = Object.fromEntries(Object.entries(input).map(([k, v]) => [k, String(v ?? '')]))
+        const result = await deps.runSkill(skill, slots)
+        // The skill moved things around; the agent's last look is stale.
+        last = null
+        target = null
+        return result.ok ? `Done: ${result.say}` : `Not done: ${result.say} (${result.summary})`
+      }
     }
   }
 
+  const tools = deps.runSkill ? [...TOOLS, ...(deps.skills ?? []).map((s) => skillTool(s) as Anthropic.Beta.BetaTool)] : TOOLS
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: `Goal: ${goal}` }]
   for (let step = 1; step <= maxSteps; step++) {
     if (deps.stopped()) return { ok: false, answer: 'Stopped.', steps: step - 1 }
@@ -319,7 +304,7 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         model: deps.model,
         system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
         messages,
-        tools: TOOLS,
+        tools,
         effort: deps.effort,
         maxTokens: 16000
       })

@@ -72,7 +72,7 @@ export interface CharacterVoice {
 }
 
 /** Who does a step of a plan. */
-export type PlanWorker = 'computer' | 'browse' | 'claude' | 'app' | 'find' | 'open' | 'say' | 'ask'
+export type PlanWorker = 'computer' | 'browse' | 'claude' | 'app' | 'skill' | 'find' | 'open' | 'say' | 'ask'
 
 export interface PlanStep {
   /** short, shown on the plan card ("Find the March invoice") */

@@ -7,11 +7,10 @@ import type { Banner } from './inbox'
 
 /** A failure the helper reported ("not_installed", "focus_changed: …", "blocked_combo: …"). */
 export class HandsError extends Error {
-  constructor(
-    message: string,
-    readonly code: string
-  ) {
+  readonly code: string
+  constructor(message: string, code: string) {
     super(message)
+    this.code = code
   }
 }
 
@@ -43,17 +42,71 @@ export interface Snapshot {
 
 type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
 
+export interface MenuItem {
+  path: string[]
+  shortcut?: string
+  enabled: boolean
+}
+
+export interface TopWindow {
+  windowId: number
+  bundleId: string
+  app: string
+  frame: Rect
+}
+
+/**
+ * Her hands, whatever the OS: the macOS helper (Hands, below) or the experimental Windows one (WinHands in
+ * hands-win.ts). An app is named by its bundle id on macOS and by its process name on Windows. Every call that presses
+ * keys takes `expect`: refused unless that app is still in front.
+ */
+export interface DesktopHands {
+  readonly available: boolean
+  calendarDisclaim: boolean
+  permissions(): Promise<{ keys: boolean; accessibility: boolean; screen: boolean }>
+  installed(app: string): Promise<boolean>
+  launch(app: string, timeoutMs?: number): Promise<{ pid: number; wasRunning: boolean; ms: number }>
+  frontmost(): Promise<{ bundleId: string; name: string; title?: string }>
+  windowTitle(app: string): Promise<string | null>
+  focused(app: string): Promise<FocusedElement | null>
+  focusInput(app: string, hint: string, expect?: string): Promise<FocusedElement>
+  key(combo: string, expect?: string): Promise<void>
+  type(text: string, expect?: string): Promise<void>
+  paste(text: string, expect?: string): Promise<void>
+  menuItems(app: string): Promise<MenuItem[]>
+  pressMenu(app: string, path: string[], expect?: string): Promise<string[]>
+  resolve(name: string): Promise<{ bundleId: string; name: string }>
+  snapshot(app?: string, limits?: { maxElements?: number; maxText?: number }): Promise<Snapshot>
+  act(index: number, action: 'press' | 'focus' | 'click', expect?: string): Promise<{ element: FocusedElement; via?: string }>
+  ocr(app?: string): Promise<{ app: string; bundleId: string; items: string[] }>
+  clickText(index: number, expect?: string): Promise<void>
+  topWindow(exclude: string[]): Promise<TopWindow | null>
+  windowById(windowId: number): Promise<Rect | null>
+  elementFrame(index: number): Promise<Rect>
+  textFrame(index: number): Promise<Rect>
+  locate(app: string, text: string): Promise<Rect | null>
+  banners(): Promise<Banner[]>
+  calendarStatus(): Promise<string>
+  calendarEvents(minutes: number, pastMinutes?: number): Promise<CalendarEvent[]>
+  requestCalendarAccess(timeoutMs?: number): Promise<{ granted: boolean; status: string; error?: string }>
+  stop(): void
+}
+
 /**
  * Talks to native/bin/deskmate-hands, the Swift helper that launches apps, presses keys, pastes text and reads window
  * titles and menus on macOS. One long-lived process, JSON lines both ways, started on first use and again after a
  * crash. Requests run in order on the helper's side.
  */
-export class Hands {
+export class Hands implements DesktopHands {
   private proc: ChildProcessWithoutNullStreams | null = null
   private nextId = 1
   private readonly waiting = new Map<number, Pending>()
 
-  constructor(private readonly binary: string) {}
+  private readonly binary: string
+
+  constructor(binary: string) {
+    this.binary = binary
+  }
 
   /** Where the helper lives: next to the app's resources when packaged, under native/bin in a checkout. */
   static locate(resources: string, root: string): string {
@@ -166,9 +219,9 @@ export class Hands {
     await this.call('paste', { text, expect })
   }
 
-  async menuItems(bundleId: string): Promise<{ path: string[]; shortcut?: string; enabled: boolean }[]> {
+  async menuItems(bundleId: string): Promise<MenuItem[]> {
     const r = await this.call('menu', { bundleId })
-    return (r.items as { path: string[]; shortcut?: string; enabled: boolean }[]) ?? []
+    return (r.items as MenuItem[]) ?? []
   }
 
   /** Presses a menu item by its title, matched from the end of its path: ["New Chat"] or ["File", "New Chat"]. */
@@ -213,7 +266,7 @@ export class Hands {
   }
 
   /** The front-most real window that is not one of `exclude` (her own app), for sitting on. */
-  async topWindow(exclude: string[]): Promise<{ windowId: number; bundleId: string; app: string; frame: Rect } | null> {
+  async topWindow(exclude: string[]): Promise<TopWindow | null> {
     const r = await this.call('topWindow', { exclude })
     return r.windowId === null || r.windowId === undefined ? null : { windowId: Number(r.windowId), bundleId: String(r.bundleId), app: String(r.app), frame: r.frame as Rect }
   }
