@@ -159,6 +159,33 @@ For the Claude app she switches to its chat side (Go › Claude) before New Chat
 
 Not yet: reading replies back to you, WhatsApp / Telegram / other apps, Windows and Linux.
 
+## From your phone (Telegram)
+
+When you are away from the laptop, text her from your phone. Deskmate reads a Telegram bot of your own (long polling: no server, no open port on your Mac), runs each message through the same path as typed chat, and sends back every line she says while she works on it, including the steps in between ("… working out who and what", edited in place as she goes) and the read-back questions.
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name, and copy the token it gives you (`123456:ABC…`).
+2. Menu-bar icon → **Setup…** → **4 · From your phone**: paste the token, **Check and use**. Or put `DESKMATE_TELEGRAM_TOKEN=…` in `.env` (a token pasted in Setup wins over it).
+3. On your phone, open your bot and send `/start`. Your phone shows a four-digit code; on the Mac she asks "Someone on Telegram, *you*, wants to control me from their phone. The code is … Is that you?". Check the code, then say or type yes, or press **Allow** in Setup.
+
+After that, anything you would type in her command bar works from the phone: "message sam on Discord saying I'm late", "what's on my screen?", "ask Claude to fix the failing tests in deskmate", "how's Claude doing". When she reads something back before sending it, the phone shows **Yes** / **No** buttons (typing yes or no works too). A Claude Code job started from the phone reports to the phone when it ends, however long it takes.
+
+| on the phone | she does |
+|---|---|
+| anything | the same as typing it in her command bar |
+| `/selfie` (or "send me a selfie") | sends a picture of her as she is on screen (she shows herself for a moment if she was hidden) |
+| `/stop` | stops what she is doing in an app, in Chrome, or the running Claude job |
+| `/help` | what you can send |
+| `/unpair` | forgets this phone; pairing again takes a `/start` and a yes on the Mac |
+
+The tray menu has **Phone remote: on/off**; off stops reading the bot (messages wait in Telegram). The status row shows `📱 …` when a phone message comes in.
+
+What keeps it safe:
+
+- **One account.** Only the Telegram account you paired can control her, and only from its private chat with the bot; the chat id and the sender are both checked. Everyone else, groups and other bots are ignored and logged (`[remote] ignored …`), never relayed and never answered. Someone else's `/start` is not even answered while a phone is paired.
+- **Pairing needs the Mac.** The first `/start` is read back on the Mac with the code, and only a yes there (or **Allow** in Setup) pairs it; the phone cannot answer that question. After a no, further `/start`s are ignored for a minute, and an account refused twice is ignored until the remote is switched off and on. To pair a different phone, **Forget this phone** in Setup (or `/unpair` from the old one) first. A new bot token clears the pairing.
+- **Same rules as at the keyboard.** Phone messages count as typed, so every confirmation that applies to typed requests applies (`DESKMATE_CONFIRM_SENDS`, default always, reads messages back; `DESKMATE_CONFIRM_JOBS=always` reads jobs and agent runs back too). A question nobody answers within a minute is a no.
+- **Nothing stale.** A message that reached her more than two minutes late (the Mac was asleep or Deskmate was closed) is not acted on; she tells you, and you send it again if you still want it.
+
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.
+Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted); nothing else she sees or hears is sent there.

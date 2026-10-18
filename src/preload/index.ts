@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AvatarCommand, DeskmateApi, PermissionKind, ReplyPayload } from '../shared/types'
+import type { AvatarCommand, DeskmateApi, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -37,7 +37,12 @@ const api: DeskmateApi = {
   useClaude: (key, model, effort) => ipcRenderer.invoke('setup:claude', key, model, effort),
   allow: (kind: PermissionKind) => ipcRenderer.invoke('setup:allow', kind),
   finishSetup: () => ipcRenderer.invoke('setup:finish'),
-  openSetup: () => ipcRenderer.send('setup:open')
+  openSetup: () => ipcRenderer.send('setup:open'),
+  useTelegram: (token) => ipcRenderer.invoke('setup:telegram', token),
+  remote: (action: RemoteAction) => ipcRenderer.invoke('setup:remote', action),
+  onSetupChanged: (cb) => {
+    ipcRenderer.on('setup:changed', () => cb())
+  }
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)
