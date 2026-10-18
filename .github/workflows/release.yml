@@ -25,6 +25,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      # The app-control helper for both Mac chips: the arm64 and x64 DMGs ship the same binary.
+      - run: node scripts/build-hands.cjs --universal
       - name: Package and publish
         run: npx electron-builder --publish always
         env:

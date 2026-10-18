@@ -94,6 +94,41 @@ Rules she keeps regardless of what the page says: never type passwords, card num
 
 The log of every browsing run is in `<user data>/tasks/`.
 
+## Apps: Discord, Slack and the Claude app (macOS)
+
+She can work the desktop apps you already use, logged in as you, even when they are closed: she opens them, finds the chat, and types for you.
+
+| you say | she does |
+|---|---|
+| "tell sam on Discord that I'm running late" | opens Discord, jumps to sam, reads it back, sends on your yes |
+| "message #general in Slack: standup moved to 11" | the same in Slack |
+| "go to #gaming on Discord" / "open my DMs with ana in Slack" | just takes you there |
+| "open Claude and ask it to draft a cover letter" / "ask the Claude app what a monad is" | new chat in the Claude desktop app, prompt typed and sent |
+
+Typed shortcuts: `/discord sam: running late`, `/slack #general`, `/app <anything>`. Other phrasings go to her brain, which hands them over ("let ana know on slack the deploy is done").
+
+"Ask Claude to …" is still a Claude Code job in a project folder; "the Claude app", "open Claude and ask …" is the chat app.
+
+### One-time setup
+
+**Accessibility** for whatever runs her: Deskmate when installed, or Electron / your terminal app when you run `npm run dev`. The first time you ask, she opens System Settings → Privacy & Security → Accessibility; switch it on and ask again. The tray menu shows **Let her use your apps (Accessibility)…** until it is on. The helper that presses the keys is a small Swift program, `native/bin/deskmate-hands`, built by `npm run dev` / `npm run build` (needs the Xcode command line tools: `xcode-select --install`).
+
+### How she does it, and what keeps it safe
+
+Each app has a fixed routine; no model is in the loop while keys are pressed:
+
+1. Opens or brings the app forward (`open -b`, so it also works when the app is closed or hidden in the tray) and waits for its window.
+2. ⌘K (Discord's Quick Switcher, Slack's Jump to), types the name, and checks the search box shows it before pressing Enter.
+3. **Reads the window title back.** If it does not show the chat you named ("#general", "sam"), she backs out and tells you what she saw instead. Nothing is typed into the wrong chat.
+4. **Reads the message back and waits for your yes** (`DESKMATE_CONFIRM_SENDS`, default always). After the yes she checks the app is still on that chat.
+5. Pastes the text into the message box (clipboard restored afterwards), checks it landed in the box, presses Enter, and checks the box emptied.
+
+Keys only ever go to the app she is working in: if you switch apps while she works, she stops before the next key. ⌘Q, ⌘Tab and ⌘Space are never sent. Say "stop" to cut a run short. Every run is logged in `<user data>/tasks/app-*.log`.
+
+For the Claude app she switches to its chat side (Go › Claude) before New Chat, so a prompt never lands in a Code session. Prompts follow `DESKMATE_CONFIRM_JOBS` (read back when spoken).
+
+Not yet: reading replies back to you, WhatsApp / Telegram / other apps, Windows and Linux.
+
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.
+Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.

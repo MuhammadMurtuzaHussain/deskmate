@@ -6,15 +6,16 @@
   "main": "./out/main/index.js",
   "scripts": {
     "ensure-electron": "node scripts/ensure-electron.cjs",
-    "dev": "node scripts/ensure-electron.cjs && electron-vite dev",
-    "build": "node scripts/ensure-electron.cjs && electron-vite build",
-    "start": "node scripts/ensure-electron.cjs && electron-vite preview",
+    "dev": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite dev",
+    "build": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite build",
+    "start": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder",
-    "dist:mac": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --mac",
+    "build:hands": "node scripts/build-hands.cjs",
+    "dist": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder",
+    "dist:mac": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder --mac",
     "dist:win": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --win",
     "dist:linux": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --linux",
-    "pack": "node scripts/ensure-electron.cjs && electron-vite build && electron-builder --dir"
+    "pack": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder --dir"
   },
   "dependencies": {
     "@pixi/unsafe-eval": "^7.4.3",
@@ -123,6 +124,15 @@
     ],
     "mac": {
       "category": "public.app-category.entertainment",
+      "extraResources": [
+        {
+          "from": "native/bin",
+          "to": "bin",
+          "filter": [
+            "deskmate-hands"
+          ]
+        }
+      ],
       "target": [
         {
           "target": "dmg",

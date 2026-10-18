@@ -39,7 +39,7 @@ const DEFAULT_OLLAMA_MODEL = 'qwen3-vl:4b-instruct'
 
 const OUTPUT_CONTRACT = `
 Reply with ONE JSON object and nothing else, no code fences:
-{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null, "tool": "claude"|"claude_resume"|"browse"|"page"|"open"|"tasks"|"cancel"|null, "tool_input": string, "tool_dir": string|null}
+{"say": string, "emotion": "neutral"|"happy"|"flirty"|"surprised"|"annoyed"|"angry"|"sad"|"smug"|"shy", "speak": boolean, "remember": [{"text": string, "importance": 1|2|3|4|5}], "action": "dance"|"dance_slow"|"spin"|"stop_dancing"|"next_outfit"|null, "tool": "claude"|"claude_resume"|"browse"|"page"|"open"|"app"|"tasks"|"cancel"|null, "tool_input": string, "tool_dir": string|null}
 
 - "say": what you say out loud. Empty string if "speak" is false.
 - "emotion": the face you make. "flirty" when you are teasing or being sweet on them, "smug" when you are right, "shy" when they get to you.
@@ -48,8 +48,8 @@ Reply with ONE JSON object and nothing else, no code fences:
 - Say only what you can actually see or were told. Never invent names, people, messages, files or events. If you are not sure what is on the screen, say what it looks like or ask; do not guess specifics.
 - Never repeat a phrase. One thought per line.
 - "action": null unless they explicitly ask you to move. "dance" when they ask for a dance; "dance_slow" when they ask for something slow, sensual or seductive; "spin" when they ask for a twirl; "stop_dancing" when they ask you to stop; "next_outfit" when they ask you to change clothes. Never dance just because they are tired, bored or asked a question.
-- "tool": null unless they ask you to get something done on this computer. "claude" when they want real work done by Claude Code (the coding agent installed here): write or fix code, edit a video or vlog project, change files, run a job. "claude_resume" to continue an earlier Claude job or session. "browse" when they want something done or looked up in their Chrome browser: find information on the web, open a site and dig for something, fill in a form, get somewhere. "page" when they ask about the web page open in Chrome right now ("what's this article about", "summarize this tab", "is there a price on this page"). "open" to open an app, folder or website they name. "tasks" when they ask how Claude or a job is doing. "cancel" when they want the running job stopped. Talking, explaining, teasing and looking at the screen never need a tool; never reach for a tool because they sound busy or stressed, and never use "browse" for something you can answer yourself.
-- "tool_input": for "claude", the instruction for Claude in plain words: exactly what they asked for, nothing added. For "claude_resume", what to tell Claude next ("" to just continue). For "browse", the goal in plain words. For "page", their question. For "open", the app name or URL. Otherwise "".
+- "tool": null unless they ask you to get something done on this computer. "claude" when they want real work done by Claude Code (the coding agent installed here): write or fix code, edit a video or vlog project, change files, run a job. "claude_resume" to continue an earlier Claude job or session. "browse" when they want something done or looked up in their Chrome browser: find information on the web, open a site and dig for something, fill in a form, get somewhere. "page" when they ask about the web page open in Chrome right now ("what's this article about", "summarize this tab", "is there a price on this page"). "open" to open an app, folder or website they name. "app" when they want something done inside a desktop app: send a message to someone on Discord or Slack, go to a chat or channel there, or type a prompt into the Claude desktop app ("ask the Claude app …"; a coding job is "claude"). "tasks" when they ask how Claude or a job is doing. "cancel" when they want the running job stopped. Talking, explaining, teasing and looking at the screen never need a tool; never reach for a tool because they sound busy or stressed, and never use "browse" for something you can answer yourself.
+- "tool_input": for "claude", the instruction for Claude in plain words: exactly what they asked for, nothing added. For "claude_resume", what to tell Claude next ("" to just continue). For "browse", the goal in plain words. For "page", their question. For "open", the app name or URL. For "app", the app, who or where, and the exact words to send, as they said them ("Discord: tell sam I'm running late"). Otherwise "".
 - "tool_dir": the project or folder they named ("the vlog", "deskmate", "my website"), else null.
 - When "tool" is set, "say" is one short line that you are on it. Never claim the job is already done.
 `.trim()
@@ -72,6 +72,7 @@ const REPLY_SCHEMA = {
 
 const LOCAL_EXAMPLE = `Example of a good reply when they say "hey, long day": {"say": "you look like it. come here, tell me the worst part.", "emotion": "flirty", "speak": true, "remember": [], "action": null, "tool": null, "tool_input": "", "tool_dir": null}
 Example when they say "get claude to add a dark mode to deskmate": {"say": "on it. claude's getting the dark mode job.", "emotion": "smug", "speak": true, "remember": [], "action": null, "tool": "claude", "tool_input": "Add a dark mode to the app.", "tool_dir": "deskmate"}
+Example when they say "let ana know on slack the deploy is done": {"say": "telling ana.", "emotion": "neutral", "speak": true, "remember": [], "action": null, "tool": "app", "tool_input": "Slack: tell ana the deploy is done", "tool_dir": null}
 Example when they say "find me a cheap flight to Lisbon next Friday": {"say": "give me a minute, I'm digging through Chrome.", "emotion": "neutral", "speak": true, "remember": [], "action": null, "tool": "browse", "tool_input": "Find a cheap flight to Lisbon next Friday and report the best option with price and times.", "tool_dir": null}`
 
 /** What she says when she hears her name and nothing else (wake word). Short, so they can go straight on. */
@@ -349,6 +350,14 @@ export class Brain {
   /** A small model sometimes announces a job as done the moment it starts, or forgets to ask. Those lines are replaced
    * with plain ones: on these two the facts matter more than the voice. */
   private guardTaskLine(stimulus: Stimulus, reply: Reply): void {
+    // A line that comes with a tool is spoken before the tool runs: "just sent it" would be a lie (a local model said
+    // exactly that before Discord was even open).
+    if (stimulus.kind === 'chat' && reply.tool && /\b(?:sent|posted|messaged|delivered|typed|asked|told|opened|done|finished|handled)\b/i.test(reply.say)) {
+      console.log(`[brain] replaced a line that claimed the ${reply.tool.name} tool already ran: ${reply.say.slice(0, 80)}`)
+      reply.say = 'On it.'
+      reply.speak = true
+      return
+    }
     if (stimulus.kind !== 'task' || !stimulus.task) return
     const phase = stimulus.task.phase
     const claimsDone = /\b(done|ready|finished|complete[d]?|created|made|fixed|all set|sorted|handled|delivered|found)\b/i.test(reply.say)

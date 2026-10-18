@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
+import { APP_PLAN_SCHEMA, APP_PLAN_SYSTEM, APPS, fromPlan, handsMessage, parseAppRequest, runApp, type AppRequest } from './apps'
 import { ACKNOWLEDGEMENTS, Brain, type Stimulus, type TaskReport } from './brain'
 import { browse } from './browse'
 import * as chrome from './chrome'
@@ -14,6 +15,7 @@ import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, synthesize } from './tts'
+import { Hands, HandsError } from './hands'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
 import type { AppConfig, Audio, AvatarCommand, CharacterConfig, Emotion, Reply, ReplyPayload, ToolCall, Touch } from '../shared/types'
@@ -94,6 +96,13 @@ const WAKE_HEAD_S = 3.5
 let wake = createWakeMatcher(character.name)
 /** always | voice (default) | never: whether she repeats a job back and waits for a yes before Claude starts */
 const CONFIRM_JOBS = (process.env.DESKMATE_CONFIRM_JOBS?.trim().toLowerCase() || 'voice') as 'always' | 'voice' | 'never'
+/** always (default) | voice | never: whether a Discord or Slack message is read back and waits for a yes before it goes */
+const CONFIRM_SENDS = (process.env.DESKMATE_CONFIRM_SENDS?.trim().toLowerCase() || 'always') as 'always' | 'voice' | 'never'
+
+// Her hands in desktop apps (macOS): the native helper that launches apps, presses keys and reads window titles.
+const appHands = new Hands(Hands.locate(RESOURCES, ROOT))
+/** Accessibility granted to the app that runs her (null until checked); without it macOS drops her key presses. */
+let appTrusted: boolean | null = null
 
 /** Something she is waiting on an answer for: a job she read back, or a risky browser action. */
 type Pending =
@@ -236,6 +245,10 @@ function buildTrayMenu(): Menu {
     },
     { label: running ? `Claude jobs (${running} running)` : 'Claude jobs', enabled: hands, submenu: jobsMenu() },
     ...(browsing ? [{ label: 'Stop browsing', click: () => void cancelJob() }] : []),
+    ...(acting ? [{ label: 'Stop what she is doing in the app', click: () => void cancelJob() }] : []),
+    ...(appHands.available && appTrusted === false
+      ? [{ label: 'Let her use your apps (Accessibility)…', toolTip: 'Discord, Slack and Claude app control need Accessibility', click: askForAccessibility }]
+      : []),
     {
       label: 'Character',
       submenu: characters.map((c) => ({
@@ -585,6 +598,11 @@ function jobTitle(call: ToolCall): string {
 }
 
 async function cancelJob(id?: string): Promise<Reply> {
+  if (acting) {
+    actStop = true
+    if (pending?.kind === 'confirm') pending.resolve(false)
+    return sayPlain('Stopping.')
+  }
   if (browsing) {
     browseStop = true
     return sayPlain('Stopping. One second.')
@@ -767,6 +785,73 @@ async function runBrowse(goal: string, acknowledged: boolean): Promise<Reply> {
   }
 }
 
+let acting = false
+let actStop = false
+
+/** Asks macOS for Accessibility for whoever runs her and opens the right page of System Settings. */
+function askForAccessibility(): void {
+  if (process.platform !== 'darwin') return
+  systemPreferences.isTrustedAccessibilityClient(true)
+  void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
+}
+
+async function checkAppTrust(): Promise<boolean> {
+  const was = appTrusted
+  appTrusted = (await appHands.permissions().catch(() => null))?.keys ?? false
+  if (was !== appTrusted) refreshTray()
+  return appTrusted
+}
+
+/** Something to do inside a desktop app: a Discord or Slack message, a chat to open, a prompt for the Claude app. */
+async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
+  if (!appHands.available) return sayPlain(handsMessage(new HandsError('', 'unavailable')), 'sad')
+  if (acting) return sayPlain("I'm already doing something in an app. Say \"stop\" first.", 'annoyed')
+  let req: AppRequest | null = parseAppRequest(input)
+  if (!req && brain.canThink) {
+    status('working out who and what…')
+    req = fromPlan(await brain.plan(APP_PLAN_SYSTEM, input, APP_PLAN_SCHEMA).catch(() => ({})))
+  }
+  if (!req) return sayPlain('So far I can message people on Discord and Slack, and ask the Claude app things. Who, where, and what should it say?')
+  if (!(await checkAppTrust())) {
+    askForAccessibility()
+    const who = app.isPackaged ? 'Deskmate' : 'the app you started me from (Electron, or your terminal)'
+    return sayPlain(`I need Accessibility to press keys for you. Turn it on for ${who} in the window I just opened, then ask me again.`, 'sad')
+  }
+  acting = true
+  actStop = false
+  refreshTray()
+  mkdirSync(join(USER_DATA, 'tasks'), { recursive: true })
+  const logPath = join(USER_DATA, 'tasks', `app-${req.app}-${Date.now().toString(36)}.log`)
+  const log = (line: string): void => {
+    try {
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+    } catch {
+      // not her problem
+    }
+  }
+  log(`request: ${JSON.stringify(req)} (from ${JSON.stringify(input)})`)
+  console.log(`[apps] ${req.app} ${req.action}${req.to ? ` → ${req.to}` : ''}${req.text ? `: ${req.text.slice(0, 60)}` : ''}`)
+  const confirmFor = (policy: 'always' | 'voice' | 'never'): boolean => policy === 'always' || (policy === 'voice' && Boolean(opts.voice))
+  try {
+    const result = await runApp(req, {
+      hands: appHands,
+      confirm,
+      confirmMessages: confirmFor(CONFIRM_SENDS),
+      confirmPrompts: confirmFor(CONFIRM_JOBS),
+      onStep: status,
+      log,
+      stopped: () => actStop || quitting
+    })
+    console.log(`[apps] ${result.ok ? 'done' : 'not done'}: ${result.summary}`)
+    memory.addTurn('user', `[${APPS[req.app].name}: ${result.summary}]`)
+    return sayPlain(result.say, result.ok ? 'happy' : 'sad')
+  } finally {
+    acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
 async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
   switch (call.name) {
@@ -782,6 +867,8 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return runBrowse(call.input, Boolean(opts.acknowledged))
     case 'chrome':
       return chromeVerb(call.input)
+    case 'app':
+      return runAppTool(call.input, opts)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -849,7 +936,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     }
   }
   // "stop" while something runs always means stop that.
-  if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (browsing || agent.running().length)) return cancelJob()
+  if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (acting || browsing || agent.running().length)) return cancelJob()
 
   const routed = routeCommand(stripName(text))
   if (routed) return runTool(routed, { voice: opts.voice })
@@ -1088,6 +1175,13 @@ app.whenReady().then(async () => {
     console.log(claude.ok ? `[hands] Claude Code ${claude.version} at ${agent.findBinary()}; jobs run with --permission-mode ${agent.permissionMode}` : `[hands] ${claude.error}`)
     refreshTray()
   })
+  if (appHands.available) {
+    void checkAppTrust().then((ok) =>
+      console.log(`[apps] app control ready (Discord, Slack, Claude); Accessibility ${ok ? 'granted' : 'NOT granted: she will ask the first time'}`)
+    )
+  } else if (process.platform === 'darwin') {
+    console.log('[apps] native/bin/deskmate-hands missing: app control is off (npm run build compiles it)')
+  }
   if (chrome.chromeAvailable()) {
     void chrome.running().then((up) => console.log(`[browser] ${chrome.BROWSER_APP} ${up ? 'is open; she can drive it' : 'is not open right now'}`))
   }
@@ -1114,6 +1208,8 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   quitting = true
   browseStop = true
+  actStop = true
+  appHands.stop()
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })

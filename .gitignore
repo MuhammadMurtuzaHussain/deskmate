@@ -12,6 +12,7 @@ character/jian/
 character/nicole/
 character/persona.*.md
 dist/
+native/bin/
 node_modules/
 out/
 release/

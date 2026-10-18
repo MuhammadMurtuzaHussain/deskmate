@@ -1,4 +1,5 @@
 import type { ToolCall } from '../shared/types'
+import { parseAppRequest } from './apps'
 
 export interface Routed extends ToolCall {
   /** the user named the tool outright ("ask claude to…", "/tasks", "next tab"), so no model had to decide */
@@ -82,10 +83,19 @@ export function routeCommand(raw: string): Routed | null {
         return rest ? tool('chrome', `click:${rest}`) : null
       case 'tab':
         return tool('chrome', /^(?:prev|previous|left|back)/i.test(rest) ? 'prev_tab' : /^close/i.test(rest) ? 'close_tab' : 'next_tab')
+      case 'app':
+        return rest ? tool('app', rest) : null
+      case 'discord':
+      case 'slack':
+        // /discord sam: running late · /slack #general
+        return rest ? tool('app', `${cmd.toLowerCase()}: ${rest}`) : null
       default:
         return null
     }
   }
+
+  // Desktop apps first: "ask the claude app to …" is a prompt in the app, not a Claude Code job.
+  if (parseAppRequest(text)) return tool('app', text)
 
   const bare = text.toLowerCase().replace(/[.!?]+$/g, '')
   if (RE_STATUS.test(bare)) return tool('tasks', '')

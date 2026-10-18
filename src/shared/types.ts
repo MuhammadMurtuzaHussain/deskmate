@@ -9,13 +9,14 @@ export type DanceStyle = 'groove' | 'slow' | 'spin'
  * Things she can do on the computer, beyond talking. `claude` hands a job to Claude Code (the coding agent
  * installed on the machine) in a project folder; `claude_resume` continues an earlier session there.
  */
-export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome'
-export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome']
+export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app'
+export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app']
 /** The ones her brain may pick. `chrome` (tab and page verbs) only ever comes from the spoken-command router. */
-export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page']
+export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app']
 export interface ToolCall {
   name: ToolName
-  /** the instruction for Claude, the browsing goal, the question about the page, the thing to open, or a chrome verb */
+  /** the instruction for Claude, the browsing goal, the question about the page, the thing to open, a chrome verb,
+   * or for `app` the request in their words ("Discord: tell sam I'm running late") */
   input: string
   /** project or folder they named ("the vlog", "deskmate", a path), if any */
   dir?: string | null
