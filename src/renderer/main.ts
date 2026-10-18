@@ -24,7 +24,52 @@ let listening = false
 
 function setStatus(text: string): void {
   statusEl.textContent = text
+  island.peek(text)
 }
+
+// ---- the panel tucks itself away (an "island" that comes back when you reach for it): it shows while the pointer is
+// over her or the bottom of the window, while you type, and briefly as a status line when something happens.
+const island = (() => {
+  const REACH = 150 // px from the bottom of the window that count as reaching for the panel
+  let shown = true
+  let tuckTimer: number | undefined
+  let peekTimer: number | undefined
+  const enabled = (): boolean => (config?.panel ?? 'auto') === 'auto'
+  const busy = (): boolean => document.activeElement === input || document.activeElement === keyInput || Boolean(input.value) || !keyForm.classList.contains('hidden')
+  const set = (on: boolean): void => {
+    shown = on
+    document.body.classList.toggle('tucked', !on)
+  }
+  const tuckLater = (ms = 1500): void => {
+    window.clearTimeout(tuckTimer)
+    tuckTimer = window.setTimeout(() => {
+      if (enabled() && !busy()) set(false)
+    }, ms)
+  }
+  return {
+    pointer(x: number, y: number, overHer: boolean): void {
+      if (!enabled()) return
+      if (overHer || y > window.innerHeight - REACH || overUi(x, y)) {
+        window.clearTimeout(tuckTimer)
+        if (!shown) set(true)
+      } else if (shown) tuckLater()
+    },
+    leave(): void {
+      if (enabled()) tuckLater()
+    },
+    /** Something happened: show just the status line for a few seconds if the panel is tucked away. */
+    peek(text: string): void {
+      if (!enabled() || shown || /^(?:idle|watching|not listening|listening\b)/.test(text)) return
+      document.body.classList.add('peek')
+      window.clearTimeout(peekTimer)
+      peekTimer = window.setTimeout(() => document.body.classList.remove('peek'), 4000)
+    },
+    start(): void {
+      if (enabled()) tuckLater(4000)
+      input.addEventListener('blur', () => tuckLater())
+    }
+  }
+})()
 
 function idleStatus(): string {
   return listening ? 'listening' : config?.watching ? 'watching' : 'idle'
@@ -245,9 +290,12 @@ function wirePointer(): void {
   window.addEventListener('mousemove', (e) => {
     avatar?.pointerMove(e.clientX, e.clientY)
     if (drag) return
-    setIgnore(!(overUi(e.clientX, e.clientY) || overModel(e.clientX, e.clientY)))
+    const overHer = overModel(e.clientX, e.clientY)
+    island.pointer(e.clientX, e.clientY, overHer)
+    setIgnore(!(overUi(e.clientX, e.clientY) || overHer))
   })
   window.addEventListener('mouseleave', () => {
+    island.leave()
     if (!drag) setIgnore(true)
   })
   window.addEventListener('pointerdown', (e) => {
@@ -414,6 +462,7 @@ async function main(): Promise<void> {
     return
   }
   wirePointer()
+  island.start()
   watchBtn.classList.toggle('on', config.watching)
   keyForm.classList.toggle('hidden', config.mode !== 'demo')
   if (config.listening) applyListening(true)

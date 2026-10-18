@@ -6,6 +6,11 @@ export interface SettingsData {
   activeCharacter?: string
   /** folder Claude jobs run in unless the user names another */
   activeProject?: string
+  /** chosen in the first-run window; DESKMATE_BRAIN / OLLAMA_MODEL in .env win over these */
+  brain?: 'ollama' | 'gemini'
+  ollamaModel?: string
+  /** the first-run window was finished or closed once */
+  setupDone?: boolean
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

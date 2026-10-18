@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Set up Deskmate</title>
+    <link rel="stylesheet" href="./setup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Set up Deskmate</h1>
+      <p>Three things and she's ready. You can come back any time: menu-bar icon → Setup…</p>
+    </header>
+
+    <section id="brain">
+      <div class="head"><h2>1 · Her brain</h2><span class="chip" id="brain-chip">…</span></div>
+      <div class="option">
+        <div class="label"><b>On this Mac</b> with Ollama: free, private, nothing leaves your computer.</div>
+        <div id="ollama-on" class="row hidden">
+          <select id="ollama-model"></select>
+          <button id="use-ollama">Use this</button>
+        </div>
+        <div id="ollama-off" class="hint hidden">
+          Install <a href="https://ollama.com/download" target="_blank">Ollama</a>, open it, then run
+          <code>ollama pull qwen3-vl:4b-instruct</code> in a terminal. <button id="recheck" class="link">Check again</button>
+        </div>
+      </div>
+      <div class="option">
+        <div class="label"><b>In the cloud</b> with Google Gemini: free key from <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.</div>
+        <form id="gemini" class="row" autocomplete="off">
+          <input id="gemini-key" type="password" placeholder="paste your Gemini key" />
+          <button type="submit">Check and use</button>
+        </form>
+      </div>
+      <div class="msg" id="brain-msg"></div>
+    </section>
+
+    <section id="voice">
+      <div class="head"><h2>2 · Her voice</h2><span class="chip" id="voice-chip">…</span></div>
+      <div class="hint" id="voice-text"></div>
+    </section>
+
+    <section id="perms">
+      <div class="head"><h2>3 · What she may do</h2></div>
+      <div class="perm" data-kind="microphone"><div><b>Microphone</b><span>so she can hear you when you talk to her</span></div><span class="chip"></span><button>Allow</button></div>
+      <div class="perm" data-kind="screen"><div><b>Screen Recording</b><span>so she can see what you're doing</span></div><span class="chip"></span><button>Allow</button></div>
+      <div class="perm" data-kind="keys"><div><b>Accessibility</b><span>so she can work Discord, Slack and the Claude app for you</span></div><span class="chip"></span><button>Allow</button></div>
+      <div class="hint" id="perm-note">After you switch something on in System Settings, come back here; this page checks again by itself.</div>
+    </section>
+
+    <footer>
+      <span class="hint" id="tip"></span>
+      <button id="done" class="primary">Done</button>
+    </footer>
+    <script type="module" src="./setup.ts"></script>
+  </body>
+</html>

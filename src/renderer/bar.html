@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>deskmate command bar</title>
+    <link rel="stylesheet" href="./bar.css" />
+  </head>
+  <body>
+    <form id="bar" autocomplete="off">
+      <span id="spark" aria-hidden="true"></span>
+      <input id="cmd" type="text" spellcheck="false" placeholder="Tell her what to do…  “message sam on discord I'm late”" />
+      <kbd id="hint">esc</kbd>
+    </form>
+    <div id="line" class="empty"></div>
+    <script type="module" src="./bar.ts"></script>
+  </body>
+</html>

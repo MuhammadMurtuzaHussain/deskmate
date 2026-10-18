@@ -14,11 +14,12 @@ import { Memory } from './memory'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
-import { autostartLocalTts, synthesize } from './tts'
+import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
+import { CommandBar } from './bar'
 import { Hands, HandsError } from './hands'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import type { AppConfig, Audio, AvatarCommand, CharacterConfig, Emotion, Reply, ReplyPayload, ToolCall, Touch } from '../shared/types'
+import type { AppConfig, Audio, AvatarCommand, CharacterConfig, Emotion, PermissionKind, Reply, ReplyPayload, SetupState, ToolCall, Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -159,9 +160,16 @@ function sendCommand(command: AvatarCommand): void {
 }
 
 function shortcutLabel(): string {
-  return LISTEN_SHORTCUT.replace('CommandOrControl', process.platform === 'darwin' ? '⌘' : 'Ctrl')
-    .replace('Shift', process.platform === 'darwin' ? '⇧' : 'Shift')
-    .replace(/\+/g, process.platform === 'darwin' ? '' : '+')
+  return shortcutText(LISTEN_SHORTCUT)
+}
+
+function shortcutText(accelerator: string): string {
+  const mac = process.platform === 'darwin'
+  return accelerator
+    .replace('CommandOrControl', mac ? '⌘' : 'Ctrl')
+    .replace('Shift', mac ? '⇧' : 'Shift')
+    .replace(/\b(?:Alt|Option)\b/, mac ? '⌥' : 'Alt')
+    .replace(/\+/g, mac ? '' : '+')
 }
 
 function jobsMenu(): Electron.MenuItemConstructorOptions[] {
@@ -214,6 +222,7 @@ function buildTrayMenu(): Menu {
     { label: `${character.name} · ${brain.modelName}`, enabled: false },
     { type: 'separator' },
     { label: win?.isVisible() ? 'Hide her' : 'Show her', click: toggleWindow },
+    { label: `Command bar${commandShortcut ? `  ${shortcutText(commandShortcut)}` : ''}`, click: () => bar.show() },
     { label: 'Look at my screen now', click: () => void observe(true) },
     { label: watching ? 'Stop watching' : 'Watch my screen', type: 'checkbox', checked: watching, click: () => void setWatching(!watching) },
     {
@@ -268,6 +277,7 @@ function buildTrayMenu(): Menu {
       checked: loginItem,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked })
     },
+    { label: 'Setup…', click: openSetup },
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
@@ -301,6 +311,19 @@ const watchIntervalSec = Math.max(10, Number(process.env.DESKMATE_WATCH_INTERVAL
 let watching = false
 let watchTimer: NodeJS.Timeout | null = null
 let observing = false
+
+/** Loads one of the renderer pages (index, bar, setup): from the dev server in development, from disk when built. */
+function loadPage(target: BrowserWindow, page: string): void {
+  if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(`${process.env.ELECTRON_RENDERER_URL}/${page === 'index' ? '' : `${page}.html`}`)
+  else void target.loadFile(join(__dirname, `../renderer/${page}.html`))
+}
+const PRELOAD = join(__dirname, '../preload/index.js')
+
+const COMMAND_SHORTCUT = process.env.DESKMATE_COMMAND_SHORTCUT?.trim() || 'Alt+Space'
+let commandShortcut: string | null = null
+const bar = new CommandBar(PRELOAD, loadPage)
+/** auto (default): her panel tucks away until you hover over her · always: it stays */
+const PANEL = process.env.DESKMATE_PANEL?.trim().toLowerCase() === 'always' ? 'always' : 'auto'
 
 const WIN_W = 440
 const WIN_H = 760
@@ -341,11 +364,7 @@ function createWindow(): void {
     }
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  loadPage(win, 'index')
 
   // Debug aids: mirror renderer console to stdout; DESKMATE_DEBUG_SHOT=<png path> captures the window after load.
   win.webContents.on('console-message', (event) => {
@@ -419,6 +438,7 @@ function createWindow(): void {
 
 function status(text: string): void {
   win?.webContents.send('status', text)
+  bar.status(text)
 }
 
 /**
@@ -490,6 +510,7 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
 async function deliver(reply: Reply, source: ReplyPayload['source'], ready?: Audio | null): Promise<void> {
   if (!reply.speak || !reply.say) return
   console.log(`[say:${source}] ${reply.say.slice(0, 90)}`)
+  bar.line(reply.say)
   const audio = ready !== undefined ? ready : await synthesize(reply.say, character.voice)
   const payload: ReplyPayload = { reply, audio, source }
   win.webContents.send('reply', payload)
@@ -559,7 +580,9 @@ ipcMain.handle(
       return p ? { name: p.name, path: p.path } : null
     })(),
     bargeIn: BARGE_IN,
-    wakeWord: WAKE_GATE ? character.name : null
+    wakeWord: WAKE_GATE ? character.name : null,
+    panel: PANEL,
+    commandShortcut
   })
 )
 
@@ -1196,6 +1219,117 @@ ipcMain.on('window:ignore-mouse', (_event, ignore: boolean) => {
   win.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
 })
 
+ipcMain.on('bar:hide', () => bar.hide())
+
+// ---- first-run window: her brain, her voice, and what macOS lets her do
+
+let setupWin: BrowserWindow | null = null
+let setupStartMode: string = brain.mode
+
+function openSetup(): void {
+  if (setupWin && !setupWin.isDestroyed()) {
+    setupWin.show()
+    setupWin.focus()
+    return
+  }
+  setupStartMode = brain.mode
+  setupWin = new BrowserWindow({
+    width: 560,
+    height: 680,
+    minWidth: 460,
+    minHeight: 520,
+    title: 'Set up Deskmate',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    backgroundColor: '#14101f',
+    show: false,
+    webPreferences: { preload: PRELOAD, sandbox: false }
+  })
+  // Its links (Ollama, the Gemini key page) open in the browser, not in a new window.
+  setupWin.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  setupWin.once('ready-to-show', () => {
+    setupWin?.show()
+    if (process.platform === 'darwin') app.focus({ steal: true })
+  })
+  setupWin.on('closed', () => {
+    setupWin = null
+    finishSetup()
+  })
+  loadPage(setupWin, 'setup')
+}
+
+/** Closing the window counts as done: it does not come back on its own. Her window reloads if her brain changed. */
+function finishSetup(): void {
+  if (!settings.get().setupDone) settings.set({ setupDone: true })
+  if (brain.mode !== setupStartMode) {
+    setupStartMode = brain.mode
+    win?.webContents.reload()
+  }
+  refreshTray()
+}
+
+async function setupState(): Promise<SetupState> {
+  const ollama = await brain.detectOllama()
+  const mac = process.platform === 'darwin'
+  const media = (kind: 'microphone' | 'screen'): string => (mac || process.platform === 'win32' ? systemPreferences.getMediaAccessStatus(kind) : 'granted')
+  const keys = appHands.available ? await checkAppTrust() : null
+  const localVoice = localTtsSelected()
+  return {
+    platform: process.platform,
+    brain: {
+      mode: brain.mode,
+      modelName: brain.modelName,
+      ollama: { running: ollama.running, models: ollama.models, current: brain.ollamaModel },
+      geminiKey: brain.hasGeminiKey
+    },
+    voice: {
+      provider: localVoice ? 'local' : process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs' : 'system',
+      localServer: localVoice ? await sttHealthy().catch(() => false) : false
+    },
+    permissions: { microphone: media('microphone'), screen: media('screen'), keys }
+  }
+}
+
+const PRIVACY_PANES: Record<PermissionKind, string> = {
+  microphone: 'Privacy_Microphone',
+  screen: 'Privacy_ScreenCapture',
+  keys: 'Privacy_Accessibility'
+}
+
+async function allow(kind: PermissionKind): Promise<void> {
+  if (process.platform !== 'darwin') return
+  if (kind === 'microphone') {
+    // Asked once by macOS itself; after a "no" only System Settings can change it.
+    if (systemPreferences.getMediaAccessStatus('microphone') === 'not-determined' && (await systemPreferences.askForMediaAccess('microphone'))) return
+  } else if (kind === 'screen') {
+    // The first capture attempt is what puts the app on the Screen Recording list.
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => undefined)
+    if (systemPreferences.getMediaAccessStatus('screen') === 'granted') return
+  } else {
+    systemPreferences.isTrustedAccessibilityClient(true)
+  }
+  await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY_PANES[kind]}`)
+}
+
+ipcMain.handle('setup:get', () => setupState())
+ipcMain.handle('setup:ollama', async (_event, model: string) => {
+  const result = await brain.useOllama(String(model))
+  if (result.ok) status(`${character.name} is thinking with ${brain.modelName} now`)
+  return result
+})
+ipcMain.handle('setup:gemini', async (_event, key: string) => {
+  const result = await brain.useGemini(String(key))
+  if (result.ok) status(`${character.name} is thinking with ${brain.modelName} now`)
+  return result
+})
+ipcMain.handle('setup:allow', (_event, kind: PermissionKind) => allow(kind))
+ipcMain.handle('setup:finish', () => {
+  setupWin?.close()
+})
+ipcMain.on('setup:open', () => openSetup())
+
 let stopLocalTts: () => void = () => undefined
 
 app.whenReady().then(async () => {
@@ -1230,8 +1364,18 @@ app.whenReady().then(async () => {
     }
     console.log(`[ears] wake word ${WAKE_GATE ? `"${character.name}"${WAKE_MODE === 'word' ? ', listening from the start' : ''}` : 'off'}; barge-in ${BARGE_IN ? 'on' : 'off (the mic closes while she talks)'}`)
   }
+  try {
+    if (globalShortcut.register(COMMAND_SHORTCUT, () => bar.toggle())) {
+      commandShortcut = COMMAND_SHORTCUT
+      console.log(`[bar] ${COMMAND_SHORTCUT} opens the command bar`)
+    } else console.warn(`[bar] could not register ${COMMAND_SHORTCUT} (another app has it); set DESKMATE_COMMAND_SHORTCUT`)
+  } catch (err) {
+    console.warn('[bar] shortcut:', (err as Error).message)
+  }
   createWindow()
   createTray()
+  // First run: no brain yet, so the setup window does the asking (it does not come back once closed).
+  if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
   app.on('activate', () => {
@@ -1245,6 +1389,7 @@ app.on('before-quit', () => {
   browseStop = true
   actStop = true
   appHands.stop()
+  bar.destroy()
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })

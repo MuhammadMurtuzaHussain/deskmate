@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AvatarCommand, DeskmateApi, ReplyPayload } from '../shared/types'
+import type { AvatarCommand, DeskmateApi, PermissionKind, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -26,7 +26,17 @@ const api: DeskmateApi = {
   },
   onListen: (cb) => {
     ipcRenderer.on('listen:state', (_event, on: boolean) => cb(on))
-  }
+  },
+  hideBar: () => ipcRenderer.send('bar:hide'),
+  onLine: (cb) => {
+    ipcRenderer.on('bar:line', (_event, say: string) => cb(say))
+  },
+  getSetup: () => ipcRenderer.invoke('setup:get'),
+  useOllama: (model) => ipcRenderer.invoke('setup:ollama', model),
+  useGemini: (key) => ipcRenderer.invoke('setup:gemini', key),
+  allow: (kind: PermissionKind) => ipcRenderer.invoke('setup:allow', kind),
+  finishSetup: () => ipcRenderer.invoke('setup:finish'),
+  openSetup: () => ipcRenderer.send('setup:open')
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)

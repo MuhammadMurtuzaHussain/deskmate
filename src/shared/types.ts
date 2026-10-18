@@ -137,7 +137,27 @@ export interface AppConfig {
   bargeIn: boolean
   /** the name she waits for before she answers (DESKMATE_WAKE_MODE=word), or null when she answers everything */
   wakeWord: string | null
+  /** auto (default): the panel tucks away until you hover over her · always: it stays (DESKMATE_PANEL) */
+  panel?: 'auto' | 'always'
+  /** the global shortcut for the command bar, as registered (null when it could not be) */
+  commandShortcut?: string | null
 }
+
+/** What the first-run window shows: her brain, her voice, and what macOS lets her do. */
+export interface SetupState {
+  platform: string
+  brain: {
+    mode: BrainMode
+    modelName: string
+    ollama: { running: boolean; models: string[]; current: string }
+    geminiKey: boolean
+  }
+  voice: { provider: 'local' | 'elevenlabs' | 'system'; localServer: boolean }
+  /** granted / denied / not-determined / restricted / unknown, as macOS reports them; keys is null without the helper */
+  permissions: { microphone: string; screen: string; keys: boolean | null }
+}
+
+export type PermissionKind = 'microphone' | 'screen' | 'keys'
 
 export interface DeskmateApi {
   getConfig(): Promise<AppConfig>
@@ -159,6 +179,18 @@ export interface DeskmateApi {
   onStatus(cb: (text: string) => void): void
   onCommand(cb: (command: AvatarCommand) => void): void
   onListen(cb: (on: boolean) => void): void
+  // Optional: a renderer hot-reloaded in development can run against an older preload that lacks these.
+  /** command bar: close it */
+  hideBar?(): void
+  /** command bar: every line she says, while the bar is open */
+  onLine?(cb: (say: string) => void): void
+  /** first-run window */
+  getSetup?(): Promise<SetupState>
+  useOllama?(model: string): Promise<{ ok: boolean; error?: string }>
+  useGemini?(key: string): Promise<{ ok: boolean; error?: string }>
+  allow?(kind: PermissionKind): Promise<void>
+  finishSetup?(): Promise<void>
+  openSetup?(): void
 }
 
 declare global {

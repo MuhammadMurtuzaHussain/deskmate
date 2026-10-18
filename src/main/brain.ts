@@ -101,9 +101,9 @@ const TOUCH_PROMPTS: Record<Touch['area'], string> = {
  */
 export class Brain {
   private key: string | null = null
-  readonly ollamaModel = process.env.OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL
+  ollamaModel: string
   private ollamaReady = false
-  private readonly preferOllama = process.env.DESKMATE_BRAIN?.trim().toLowerCase() === 'ollama'
+  private preferOllama: boolean
   readonly model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
   readonly fallbackModel = process.env.GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL
   mode: BrainMode = 'demo'
@@ -115,7 +115,12 @@ export class Brain {
     private persona: string,
     private readonly settings: Settings
   ) {
-    const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || settings.get().geminiApiKey || '').trim()
+    // .env wins; otherwise what was picked in the first-run window.
+    const saved = settings.get()
+    this.ollamaModel = process.env.OLLAMA_MODEL?.trim() || saved.ollamaModel || DEFAULT_OLLAMA_MODEL
+    const brainEnv = process.env.DESKMATE_BRAIN?.trim().toLowerCase()
+    this.preferOllama = brainEnv ? brainEnv === 'ollama' : saved.brain === 'ollama'
+    const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || saved.geminiApiKey || '').trim()
     if (key) {
       this.key = key
       this.mode = 'gemini'
@@ -130,6 +135,35 @@ export class Brain {
     this.ollamaReady = running && hasModel
     if (this.ollamaReady && (this.preferOllama || !this.key)) this.mode = 'ollama'
     return { running, hasModel, models: models ?? [] }
+  }
+
+  /** First-run window: think with this local model from now on, and remember the choice. */
+  async useOllama(model: string): Promise<{ ok: boolean; error?: string }> {
+    const previous = this.ollamaModel
+    this.ollamaModel = model.trim()
+    const found = await this.detectOllama()
+    if (!found.running || !found.hasModel) {
+      this.ollamaModel = previous
+      await this.detectOllama()
+      return { ok: false, error: found.running ? `Ollama does not have ${model}: ollama pull ${model}` : 'Ollama is not running. Start the Ollama app, then try again.' }
+    }
+    this.preferOllama = true
+    this.mode = 'ollama'
+    this.settings.set({ brain: 'ollama', ollamaModel: this.ollamaModel })
+    return { ok: true }
+  }
+
+  /** First-run window: think with Gemini (the key is checked first), and remember the choice. */
+  async useGemini(key: string): Promise<{ ok: boolean; error?: string }> {
+    const result = await this.setKey(key)
+    if (!result.ok) return result
+    this.preferOllama = false
+    this.settings.set({ brain: 'gemini' })
+    return result
+  }
+
+  get hasGeminiKey(): boolean {
+    return Boolean(this.key)
   }
 
   /** Character switch: a different person, a different memory. */

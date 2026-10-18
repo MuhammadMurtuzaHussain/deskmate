@@ -35,7 +35,9 @@
 - **Actually helps.** Ask "what's this error" or "what should I do next" and she reads the screen and answers properly, then goes back to being herself.
 - **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Or give her a wake word and only say her name; talk over her and she stops and listens. Speech to speech, nothing sent anywhere.
 - **Puts Claude to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how is Claude doing": she hands the job to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the right project folder, follows it, and tells you in her own voice what came back. Spoken jobs are read back and wait for your yes. [docs/AGENT.md](docs/AGENT.md).
-- **Works your apps (macOS).** "Tell sam on Discord I'm running late", "message #general in Slack: standup moved", "open Claude and ask it to draft a cover letter". She opens the app even if it's closed, jumps to the chat, checks the window shows the right one, reads the message back, and sends it on your yes. [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
+- **Command bar.** Press ⌥Space (Alt+Space) anywhere, type what you want ("tell sam on discord I'm late", "open github", "ask claude to fix the build"), Enter. Her answer shows under the bar; when she asks "send it?", type yes right there. Works with her hidden.
+- **Stays out of the way.** Her chat panel tucks away and comes back when you move the pointer over her or the bottom of her window; while it is away, news ("Discord · finding sam") shows as a short status line.
+- **Works your apps (macOS). "Tell sam on Discord I'm running late", "message #general in Slack: standup moved", "open Claude and ask it to draft a cover letter". She opens the app even if it's closed, jumps to the chat, checks the window shows the right one, reads the message back, and sends it on your yes. [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
 - **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
@@ -53,7 +55,7 @@ Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuz
 | Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` (installer) or `-portable.exe` | Unsigned: SmartScreen → "More info" → "Run anyway". |
 | Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
 
-She starts in the bottom-right corner with a chat box. Without a brain configured she runs on canned lines and shows a field for a Gemini key; for the local brain, read on.
+She starts in the bottom-right corner. The first time, a **setup window** walks you through her brain (a local Ollama model it finds on your Mac, or a Gemini key it checks for you), her voice, and the permissions she needs (microphone, screen, Accessibility), with a button for each. Come back to it any time from the menu-bar icon → **Setup…**. The sections below are the same steps by hand.
 
 ### Give her a brain (2 minutes)
 
@@ -70,7 +72,7 @@ DESKMATE_BRAIN=ollama
 OLLAMA_MODEL=qwen3-vl:4b-instruct
 ```
 
-**Cloud:** get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it into the field in her panel. Done.
+**Cloud:** get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it into the setup window (or the field in her panel). Done.
 
 Details, other models, and running both: [docs/BRAINS.md](docs/BRAINS.md).
 
@@ -145,7 +147,7 @@ Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat te
 
 - More for her hands: reminders, calendar, a shell tool with spoken approval
 - Voice cloning via Chatterbox as a local option
-- In-app settings panel (no `.env` editing)
+- More settings in the setup window (voice provider, wake word, shortcuts)
 - Signed builds
 
 ## Credits
