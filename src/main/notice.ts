@@ -32,7 +32,7 @@ export interface Notice {
 
 export interface NoticeDeps {
   prefs(): NoticePrefs
-  /** says it: notice.speak when it has one, else the plain line (through the phone too, when the phone remote is on) */
+  /** says it: notice.speak when it has one, else the plain line (through the chat app too, when one is paired and on) */
   say(notice: Notice): Promise<void>
   /** the same line in her status row, when she does not say it */
   show(text: string): void

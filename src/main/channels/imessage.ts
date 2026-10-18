@@ -10,6 +10,7 @@ import type { Channel, ChannelEvents, Inbound, OutFile } from './channel.ts'
 // AppleScript path apps.ts already uses. Only two kinds of message ever reach the hub:
 // - one the user sent to themself (a note-to-self chat whose other end is one of their own handles), and
 // - one that came in from a handle on the allowlist in Setup (their second number, their other Apple ID).
+// Messages that came in count only over iMessage, whose senders Apple checks: an SMS sender can be spoofed.
 // Every other row is skipped here without being logged: nobody else's texts are read past the row's sender, and
 // nobody who is not on the list is ever answered.
 
@@ -73,12 +74,14 @@ export interface ChatRow {
   chatIdentifier: string
   /** one-to-one (45) or group (43) */
   direct: boolean
+  /** "iMessage", "SMS" or "RCS": only iMessage senders are checked by Apple, an SMS sender can be spoofed */
+  service: string
   at: number
   /** a voice message (an audio attachment) and where its file is */
   audio: { path: string; mime: string } | null
 }
 
-const ROWS = `SELECT m.ROWID AS rowid, m.text AS text, m.attributedBody AS body, m.is_from_me AS fromMe, m.date AS date,
+const ROWS = `SELECT m.ROWID AS rowid, m.text AS text, m.attributedBody AS body, m.is_from_me AS fromMe, m.date AS date, COALESCE(m.service, '') AS service,
   COALESCE(m.is_audio_message, 0) AS audio, COALESCE(m.associated_message_type, 0) AS assoc, COALESCE(m.item_type, 0) AS itemType,
   h.id AS handle, c.guid AS chatGuid, c.chat_identifier AS chatIdentifier, c.style AS style
 FROM message m
@@ -139,6 +142,7 @@ export class ChatDb {
       body: Uint8Array | null
       fromMe: number | bigint
       date: number | bigint
+      service: string
       audio: number | bigint
       assoc: number | bigint
       itemType: number | bigint
@@ -151,7 +155,7 @@ export class ChatDb {
     for (const r of rows) {
       // Tapbacks and other "associated" rows, group renames and such: not messages to act on.
       if (Number(r.assoc) !== 0 || Number(r.itemType) !== 0) {
-        out.push({ rowid: Number(r.rowid), text: '', fromMe: false, handle: '', chatGuid: '', chatIdentifier: '', direct: false, at: 0, audio: null })
+        out.push({ rowid: Number(r.rowid), text: '', fromMe: false, handle: '', chatGuid: '', chatIdentifier: '', direct: false, service: '', at: 0, audio: null })
         continue
       }
       let audio: ChatRow['audio'] = null
@@ -167,6 +171,7 @@ export class ChatDb {
         chatGuid: r.chatGuid ?? '',
         chatIdentifier: r.chatIdentifier ?? '',
         direct: Number(r.style ?? 45) === 45,
+        service: r.service,
         at: appleDateMs(r.date),
         audio
       })
@@ -293,7 +298,8 @@ export class IMessageChannel implements Channel {
       // Something the user sent: only a note to self counts, never a text to anyone else.
       if (!mine(r.chatIdentifier)) return null
       self = true
-    } else if (!mine(r.handle)) return null
+    } else if (!mine(r.handle) || r.service !== 'iMessage') return null
+    // (A text message's sender can be forged, so even an SMS "from" one of their own numbers is not theirs.)
     this.sent = this.sent.filter((s) => now - s.at < ECHO_MS)
     const text = norm(r.text)
     if (text && this.sent.some((s) => s.text === text)) return null

@@ -4,7 +4,7 @@ import type { DueInfo, Job, ScheduleStore } from './schedule.ts'
 /**
  * Running scheduled jobs: one at a time, each as its own agent turn with nothing of the conversation in it (or as a
  * plan on the card). Where the result goes depends on where the user is: said out loud when they are at the desk
- * (through the notices, so quiet hours hold it), sent to the phone remote when they are away, otherwise kept and told
+ * (through the notices, so quiet hours hold it), sent to their chat app when they are away, otherwise kept and told
  * when they are back. It always goes into the day log. A risky step (send, delete, buy, run) asks them; when nobody
  * can answer, it waits in schedule.json for their yes instead of running. No Electron in here.
  */
@@ -38,7 +38,7 @@ export interface SchedulerDeps {
   runTool(name: string, input: Record<string, unknown>): Promise<{ ok: boolean; line: string }>
   /** at the desk: not locked, not asleep, touched the keyboard or mouse lately */
   present(): boolean
-  /** the phone remote is paired and on */
+  /** a chat app is paired and on (channels/hub.ts) */
   phone(): boolean
   /** quiet hours or do-not-disturb */
   quiet(): boolean

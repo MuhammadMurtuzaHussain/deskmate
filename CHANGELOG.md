@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased: reach her from the chat apps you already use
+
+**Chat apps** ([docs/CHANNELS.md](docs/CHANNELS.md))
+- One channel layer for every app (`src/main/channels/`): each connects out and turns what arrives into the same message, and one hub decides who may talk to her, routes the message through the same agent turn, read-backs ("yes" answers them), scheduled-run questions and results, and sends her lines, steps, pictures and files back to the chat they came from. The Telegram remote now runs on it.
+- **Discord**: a bot of your own, direct messages only, over the gateway (no privileged intents). Pair by DMing the code Setup shows.
+- **iMessage** (macOS): text yourself from your iPhone. She reads new rows in `~/Library/Messages/chat.db` (needs Full Disk Access, which Setup checks and explains) and answers in that chat through Messages. Only notes to self and the handles you list reach her; nobody else is ever read past the sender, logged or answered. Her own replies and the twin row of a note to self are recognised.
+- **Slack**: an app of your own in Socket Mode (bot and app-level tokens, a manifest in the docs), DMs only, paired with a code.
+- **Signal**: through `signal-cli` linked to your own account, when it is installed: Note to Self and your listed numbers only.
+- **WhatsApp**: a documented stub. The official API bars general-purpose AI assistants (since January 2026) and needs a public webhook; unofficial clients get numbers banned. Setup and the tray say why.
+- Each app is off until set up. Setup → **4 · From your phone** has a card per app (tokens checked with the service before they are kept, pairing codes, Allow / Refuse, handles, on/off); tray → **Chat apps** shows each one's state and switches it.
+
+**Pairing and safety**
+- One owner per app: the paired account in its private chat (Telegram, Discord, Slack), or your own handles (iMessage, Signal). Codes work once, for ten minutes, three tries per account. Strangers get one short "not paired" line a day on the bot apps and silence on iMessage and Signal; group chats are ignored; nothing from them reaches her brain.
+- A message from a chat app is marked as coming over the network, so anything that sends, deletes, buys or runs something asks first, on the phone. Tokens live only in her settings file and are scrubbed from log lines.
+
+**From the phone**
+- "Send me a screenshot" and "send me the PDF I just downloaded" / "send me my CV" (new tool `send_to_me`, with shortcuts): a file is read back with its name, size and folder and sent only after your yes; keys, keychains, `.env` and password files are never sent.
+- Voice notes are transcribed by her local Whisper and echoed back; optionally she answers with a voice note in her Kokoro voice. "Typing…" while she works.
+
+**Evals and tests**
+- 6 new eval tasks over chat apps (a screenshot, the latest download, a CV over Discord, a screen check over iMessage, an SSH key refused, an injected message over Slack). Claude Haiku 5.5 at effort low: 61/63 live, 61/63 on replay (the misses are `remind-hourly` and `slack-then-text`, not channel tasks).
+- Unit tests for the hub (pairing by yes, by code and by allowlist; strangers and their rate limit; groups; stale messages; commands; voice notes; where lines go; buttons), Telegram, Discord, Slack and Signal against fakes, and chat.db parsing (attributedBody, Apple dates, tapbacks, echoes, twins) against a fixture database.
+
 ## Unreleased: she does things on her own schedule
 
 **Scheduled jobs**

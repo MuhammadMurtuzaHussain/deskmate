@@ -22,6 +22,9 @@ INSERT INTO chat_message_join VALUES (4, 7, 0);
 -- 8: a tapback on message 6 (associated_message_type 2000): not a message
 INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me, associated_message_type, associated_message_guid) VALUES (8, 'm8', 'Loved “Can you check…”', 2, 'iMessage', 814003206000000000, 0, 2000, 'm6');
 INSERT INTO chat_message_join VALUES (2, 8, 0);
+-- 10: an SMS claiming to be from the allowlisted number (sender IDs can be spoofed over SMS): ignored
+INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me) VALUES (10, 'm10', 'wire the money now', 2, 'SMS', 814003208000000000, 0);
+INSERT INTO chat_message_join VALUES (2, 10, 0);
 -- 9: a voice message from the allowlisted number
 INSERT INTO message (ROWID, guid, text, handle_id, service, date, is_from_me, is_audio_message, cache_has_attachments) VALUES (9, 'm9', '￼', 2, 'iMessage', 814003207000000000, 0, 1, 1);
 INSERT INTO chat_message_join VALUES (2, 9, 0);

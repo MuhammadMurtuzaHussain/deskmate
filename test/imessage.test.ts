@@ -69,7 +69,8 @@ test('ChatDb reads rows after a rowid: text from either column, chat guid, group
   const rows = db.since(1)
   db.close()
   const byId = new Map(rows.map((r) => [r.rowid, r]))
-  assert.deepEqual([...byId.keys()], [2, 3, 4, 5, 6, 7, 8, 9])
+  assert.deepEqual([...byId.keys()], [2, 3, 4, 5, 6, 7, 8, 9, 10])
+  assert.equal(byId.get(10)?.service, 'SMS')
   assert.equal(byId.get(2)?.text, "what's on my calendar today?")
   assert.equal(byId.get(2)?.fromMe, true)
   assert.equal(byId.get(2)?.chatGuid, 'iMessage;-;+15550001111')
@@ -116,8 +117,9 @@ test("only the user's own messages come through: notes to self (once) and allowl
   )
   assert.equal(got[2].voice?.mime, 'audio/x-caf')
   assert.deepEqual(await got[2].voice!.fetch(), new Uint8Array([0x63, 0x61, 0x66, 0x66]))
-  // Nothing about the friend's chat or Eve was logged, let alone passed on.
-  assert.ok(!logs.join('\n').match(/eve|friend|delete all/i))
+  // Nothing about the friend's chat, Eve or the spoofed SMS was logged, let alone passed on.
+  assert.ok(!logs.join('\n').match(/eve|friend|delete all|wire the money/i))
+  assert.ok(!got.some((m) => /wire the money/.test(m.text)), 'an SMS from an allowlisted number is not trusted')
 })
 
 test("her own lines coming back through chat.db are not read as the user's", async () => {

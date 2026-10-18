@@ -23,7 +23,7 @@
 Most agents live in a terminal or a chat window. Deskmate lives on top of your desktop: a character you can see,
 hear and poke, who notices when a job finishes, walks over to tell you, reads back every message before it goes,
 and pauses a plan when a step fails. Under the face it is a real agent: native app control on macOS, your Chrome,
-Claude Code for code, a planner, reminders, a phone remote, and skills anyone can add.
+Claude Code for code, a planner, reminders, the chat apps on your phone, and skills anyone can add.
 
 ## What she does
 
@@ -46,8 +46,9 @@ Claude Code for code, a planner, reminders, a phone remote, and skills anyone ca
 - **Works on her own schedule.** "Every weekday at 9 summarise my Slack", "every hour check if the build is green":
   each run tells you what it found (on your phone when you're away) and asks before it sends anything. A heartbeat
   checks a short list you keep and stays quiet unless something needs you; an optional morning brief sums up the day.
-- **Answers your phone.** Text her through your own Telegram bot from anywhere; her "send it?" questions come back
-  with Yes / No buttons.
+- **Answers your phone.** Text her from Telegram, Discord, iMessage, Slack or Signal; only you can reach her, her
+  "send it?" questions come back to the chat, and "send me a screenshot" or "send me the PDF I just downloaded" works
+  (after a yes). Voice notes too. [docs/CHANNELS.md](docs/CHANNELS.md)
 - **Talks and listens.** A local Whisper model hears you, a local Kokoro voice answers, lip-synced. Give her a wake
   word, or press ⌥Space for the command bar and type.
 - **Lives on your desktop.** She walks over, sits on your windows, points at the file you asked for, swats at your
@@ -101,7 +102,10 @@ Grab the latest build from [Releases](https://github.com/MuhammadMurtuzaHussain/
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
-| Character, chat, voice, memory, reminders, phone remote, Claude Code jobs | ✓ | ✓ | ✓ |
+| Character, chat, voice, memory, reminders, Claude Code jobs | ✓ | ✓ | ✓ |
+| Chat apps from the phone: Telegram, Discord, Slack | ✓ | ✓ | ✓ |
+| … iMessage | ✓ | – | – |
+| … Signal (through signal-cli) | ✓ | – | ✓ |
 | Command bar, plans | ✓ | ✓ | ✓ |
 | App control (routines, skills, the agent) | ✓ | experimental | – |
 | Chrome driving, notification banners, calendar, sitting on windows | ✓ | – | – |
@@ -171,8 +175,8 @@ ships none. Guide: [docs/CHARACTERS.md](docs/CHARACTERS.md).
 
 Claude Code jobs use your own `claude` install whichever brain she has. Models and settings:
 [docs/BRAINS.md](docs/BRAINS.md). Voice (Kokoro, ElevenLabs, system) and ears (Whisper): [docs/VOICES.md](docs/VOICES.md).
-Her hands, the agent core, MCP tool servers, the injection guard, Chrome, notices and the phone remote:
-[docs/AGENT.md](docs/AGENT.md).
+Her hands, the agent core, MCP tool servers, the injection guard, Chrome and notices: [docs/AGENT.md](docs/AGENT.md).
+Reaching her from your phone's chat apps: [docs/CHANNELS.md](docs/CHANNELS.md).
 
 ## Privacy
 
@@ -180,8 +184,8 @@ With Ollama and the local voice, nothing leaves your machine except the update c
 releases API with the app version; `DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs, chat
 text, screenshots (when she looks, or you ask about the screen) and spoken lines go to those services under your own
 keys. Speech is transcribed on your machine. A Claude Code job sends your instruction and what Claude reads in that
-folder to Anthropic, as running `claude` yourself would. With the phone remote on, your messages and her replies pass
-through Telegram under your own bot. Notification banners and calendar events are read on your Mac; only the line
+folder to Anthropic, as running `claude` yourself would. With a chat app on, your messages and her replies pass
+through that app's servers (Telegram, Discord, Slack, Apple or Signal) under your own bot or account. Notification banners and calendar events are read on your Mac; only the line
 she says about one leaves it. Memory, settings, plans and logs live in your user-data folder.
 
 ## How it compares
@@ -225,7 +229,7 @@ Electron main ─ shortcuts (regex) ─► one tool call
   │  hands: native/bin/deskmate-hands (Swift, macOS) or PowerShell + UI Automation (Windows, experimental)
   │         ─► app routines (Discord, Slack, Messages, Spotify, Claude app) · skills/ · the Claude agent
   │  plans: planner ─► workers (agent, Chrome, Claude Code, app, skill, find, open, say, ask)
-  │  Claude Code: `claude -p` in the project folder · Chrome over AppleScript · Telegram bot (phone)
+  │  Claude Code: `claude -p` in the project folder · Chrome over AppleScript · chat apps (Telegram, Discord, iMessage, Slack, Signal)
   │  ears: Whisper (local) · voice: Kokoro / ElevenLabs / system
   ▼ IPC
 Renderer: Live2D (PixiJS + pixi-live2d-display) · 3D (three.js + three-vrm, MMD, FBX)
