@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased: she plans it out
+## Unreleased: she plans it out, and she notices things
+
+**She notices things**
+- Notices: a short line in her voice when something happens, without being asked; she wakes up for it and walks over to your pointer for the important ones, then goes home. Repeats are dropped, messages that pile up are said together, and spoken messages are capped per hour.
+- Claude Code jobs and plans finishing (or a plan step failing) come as notices.
+- New messages: she reads the notification banners macOS shows (Notification Center's accessibility tree; no Full Disk Access) and says who messaged you on which app. Reading the message itself is a setting. Chat apps by default, with Also / Never app lists.
+- Calendar: a nudge before events (10 minutes by default), and "what's on my calendar today / tomorrow?", "when's my next meeting?". Read only, through EventKit.
+- Reminders and timers: "remind me in 20 minutes to stretch", "remind me at 6pm to call mum", "set a timer for 5 minutes", "what reminders do I have", "cancel the stretch reminder". Kept across restarts; listed and cancellable from the tray.
+- Quiet hours (`DESKMATE_QUIET_HOURS`, or Setup) and a tray **Do not disturb**: she holds things back and tells you after in one line; reminders still ring.
+- Notices go into the daily log, and to your phone when the phone remote is on.
+- Setup: **What she tells you about**.
+
+**She plans it out**
 
 - Plans for bigger goals: steps with a worker each (the Mac agent, Chrome, Claude Code, app routines, find, open, ask, a summary), shown on a card beside her, run only after a go, with voice edits ("skip step 2", "change step 3 to …", "add a step …"), pause / resume / retry / stop, results handed from step to step, and a pause with the reason when a step fails.
 - A daily log of what she did, and "what did you do today?" / "yesterday?".

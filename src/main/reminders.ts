@@ -204,6 +204,16 @@ export function parseWhen(raw: string, now = new Date()): { at: number; ms?: num
   return when ? { at: when.at } : null
 }
 
+/** A time anywhere in their own words ("give me a nudge at 5pm about the bins" → 5 pm), to check what a model passed on. */
+export function timeIn(raw: string, now = new Date()): { at: number; ms?: number } | null {
+  const s = ` ${raw.toLowerCase().replace(/[.!?]+$/, '')} `
+  const dur = new RegExp(`\\b(?:in|after|for|within)\\s+(?:about |around )?(${DURATION})`).exec(s)
+  const len = dur ? durationMs(dur[1]) : null
+  if (len) return { at: now.getTime() + len, ms: len }
+  const when = timeOfDay(s, now)
+  return when ? { at: when.at } : null
+}
+
 // ---- the request
 
 /** "my" → "your", "I" → "you": she says it back to them. */
@@ -229,6 +239,9 @@ function tidy(text: string): string {
     .trim()
 }
 
+/** "remind me", and the other ways of asking for one: "nudge me", "ping me", "give me a nudge / a shout". */
+const ASK_ME = /\bremind me\b|\b(?:nudge me|ping me|poke me|give me a (?:nudge|shout|heads up|reminder))\b(?=.*\b(?:in|at|by|on|tomorrow|tonight|noon|midnight)\b)/
+
 const LEAD = /^(?:(?:hey|ok|okay|so|please|can you|could you|would you|will you|i need you to|i want you to)[\s,]+)+/i
 
 /** What they asked about reminders or timers, or null when it is not about them. */
@@ -237,7 +250,7 @@ export function parseReminder(raw: string, now = new Date()): ReminderIntent | n
   s = s.replace(LEAD, '').replace(/[\s,]+please$/, '').trim()
   if (!s) return null
   const about = /\b(?:remind(?:er|ers)?|timers?|alarms?)\b/
-  if (!about.test(s)) return null
+  if (!about.test(s) && !ASK_ME.test(s)) return null
 
   // What do I have?
   if (
@@ -262,8 +275,8 @@ export function parseReminder(raw: string, now = new Date()): ReminderIntent | n
   }
 
   // "set a timer for 5 minutes", "a 10 minute timer for the pasta", "timer 5 minutes"; not "the timer app is broken".
-  const timer = /^(?:(?:set|start|make|put on|give me|run|begin|create|add)\s+(?:me\s+)?)?(?:a|an|another|the)?\s*(?:\S+\s+){0,3}?timer\b/.test(s) && !/\bremind me\b/.test(s)
-  const reminder = /\bremind me\b|^(?:set|add|make|create|put in|schedule)?\s*(?:a |an |me a )?(?:reminder|alarm)\b/.test(s)
+  const timer = !ASK_ME.test(s) && /^(?:(?:set|start|make|put on|give me|run|begin|create|add)\s+(?:me\s+)?)?(?:a|an|another|the)?\s*(?:\S+\s+){0,3}?timer\b/.test(s) && !/\bremind me\b/.test(s)
+  const reminder = new RegExp(`${ASK_ME.source}|^(?:set|add|make|create|put in|schedule)?\\s*(?:a |an |me a )?(?:reminder|alarm)\\b`).test(s)
   if (!timer && !reminder) return null
 
   let rest = ` ${s} `
@@ -300,7 +313,7 @@ export function parseReminder(raw: string, now = new Date()): ReminderIntent | n
 
   let what = rest
     .replace(/^\s*(?:set|add|make|create|put in|schedule)?\s*(?:a |an |me a )?(?:reminder|alarm)\s*(?:for me)?\b/, ' ')
-    .replace(/\bremind me\b/, ' ')
+    .replace(/\b(?:remind me|nudge me|ping me|poke me|give me a (?:nudge|shout|heads up|reminder))\b/, ' ')
     .replace(/\s+/g, ' ')
   what = tidy(what)
   what = what.replace(/^(?:i need to|i have to|i've got to|i gotta|i should|i must)\s+/i, '')
@@ -346,7 +359,10 @@ export function dueLine(r: Reminder, lateMs = 0): string {
 
 export function listLine(list: Reminder[], now: number): string {
   if (!list.length) return 'No reminders or timers right now.'
-  const left = (r: Reminder): string => formatDuration(Math.max(1000, Math.round((r.at - now) / 1000) * 1000))
+  const left = (r: Reminder): string => {
+    const ms = r.at - now
+    return ms < 60_000 ? formatDuration(Math.max(1000, Math.round(ms / 1000) * 1000)) : formatDuration(Math.round(ms / 60_000) * 60_000)
+  }
   const items = list.slice(0, 6).map((r) => (r.timer ? `${/ timer$/.test(r.text) ? `a ${r.text}` : `the ${r.text} timer`}, ${left(r)} left` : `${r.text || 'a reminder'} ${whenText(r.at, now)}`))
   const more = list.length > 6 ? `, and ${list.length - 6} more` : ''
   const head = list.length === 1 ? 'One' : `${list.length}`

@@ -59,3 +59,5 @@ input.narrow { flex: none; width: 90px; }
 .quiet > div { display: flex; flex-direction: column; }
 label.inline { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
 label.inline input { accent-color: var(--accent); }
+.row.labelled { align-items: center; }
+.row.labelled > span { flex: none; width: 42px; }

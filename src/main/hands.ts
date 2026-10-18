@@ -245,34 +245,54 @@ export class Hands {
     return (r.banners as Banner[]) ?? []
   }
 
+  /**
+   * Calendar calls run in their own short-lived helper process: the access question can sit on screen for a while
+   * (the long-lived helper would hold every other request behind it), and macOS stops a process that asks wrongly,
+   * which must not be the one doing her other work. Packaged, Deskmate is the app macOS asks about; in development
+   * (`calendarDisclaim`) the helper asks for itself, since the app that started the dev server may not be allowed to.
+   */
+  calendarDisclaim = false
+
+  private calendarCall(cmd: string, args: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>> {
+    if (!this.available) return Promise.reject(new HandsError('calendar needs macOS and native/bin/deskmate-hands', 'unavailable'))
+    return new Promise((resolve, reject) => {
+      const req = JSON.stringify({ cmd, ...args, ...(this.calendarDisclaim ? { disclaim: true } : {}) })
+      execFile(this.binary, [req], { timeout: timeoutMs }, (err, stdout) => {
+        let r: Record<string, unknown>
+        try {
+          r = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '') as Record<string, unknown>
+        } catch {
+          reject(new HandsError(err ? err.message : 'no answer from the helper', 'helper_gone'))
+          return
+        }
+        if (r.ok) resolve(r)
+        else {
+          const error = String(r.error ?? 'unknown')
+          reject(new HandsError(error, error.split(':')[0]))
+        }
+      })
+    })
+  }
+
   /** notDetermined / denied / restricted / fullAccess / writeOnly: what macOS lets her read of the calendars. */
   async calendarStatus(): Promise<string> {
-    return String((await this.call('calendarStatus')).status ?? 'unknown')
+    return String((await this.calendarCall('calendarStatus', {}, 10_000)).status ?? 'unknown')
   }
 
   /** Calendar events from `pastMinutes` ago to `minutes` from now, earliest first (needs fullAccess). */
   async calendarEvents(minutes: number, pastMinutes = 0): Promise<CalendarEvent[]> {
-    const r = await this.call('calendar', { minutes: Math.round(minutes), pastMinutes: Math.round(pastMinutes) }, 15_000)
+    const r = await this.calendarCall('calendar', { minutes: Math.round(minutes), pastMinutes: Math.round(pastMinutes) }, 15_000)
     return (r.events as CalendarEvent[]) ?? []
   }
 
-  /**
-   * Asks macOS for read access to the calendars. Runs as its own short-lived helper process: the question can sit on
-   * screen for a while (the long-lived helper would hold every other request behind it), and macOS stops a process
-   * that asks wrongly, which must not be the one doing her other work.
-   */
-  requestCalendarAccess(timeoutMs = 120_000): Promise<{ granted: boolean; status: string; error?: string }> {
-    if (!this.available) return Promise.resolve({ granted: false, status: 'unavailable', error: 'the hands helper is missing' })
-    return new Promise((resolve) => {
-      execFile(this.binary, [JSON.stringify({ cmd: 'calendarAccess', timeoutMs })], { timeout: timeoutMs + 5000 }, (err, stdout) => {
-        try {
-          const r = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>
-          resolve({ granted: Boolean(r.granted), status: String(r.status ?? 'unknown'), ...(r.error ? { error: String(r.error) } : {}) })
-        } catch {
-          resolve({ granted: false, status: 'unknown', error: err ? err.message : 'no answer from the helper' })
-        }
-      })
-    })
+  /** Asks macOS for read access to the calendars (a prompt the first time; System Settings after a no). */
+  async requestCalendarAccess(timeoutMs = 120_000): Promise<{ granted: boolean; status: string; error?: string }> {
+    try {
+      const r = await this.calendarCall('calendarAccess', { timeoutMs }, timeoutMs + 5000)
+      return { granted: Boolean(r.granted), status: String(r.status ?? 'unknown'), ...(r.error ? { error: String(r.error) } : {}) }
+    } catch (err) {
+      return { granted: false, status: 'unknown', error: (err as Error).message }
+    }
   }
 
   stop(): void {

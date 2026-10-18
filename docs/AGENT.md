@@ -188,6 +188,40 @@ For the Claude app she switches to its chat side (Go › Claude) before New Chat
 
 Not yet: reading replies back to you, WhatsApp / Telegram / other apps, Windows and Linux.
 
+## She notices things
+
+She does not only answer: she comes to you with what is worth knowing. Each one is one short line in her voice; she wakes up for it, and for the important ones (a job done, a meeting about to start, a reminder) she walks over to your pointer and, once nobody has needed her for two minutes, back to her spot. Menu-bar icon → **Setup…** → **What she tells you about** switches each kind on or off.
+
+| what | she says | needs |
+|---|---|---|
+| a Claude Code job or a plan finishes, fails, or a plan step needs you | the outcome, in her words | nothing |
+| a new message | "Sam messaged you on Discord." With **Read the message out loud**: and what it says. | Accessibility (macOS) |
+| an event about to start | "Standup in 10 minutes." (the lead is in Setup, 1 to 120 minutes) | Calendars access |
+| a reminder or timer you set | "Reminder: stretch.", "Your 5 minute timer is up." | nothing |
+
+**Messages.** She reads the notification banners macOS shows, through the accessibility tree of Notification Center (no Full Disk Access, no notification database), every three seconds (`DESKMATE_BANNER_POLL`). Each one is mentioned once: not again when it moves into Notification Center, and nothing from the list when you open it yourself. Banners already on screen when she starts are taken as read. Chat apps count by default (Messages, Discord, Slack, WhatsApp, Telegram, Signal, Teams, Messenger, Instagram, Mail, Outlook, …); Setup has **Also** for other apps (by the name macOS shows, e.g. `Calendar`) and **Never** for apps to leave out, chat apps included. While a Focus is on, macOS shows no banners, so she hears about nothing either. A message with the same words as one in the last ten minutes counts as the same message.
+
+**Calendar.** The helper reads your calendars through EventKit, read only (nothing is ever changed). Press **Allow** in Setup (or ask "what's on my calendar today?") and macOS asks once; after a no, System Settings → Privacy & Security → Calendars. Packaged, the request is Deskmate's. Run from a checkout, it is the helper's own ("deskmate-hands would like full access to your Calendar"): the app that started the dev server may be one macOS will not even ask about (a hardened app without the calendar entitlement, like Claude's terminal), and rebuilding the helper means allowing it again. All-day and cancelled events are skipped; a moved event is mentioned again at its new time. Ask "what's on my calendar today / tomorrow?" or "when's my next meeting?" any time.
+
+**Reminders and timers.** No model needed for the usual phrasings; her brain reads the rest into the same shape, and a time in your own words always wins over its version.
+
+| you say | she does |
+|---|---|
+| "remind me in 20 minutes to stretch", "remind me to stretch in 20 minutes", "nudge me in an hour about the oven" | sets it, says when |
+| "remind me at 6pm to call mum", "at 6" (the next 6 o'clock), "tomorrow at 9", "tonight", "on Friday at 3pm" | the same, at that time |
+| "set a timer for 5 minutes", "a 10 minute timer for the pasta" | a timer |
+| "remind me to stretch" | asks when; "in 10 minutes" answers |
+| "what reminders do I have", "what timers do I have" | lists them with the time left |
+| "cancel the stretch reminder", "cancel the timer", "cancel all my reminders" | cancels them (the tray's **Reminders** menu too) |
+
+They are kept in `<user data>/reminders.json`, so they survive a restart; one that came due while Deskmate was closed goes off when it starts, with an apology.
+
+**Quiet.** Quiet hours (Setup, or `DESKMATE_QUIET_HOURS=23-8`) and the tray's **Do not disturb** hold everything back except reminders and timers you set, which ring like an alarm clock. Afterwards she says what she held back in one line: “While I was quiet: Claude finished "tests" and 3 messages (Discord and Slack).” Calendar nudges for times that have passed are dropped.
+
+**Manners.** The same news is said once (ten minutes' dedupe); she waits while she is talking, listening to you or waiting on a yes; messages that arrive while she waits are said together ("Three messages: Sam on Discord, …"), with a pause of `DESKMATE_NOTICE_GAP` seconds (12) between message lines and at most twenty spoken messages an hour (the rest only show in her status row). A kind switched off in Setup still shows in her status row.
+
+**Everywhere else.** Every notice goes into the daily log ("what did you do today?" can mention them), and with the phone remote on, to your phone too. With **Read the message out loud** off, neither the log nor the phone gets the message text.
+
 ## From your phone (Telegram)
 
 When you are away from the laptop, text her from your phone. Deskmate reads a Telegram bot of your own (long polling: no server, no open port on your Mac), runs each message through the same path as typed chat, and sends back every line she says while she works on it, including the steps in between ("… working out who and what", edited in place as she goes) and the read-back questions.
@@ -217,4 +251,4 @@ What keeps it safe:
 
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted); nothing else she sees or hears is sent there.
+Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted), and so do her notices (a job done, "Sam messaged you on Discord", a reminder); nothing else she sees or hears is sent there. Notification banners and calendar events are read on the Mac and go nowhere, except as the one line she says about them: to the brain when she phrases a reminder or an event in her own words, and to the phone as above.

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { dueLine, durationMs, listLine, parseReminder, parseWhen, ReminderStore, setLine, whenText, type Reminder, type ReminderIntent } from '../src/main/reminders.ts'
+import { dueLine, durationMs, listLine, parseReminder, parseWhen, ReminderStore, setLine, timeIn, whenText, type Reminder, type ReminderIntent } from '../src/main/reminders.ts'
 
 // Sunday 18 October 2026, 2:00 pm, local time.
 const NOW = new Date(2026, 9, 18, 14, 0, 0)
@@ -27,6 +27,8 @@ test('in so many minutes', () => {
   assert.equal(set('remind me in an hour and a half to check the oven').at, NOW.getTime() + 90 * MIN)
   assert.equal(set('remind me in 1h30 to stop').at, NOW.getTime() + 90 * MIN)
   assert.equal(set('remind me in an hour to call my sister').text, 'call your sister')
+  assert.deepEqual(set('give me a nudge at 5pm about the bins'), { kind: 'set', at: at(18, 17), text: 'the bins', timer: false })
+  assert.equal(set('ping me in 10 minutes to check the build').text, 'check the build')
 })
 
 test('durations on their own', () => {
@@ -83,6 +85,13 @@ test('lists, cancels, and things that are not requests', () => {
   assert.equal(parseReminder('I set a reminder yesterday', NOW), null)
   assert.equal(parseReminder('what time is it', NOW), null)
   assert.equal(parseReminder('tell sam on discord that the timer app is broken', NOW), null)
+  assert.equal(parseReminder('ping me', NOW), null)
+})
+
+test('a time in their own words, to check what the brain passed on', () => {
+  assert.deepEqual(timeIn('give me a nudge at 5pm about the bins', NOW), { at: at(18, 17) })
+  assert.deepEqual(timeIn('nudge me in 15 minutes about the laundry', NOW), { at: NOW.getTime() + 15 * MIN, ms: 15 * MIN })
+  assert.equal(timeIn('nudge me about the laundry later', NOW), null)
 })
 
 test('the answer to "when should I remind you?"', () => {

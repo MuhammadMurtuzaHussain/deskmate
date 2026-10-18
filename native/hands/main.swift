@@ -650,6 +650,50 @@ func requestCalendarAccess(timeoutMs: Int) -> Json {
   return out
 }
 
+/// Calendars access belongs to the "responsible" app: the one macOS thinks started us. Packaged, that is Deskmate,
+/// which carries the usage text. In development it is whatever launched the dev server (Terminal, an editor, Claude),
+/// and a hardened app without the calendar entitlement gets no prompt at all. With "disclaim", the request runs in
+/// a child of this helper that disclaims that link, so macOS asks for (and remembers) deskmate-hands itself.
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
+
+func runDisclaimed(_ req: Json) throws -> Json {
+  var inner = req
+  inner.removeValue(forKey: "disclaim")
+  inner.removeValue(forKey: "id")
+  guard let data = try? JSONSerialization.data(withJSONObject: inner), let arg = String(data: data, encoding: .utf8),
+        let exe = Bundle.main.executablePath else { throw HandsError("disclaim_failed: no request") }
+  var attr: posix_spawnattr_t?
+  posix_spawnattr_init(&attr)
+  defer { posix_spawnattr_destroy(&attr) }
+  _ = responsibility_spawnattrs_setdisclaim(&attr, 1)
+  var fds: [Int32] = [0, 0]
+  guard pipe(&fds) == 0 else { throw HandsError("disclaim_failed: pipe") }
+  var actions: posix_spawn_file_actions_t?
+  posix_spawn_file_actions_init(&actions)
+  defer { posix_spawn_file_actions_destroy(&actions) }
+  posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
+  posix_spawn_file_actions_addclose(&actions, fds[0])
+  var pid: pid_t = 0
+  let argv: [UnsafeMutablePointer<CChar>?] = [strdup(exe), strdup(arg), nil]
+  defer { argv.forEach { free($0) } }
+  let rc = posix_spawn(&pid, exe, &actions, &attr, argv, environ)
+  close(fds[1])
+  guard rc == 0 else {
+    close(fds[0])
+    throw HandsError("disclaim_failed: spawn \(rc)")
+  }
+  let out = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true).readDataToEndOfFile()
+  var status: Int32 = 0
+  waitpid(pid, &status, 0)
+  guard let line = String(data: out, encoding: .utf8)?.split(separator: "\n").last,
+        let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? Json else { throw HandsError("disclaim_failed: no answer (exit \(status))") }
+  if (obj["ok"] as? Bool) != true { throw HandsError(obj["error"] as? String ?? "unknown") }
+  var result = obj
+  result.removeValue(forKey: "ok")
+  return result
+}
+
 /// Events between now (minus `pastMinutes`) and `minutes` from now, earliest first. Times in ms since 1970.
 func calendarEvents(minutes: Int, pastMinutes: Int) throws -> Json {
   let status = calendarStatus()
@@ -813,6 +857,8 @@ func handle(_ req: Json) throws -> Json {
     }]
   case "banners":
     return banners()
+  case _ where ["calendarStatus", "calendarAccess", "calendar"].contains(cmd) && bool(req, "disclaim"):
+    return try runDisclaimed(req)
   case "calendarStatus":
     return ["status": calendarStatus()]
   case "calendarAccess":

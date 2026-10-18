@@ -158,7 +158,9 @@
         "LSUIElement": true,
         "NSScreenCaptureDescription": "Deskmate looks at your screen so your companion can react to what you are doing.",
         "NSMicrophoneUsageDescription": "Deskmate listens while hands-free mode is on, so you can talk to your companion.",
-        "NSAppleEventsUsageDescription": "Deskmate controls the apps you ask her to use: Chrome to browse, Spotify to play music, Messages to send texts (always after your yes)."
+        "NSAppleEventsUsageDescription": "Deskmate controls the apps you ask her to use: Chrome to browse, Spotify to play music, Messages to send texts (always after your yes).",
+        "NSCalendarsFullAccessUsageDescription": "Deskmate reads your upcoming events so your companion can remind you before they start. Nothing is changed.",
+        "NSCalendarsUsageDescription": "Deskmate reads your upcoming events so your companion can remind you before they start. Nothing is changed."
       }
     },
     "dmg": {

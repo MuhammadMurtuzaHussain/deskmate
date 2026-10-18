@@ -22,7 +22,7 @@ import { agendaLine, dueEvents, eventLine, type CalendarEvent } from './calendar
 import { appAllowed, BannerWatch, messageLine } from './inbox'
 import { Journal } from './journal'
 import { NoticeCenter, noticePrefs, parseQuietHours, type Notice } from './notice'
-import { dueLine, listLine, parseReminder, parseWhen, ReminderStore, setLine, timerName, toSecondPerson, whenText, type Reminder, type ReminderIntent } from './reminders'
+import { dueLine, listLine, parseReminder, parseWhen, ReminderStore, setLine, timeIn, timerName, toSecondPerson, whenText, type Reminder, type ReminderIntent } from './reminders'
 import { planCommand, planSummary, plannerSystem, PLAN_SCHEMA, PlanStore, reviseSystem, toPlan, type PlanCommand } from './plan'
 import { PlanCard } from './planwin'
 import { runComputerTask } from './computer'
@@ -113,6 +113,8 @@ const CONFIRM_SENDS = (process.env.DESKMATE_CONFIRM_SENDS?.trim().toLowerCase() 
 
 // Her hands in desktop apps (macOS): the native helper that launches apps, presses keys and reads window titles.
 const appHands = new Hands(Hands.locate(RESOURCES, ROOT))
+// From a checkout, the helper asks macOS for Calendars itself (see Hands.calendarDisclaim).
+appHands.calendarDisclaim = !app.isPackaged
 /** Accessibility granted to the app that runs her (null until checked); without it macOS drops her key presses. */
 let appTrusted: boolean | null = null
 const SELF_IDS = ['com.github.Electron', 'com.murtuza.deskmate']
@@ -1629,7 +1631,7 @@ async function planDo(cmd: PlanCommand | { kind: 'dismiss' }): Promise<Reply> {
 }
 
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
-async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
+async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean; said?: string }): Promise<Reply> {
   switch (call.name) {
     case 'tasks':
       return report({ phase: 'status', title: 'status', detail: agent.describe() })
@@ -1652,7 +1654,7 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
     case 'plan':
       return makePlan(call.input)
     case 'remind':
-      return remindTool(call.input)
+      return remindTool(call.input, opts.said)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -1816,6 +1818,11 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     // Her "on it" would be a lie until they say yes; the read-back replaces it.
     return runTool(reply.tool, { voice: opts.voice })
   }
+  if (reply.tool?.name === 'remind') {
+    // Her own line about a reminder can get the time wrong (a small model said "3:15" for one at 3:37); the exact
+    // confirmation is the line.
+    return runTool(reply.tool, { voice: opts.voice, said: text })
+  }
   if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude|messages?|imessages?|imsg|texts?|texting|spotify|music|song|track)\b/i.test(text)) {
     // The quick routines only cover Discord, Slack and the Claude app. A request for another app ("text Notepad on
     // Messages") is real work for the agent when Claude is her brain. Otherwise it is either a small model replaying an
@@ -1969,14 +1976,17 @@ function noticeState(): NoticeState {
 // Messages: the banners Notification Center shows, read every few seconds (inbox.ts).
 const bannerWatch = new BannerWatch()
 const BANNER_POLL_MS = Math.max(1, Number(process.env.DESKMATE_BANNER_POLL) || 3) * 1000
+/** Testing under a Focus (macOS shows no banners then): new entries in the open Notification Center panel count too. */
+const DEBUG_PANEL_BANNERS = /^(1|true|yes|on)$/i.test(process.env.DESKMATE_DEBUG_PANEL_BANNERS?.trim() || '')
 let bannerPolling = false
 async function pollBanners(): Promise<void> {
   const prefs = noticeSettings()
   if (bannerPolling || !prefs.messages || !appHands.available || appTrusted === false) return
   bannerPolling = true
   try {
-    const list = await appHands.banners().catch(() => null)
+    let list = await appHands.banners().catch(() => null)
     if (!list) return
+    if (DEBUG_PANEL_BANNERS) list = list.map((b) => ({ ...b, inPanel: false }))
     for (const b of bannerWatch.update(list)) {
       if (!appAllowed(b.app, prefs)) {
         console.log(`[inbox] not mentioned: a notification from ${b.app || 'an unnamed app'}`)
@@ -2002,12 +2012,14 @@ async function refreshCalendarAccess(): Promise<string> {
 async function pollCalendar(): Promise<void> {
   const prefs = noticeSettings()
   if (!prefs.calendar || calendarAccess !== 'fullAccess') return
-  const events = await appHands.calendarEvents(prefs.calendarLead + 2, 2).catch((err) => {
+  // DESKMATE_DEBUG_CALENDAR_LEAD: a longer lead than Setup allows, to try the nudge against a real event hours away.
+  const lead = Number(process.env.DESKMATE_DEBUG_CALENDAR_LEAD) || prefs.calendarLead
+  const events = await appHands.calendarEvents(lead + 2, 2).catch((err) => {
     console.warn(`[calendar] ${(err as Error).message}`)
     return null
   })
   if (!events) return
-  for (const due of dueEvents(events, Date.now(), prefs.calendarLead, calendarMentioned)) {
+  for (const due of dueEvents(events, Date.now(), lead, calendarMentioned)) {
     calendarMentioned.add(due.key)
     const line = eventLine(due.event, due.minutes)
     console.log(`[calendar] ${line}`)
@@ -2117,8 +2129,14 @@ async function reminderFromBrain(input: string): Promise<ReminderIntent | null> 
   return what ? { kind: 'needTime', text: what, timer } : null
 }
 
-async function remindTool(input: string): Promise<Reply> {
+async function remindTool(input: string, said?: string): Promise<Reply> {
   let intent = parseReminder(input)
+  // From her brain: a time in their own words wins over the model's retelling of it.
+  const own = said ? timeIn(said) : null
+  if (own && intent?.kind === 'set' && own.at !== intent.at) {
+    console.log(`[reminders] the model said ${new Date(intent.at).toTimeString().slice(0, 5)}; they said ${new Date(own.at).toTimeString().slice(0, 5)}`)
+    intent = { ...intent, at: own.at, ...(own.ms ? { ms: own.ms } : {}) }
+  }
   if (!intent && brain.canThink) {
     status('working out when…')
     intent = await reminderFromBrain(input)

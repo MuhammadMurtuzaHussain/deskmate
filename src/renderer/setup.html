@@ -94,8 +94,8 @@
       <label class="toggle"><input type="checkbox" id="n-messages" /><div><b>New messages</b><span id="n-messages-note">who messaged you, on which app (Messages, Discord, Slack, WhatsApp, Mail…), from the banners macOS shows</span></div></label>
       <div class="sub" id="n-messages-more">
         <label class="toggle"><input type="checkbox" id="n-read" /><div><b>Read the message out loud</b><span>off: only the app and who it's from</span></div></label>
-        <div class="row"><input id="n-allow" placeholder="also these apps (e.g. Calendar, Script Editor)" /></div>
-        <div class="row"><input id="n-deny" placeholder="never these apps (e.g. Mail)" /></div>
+        <div class="row labelled"><span class="hint">Also</span><input id="n-allow" placeholder="other apps, by name: Calendar, Script Editor" /></div>
+        <div class="row labelled"><span class="hint">Never</span><input id="n-deny" placeholder="apps to leave out, even chat apps: Mail" /></div>
       </div>
       <label class="toggle"><input type="checkbox" id="n-calendar" /><div><b>Calendar</b><span>a nudge <input id="n-lead" class="tiny" type="number" min="1" max="120" /> minutes before an event</span></div><span class="chip" id="n-cal-chip"></span><button id="n-cal-allow" class="hidden">Allow</button></label>
       <label class="toggle"><input type="checkbox" id="n-reminders" /><div><b>Reminders and timers</b><span>"remind me in 20 minutes to stretch", "set a timer for 5 minutes"; they ring even in quiet hours</span></div></label>
