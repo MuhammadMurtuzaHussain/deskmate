@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/MuhammadMurtuzaHussain/deskmate/security/advisories/new
+    about: Report it privately, please (see SECURITY.md).
+  - name: Questions and show-and-tell
+    url: https://github.com/MuhammadMurtuzaHussain/deskmate/discussions
+    about: How do I…, your characters and skills, ideas you want to talk through.

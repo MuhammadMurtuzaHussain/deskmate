@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased: she plans it out, she notices things, and she makes herself at home
+## Unreleased: she plans it out, she notices things, she makes herself at home, and she learns skills
+
+**Skills: app routines anyone can add**
+- A skill is a folder with a `skill.json`: the app, trigger phrases with slots (`"(message|text) {to} on whatsapp[:] {text}"`), and steps made of her hands' primitives (launch, key, type, paste, focus the message box, check the window title, find something on screen, a menu item, wait, confirm, read back), plus her line when it's done. An optional handler file can tidy the slots or do the work in code.
+- Loaded at startup from `skills/` in the app and `<user data>/skills` (yours replace bundled ones of the same name). Tray → **Skills**: the list, **Open my skills folder**, **Reload skills**, and the guide.
+- A phrase that matches a trigger runs the skill (checked before the built-in app routines); the Claude agent gets each skill as a tool; plans can hand a step to the new `skill` worker, which matches the step to a skill or has her brain pick one and fill its slots.
+- The safety rules are the runner's: keys only reach the skill's app, off-limits apps can't be targets, secret-looking text is refused, and in a chat app Return after typing only sends after a yes and a read-back. A skill that breaks those rules doesn't load, and the log says why. Handlers from your own skills folder only load with `DESKMATE_SKILL_CODE=1`.
+- Bundled: WhatsApp message, Telegram message, Notes new note. Guide: docs/SKILLS.md.
+
+**Windows hands (experimental)**
+- `src/main/hands-win.ts`: the same hands on Windows through PowerShell, UI Automation and SendKeys: launch or bring an app forward, the foreground window and its title, the focused element and text boxes, keys, typing, pasting with the clipboard restored, menus, a numbered look at the window, and finding things in it. Picked automatically on Windows. ⌘ in routines and skills means Ctrl; the routines' Mac app ids map to Windows process names. Nothing anyone typed is ever put into the PowerShell source (arguments travel as base64 JSON).
+- Not tested on a real PC yet: the command generation is unit-tested and CI parses every script with Windows PowerShell.
+
+**Launch**
+- A new README ("an agent with a face"): what she does, the safety model, install, quickstart, skills, characters, brains, privacy, how she compares with terminal and chat agents and with companion apps, roadmap. Fresh screenshots of the bundled characters only.
+- SECURITY.md (what keeps her safe, what she never does, how to report a problem), CONTRIBUTING.md (dev setup, testing beside your own copy, writing a skill, code layout), CODE_OF_CONDUCT.md, issue and pull request templates.
+- A static landing page in `docs/site/` (no build step, works offline) and docs/LAUNCH.md (name options, launch checklist, demo video shot list, macOS signing and notarization).
+- CI runs the typecheck and the tests on macOS, Windows and Ubuntu.
+
+**Under the hood**
+- `DesktopHands`: the interface both hands implement; the safety lists and title / message-box checks moved to `src/main/checks.ts`, shared by the routines, the agent and skills.
+- Tests for skills (loading, validation, trigger phrases, slots, runs against a fake pair of hands that records every key) and for the Windows command generation: 84 in all.
+- The old screenshots of a private model are gone from `docs/`.
+
 
 **She makes herself at home (desktop moments)**
 - "Lie down on this window": she lies on her front along its top edge, chin on her hands, calves kicking slowly, and rides along when you move it (3D). Live2D characters lie down the way they sit, with the model's `lie` or `sit` toggle and her head propped and rocking.

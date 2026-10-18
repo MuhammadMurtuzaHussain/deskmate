@@ -191,7 +191,23 @@ Keys only ever go to the app she is working in: if you switch apps while she wor
 
 For the Claude app she switches to its chat side (Go › Claude) before New Chat, so a prompt never lands in a Code session. Prompts follow `DESKMATE_CONFIRM_JOBS` (read back when spoken).
 
-Not yet: reading replies back to you, WhatsApp / Telegram / other apps, Windows and Linux.
+Not yet: reading replies back to you, Linux. WhatsApp, Telegram and Notes come as skills (below); Windows is experimental (below).
+
+## Skills: routines anyone can add
+
+A skill is a small JSON recipe for one routine in one app: the app, trigger phrases with slots ("message {to} on whatsapp: {text}"), and steps made of the same primitives as the routines above (launch, keys, type, paste, focus the message box, check the window title, find something on screen, a menu item, confirm, read back). Bundled: **WhatsApp message**, **Telegram message**, **Notes new note**. Yours go in `<user data>/skills` (tray → **Skills** → **Open my skills folder**).
+
+- Say or type a trigger phrase and the skill runs: "message Sam on WhatsApp: running late", "make a note saying buy milk".
+- With Claude as her brain, the agent gets every skill as a tool and prefers it to driving that app by hand.
+- In a plan, a step can go to the `skill` worker.
+
+The same rules hold: keys only go to the skill's app, secrets are never typed, and in a chat app Return only sends after your yes and a read-back of the box; a skill written otherwise doesn't load. Each run is logged in `<user data>/tasks/skill-*.log`. The format: [SKILLS.md](SKILLS.md).
+
+## Windows (experimental)
+
+On Windows her hands are `src/main/hands-win.ts`: each call is a short PowerShell run using UI Automation (find the window, the focused element, text boxes, menu items, buttons) and SendKeys (keys, typing, Ctrl+V with the clipboard put back). ⌘ in a routine or a skill means Ctrl. The routines' Mac app ids map to Windows process names (Discord, slack, WhatsApp, Telegram, …), and a skill can name its process with `app.windows`. Before every key press she checks the app's window is the foreground window, like on the Mac.
+
+What works so far is untested on real Windows hardware: the command generation is unit-tested and CI parses every script with Windows PowerShell, but nobody has run a message end to end yet. Not there at all: OCR, notification banners, the calendar, sitting on windows, Chrome driving. Reports from Windows users are very welcome: open an issue and say it is on Windows.
 
 ## She notices things
 

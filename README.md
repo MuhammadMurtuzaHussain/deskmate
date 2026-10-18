@@ -5,9 +5,8 @@
 <h1 align="center">Deskmate</h1>
 
 <p align="center">
-  <b>A Live2D or 3D AI companion that lives on your desktop.</b><br>
-  She watches what you're doing, talks back with a real voice and real expressions, dances when you ask, remembers you, and reacts when you poke her.<br>
-  Runs <b>100 % local</b> with Ollama + Kokoro, or on Claude or Gemini. macOS, Windows, Linux.
+  <b>An agent with a face.</b> An open-source AI agent that lives on your desktop as a Live2D or 3D character:<br>
+  you talk to her, she works your apps, plans bigger jobs, hands code to Claude Code, and asks before anything goes out.
 </p>
 
 <p align="center">
@@ -18,87 +17,175 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-mika-default.png" width="260" alt="Default Live2D character Mika reacting to the screen">
-  &nbsp;
-  <img src="docs/screenshot-victoria-3d.png" width="260" alt="Victoria, the bundled 3D VRM character, dancing">
-  &nbsp;
-  <img src="docs/screenshot-jian-flirty.png" width="260" alt="A custom VTube Studio model as the companion">
+  <img src="docs/hero.png" alt="Victoria, a 3D character, standing on the desktop beside a plan card with three steps waiting for a go, next to an editor showing a skill recipe">
 </p>
-<p align="center"><sub>Left: the bundled Live2D character. Middle: the bundled 3D character mid-dance. Right: your own VTube Studio model dropped in (see <a href="docs/CHARACTERS.md">Characters</a>).</sub></p>
 
----
+Most agents live in a terminal or a chat window. Deskmate lives on top of your desktop: a character you can see,
+hear and poke, who notices when a job finishes, walks over to tell you, reads back every message before it goes,
+and pauses a plan when a step fails. Under the face it is a real agent: native app control on macOS, your Chrome,
+Claude Code for code, a planner, reminders, a phone remote, and skills anyone can add.
 
 ## What she does
 
-- **Lives on top of everything.** A transparent, always-on-top Live2D character, click-through except on her, with a menu-bar / tray icon to show, hide, and quit. Start at login from the tray.
-- **Sees your screen.** Press *look* and she reacts to what you're doing; turn on *watch* and she glances over every minute and speaks up when something catches her eye. Point her at a project folder and she notices what you edit.
-- **Actually helps.** Ask "what's this error" or "what should I do next" and she reads the screen and answers properly, then goes back to being herself.
-- **Talks, and listens.** Lip-synced speech through a local Kokoro voice, ElevenLabs, or your system voice; expressions and body language follow the emotion of every line. Press ⌘⇧Space and just talk: a local Whisper model hears you, she answers out loud. Or give her a wake word and only say her name; talk over her and she stops and listens. Speech to speech, nothing sent anywhere.
-- **Puts Claude to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how is Claude doing": she hands the job to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the right project folder, follows it, and tells you in her own voice what came back. Spoken jobs are read back and wait for your yes. [docs/AGENT.md](docs/AGENT.md).
-- **Command bar.** Press ⌥Space (Alt+Space) anywhere, type what you want ("tell sam on discord I'm late", "open github", "ask claude to fix the build"), Enter. Her answer shows under the bar; when she asks "send it?", type yes right there. Works with her hidden.
-- **Stays out of the way.** Her chat panel tucks away and comes back when you move the pointer over her or the bottom of her window; while it is away, news ("Discord · finding sam") shows as a short status line.
-- **Works your apps (macOS).** "Tell sam on Discord I'm running late", "text Note Pad that I'm on my way, and send a photo of yourself", "message #general in Slack: standup moved", "skip this song", "open Claude and ask it to draft a cover letter". She opens the app even if it's closed, jumps to the chat, checks the window shows the right one, reads the message back, and sends it on your yes. [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
-- **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
-- **Answers your phone.** Away from the laptop, text her through a Telegram bot of your own: "tell sam on Discord I'm running late", "what's on my screen?", "ask Claude to fix the build", `/selfie`. Everything she says while she works on it comes back to the phone, and her "send it?" questions get Yes / No buttons. Only the one account you paired (with a yes on the Mac) can control her. [docs/AGENT.md](docs/AGENT.md#from-your-phone-telegram).
-- **Comes to you.** She speaks up on her own when it matters, and walks over for the important ones: a Claude job finished, "Sam messaged you on Discord" (from the banners macOS shows, nothing more than who and where unless you let her read it), "standup in 10 minutes", and the reminders and timers you ask for ("remind me at 6pm to call mum", "set a timer for 5 minutes"). Quiet hours and a tray Do not disturb hold it all back for one "while I was quiet…" line later. [docs/AGENT.md](docs/AGENT.md#she-notices-things).
-- **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
-- **Plans bigger jobs.** "Check my Slack for anything from Sam, then text him a summary": she lays out the steps on a card beside her, waits for your go, works through them (the Mac agent, Chrome, Claude Code, app routines), ticks them off, and pauses if one fails. "Skip step 2", "change step 3 to …", "pause", "stop the plan". "What did you do today?" gets a recap from her daily log.
-- **Lives on your desktop.** "Come here", "sit on this window" (she sits on its top edge, legs dangling, and rides along when you move it), "go to sleep", "walk around". "Where's my resume?" and she finds it, opens Finder on it, walks over and points at it with a ring around the spot. Carry her by the head and she dangles. After a few minutes on a window she stretches, hops down and walks home; standing around, she now and then glances at your pointer, yawns or stretches. "Lie down on this window" and she lies on its top edge, chin on her hands, kicking her feet; "hide" or "peek-a-boo" and she peeks in from behind the edge of the screen. Hold the pointer by her head and she swats at it. While Claude Code works on something long she gets bored, sits on your terminal and dozes off, then wakes with "okay, back to work". Left alone for ten minutes she dozes off. Full body in 3D (VRM and rigged FBX); with a Live2D model she leans, bobs, looks, and uses the model's own poses.
-- **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
-- **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Built-in choreographies (upbeat groove, slow and sensual, a twirl) with smooth blends, and real motion capture when you drop clips in: Mixamo `.fbx` dances retarget straight onto any VRM character, `.vrma` plays as is, `.vmd` for MMD. Hair and skirts move with the model's own physics.
-- **Is yours to shape.** Personality is a plain-text file. Models are standard Live2D / VTube Studio folders, VRM avatars (VRoid Studio, VRoid Hub, Booth), MMD models (.pmx) or a plain .obj/.glb. Multiple characters, switchable from the panel or the tray, each with her own voice and memory.
-- **Runs offline.** With Ollama (brain) and Kokoro (voice) nothing leaves your machine, not even the screenshots.
+- **Works your apps.** "Tell Sam on Discord I'm running late", "message the family group on WhatsApp: dinner's ready",
+  "make a note saying buy milk", "skip this song". She opens the app, finds the chat, checks it is the right one,
+  reads the message back, and sends it on your yes. With Claude as her brain she can work any app step by step.
+- **Plans bigger jobs.** "Get ready for my 3pm demo: run the tests, find the slides, tell the team." She lays the
+  steps out on a card, waits for your go, hands each step to the right worker, and ticks them off. "Skip step 2",
+  "change step 3 to …", "pause", "stop the plan".
+- **Puts Claude Code to work.** "Ask Claude to fix the failing tests in deskmate", "resume the vlog edit", "how's
+  Claude doing?" She runs the job in the right folder, follows it, and tells you in her own voice what came back.
+- **Drives your Chrome.** "What's on this page?", "look up the cheapest flight to Lisbon next Friday". She works in
+  the Chrome you already have open, a step at a time.
+- **Notices things.** A finished job, "Sam messaged you on Discord", "standup in 10 minutes", the reminders and timers
+  you ask for. Quiet hours and Do not disturb hold it all for one "while you were busy…" line.
+- **Answers your phone.** Text her through your own Telegram bot from anywhere; her "send it?" questions come back
+  with Yes / No buttons.
+- **Talks and listens.** A local Whisper model hears you, a local Kokoro voice answers, lip-synced. Give her a wake
+  word, or press ⌥Space for the command bar and type.
+- **Lives on your desktop.** She walks over, sits on your windows, points at the file you asked for, swats at your
+  pointer, dozes off on your terminal while a long job runs, and reacts when you tap her.
+- **Is yours to shape.** Live2D (VTube Studio), VRM, MMD and rigged FBX characters; personality in a text file; skills
+  in a JSON file.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/plan-card.png" alt="The plan card: Prepare for 3pm Demo, three steps (run tests with Claude Code, find demo slides in Finder, notify team), Go and Cancel buttons"><br><sub><b>Plans.</b> A real plan from a local model, waiting for a go.</sub></td>
+    <td width="50%"><img src="docs/command-bar.png" alt="The command bar with a typed request and her answer underneath"><br><sub><b>Command bar.</b> ⌥Space anywhere; her answer shows underneath.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/setup.png" alt="The setup window: her brain (Claude, Ollama or Gemini), her voice, and what she may do"><br><sub><b>Setup.</b> Brain, voice and permissions, a button each.</sub></td>
+    <td width="50%"><img src="docs/characters.png" alt="The character picker with five bundled characters, beside the Live2D character Mika saying hello"><br><sub><b>Characters.</b> Five bundled, or add your own.</sub></td>
+  </tr>
+</table>
+
+## The safety model
+
+An agent that can press keys on your computer has to earn trust. These rules live in the code that presses the keys,
+not in a prompt a model could talk its way around:
+
+- **Read-backs before anything goes out.** Messages, posts, purchases, deletions: she says what she is about to do
+  and waits for your yes. On the phone that is a Yes / No button.
+- **Keys only reach the app she means.** Every key press names the app it is for; if anything else has come to the
+  front (you clicked somewhere), the helper refuses and she stops.
+- **She checks before she types.** The chat is confirmed from the window title (or the screen) before a word goes
+  in, and the message box is read back before Return.
+- **Off-limits apps.** Keychain Access, password managers, System Settings and terminals are never driven. Passwords,
+  card numbers and other secrets are never typed.
+- **Skills can't skip the rules.** A skill that would press Return in a chat without a confirm and a read-back
+  doesn't load. Skills with code from outside the app only load if you turn that on.
+- **Plans wait for a go**, and pause when a step fails.
+- **Local first.** With Ollama and Kokoro nothing leaves your machine.
+
+What she never does, and how to report a problem: [SECURITY.md](SECURITY.md).
 
 ## Install
 
-Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest):
+Grab the latest build from [Releases](https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest):
 
 | OS | file | note |
 |---|---|---|
-| macOS (Apple Silicon / Intel) | `Deskmate-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Unsigned: on first launch right-click → Open, or run `xattr -dr com.apple.quarantine /Applications/Deskmate.app`. Allow **Screen Recording** when asked so she can see your screen. |
-| Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` (installer) or `-portable.exe` | Unsigned: SmartScreen → "More info" → "Run anyway". |
-| Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
+| macOS (Apple Silicon / Intel) | `Deskmate-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Unsigned for now: on first launch right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Deskmate.app`. |
+| Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` or `-portable.exe` | Unsigned: SmartScreen → More info → Run anyway. App control on Windows is experimental. |
+| Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. The tray needs `libayatana-appindicator` on GNOME. |
 
-She starts in the bottom-right corner. The first time, a **setup window** walks you through her brain (Claude with your Anthropic key, a local Ollama model it finds on your Mac, or a Gemini key it checks for you), her voice, the permissions she needs (microphone, screen, Accessibility), and the phone remote, with a button for each. Come back to it any time from the menu-bar icon → **Setup…**. The sections below are the same steps by hand.
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Character, chat, voice, memory, reminders, phone remote, Claude Code jobs | ✓ | ✓ | ✓ |
+| Command bar, plans | ✓ | ✓ | ✓ |
+| App control (routines, skills, the agent) | ✓ | experimental | – |
+| Chrome driving, notification banners, calendar, sitting on windows | ✓ | – | – |
 
-When a newer release is out, the tray menu shows **Update available: vX.Y.Z**, which opens its download page (she checks GitHub at launch and every 6 hours; `DESKMATE_UPDATE_CHECK=0` in `.env` turns that off). Install it over the old one; your settings, memory and characters stay. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+## Quickstart
 
-### Give her a brain (2 minutes)
+1. **Open Deskmate.** She appears in the bottom-right corner and a setup window opens.
+2. **Give her a brain.** Paste an [Anthropic API key](https://console.anthropic.com/settings/keys) (best at doing
+   things; the agent needs it), pick a local [Ollama](https://ollama.com) model (free, private), or paste a free
+   [Gemini key](https://aistudio.google.com/apikey).
+3. **Let her see and act.** Allow Screen Recording, and Accessibility when she asks, so her hands can press keys.
+4. **Ask her something.** Type in her panel or press ⌥Space:
 
-**Claude (best at doing things):** paste an [Anthropic API key](https://console.anthropic.com/settings/keys) into the setup window and pick a model (Claude Opus 5.5 by default; Sonnet 5.5 and Haiku 5.5 are quicker and cheaper). Billed per use to your Anthropic account. With Claude she also gets a real agent for multi-step jobs on your Mac ("open Spotify and play my liked songs", "in Notes, start a shopping list with milk and eggs"): it works your apps step by step, checks each step, and asks before anything that sends, posts, deletes or pays. [docs/AGENT.md](docs/AGENT.md#claude-brain-and-the-agent-on-your-mac).
+   ```
+   remind me in 20 minutes to stretch
+   tell sam on discord I'm running late
+   make a plan to clean up my downloads and tell me what you moved
+   ask claude to fix the failing tests in deskmate
+   ```
 
-**Local, free, private (recommended):** install [Ollama](https://ollama.com), then
+Everything in the setup window can be changed later from the menu-bar icon → **Setup…**.
 
-```bash
-ollama pull qwen3-vl:4b-instruct
+## Skills
+
+A skill teaches her one routine in one app, as a small JSON recipe: the app, trigger phrases with slots, and steps
+made of her hands' primitives. Drop a folder into your skills folder (tray → **Skills** → **Open my skills folder**)
+and she can do it by voice, the Claude agent gets it as a tool, and the planner can use it as a step.
+
+```json
+{
+  "name": "notes-new-note",
+  "app": { "name": "Notes", "bundleId": "com.apple.Notes" },
+  "slots": [{ "name": "text", "description": "What the note says" }],
+  "triggers": ["(make|create|add) a [new] note[:|,] [saying] {text}"],
+  "steps": [
+    { "do": "launch" },
+    { "do": "menu", "path": ["File", "New Note"] },
+    { "do": "paste", "text": "{text}" },
+    { "do": "readBack", "text": "{text}" }
+  ],
+  "done": "Added it to Notes."
+}
 ```
 
-and in the settings folder (tray menu → *Open settings folder*) create a file named `.env`:
+Bundled: WhatsApp message, Telegram message, Notes new note. The format, the send rules and handlers:
+[docs/SKILLS.md](docs/SKILLS.md).
 
-```
-DESKMATE_BRAIN=ollama
-OLLAMA_MODEL=qwen3-vl:4b-instruct
-```
+## Characters
 
-**Cloud:** get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it into the setup window (or the field in her panel). Done.
+Five ship: **Mika** (Live2D, the free sample model Haru) and four 3D VRoid sample girls under CC0, **Victoria**,
+**Vita**, **Vivi** and **Shino**. Add your own from Setup → **Characters** → **Add a character…**: a `.vrm`, a Live2D
+folder, an MMD `.pmx`, a rigged `.fbx`, or a `.zip`. She is copied in with her expressions mapped, her licence read,
+and a starter personality you can edit. Personality is plain text; voice, speed and zoom are per character.
+Check each model's licence: most fan and commissioned models are for personal use only, which is why this repository
+ships none. Guide: [docs/CHARACTERS.md](docs/CHARACTERS.md).
 
-Details, other models, and running both: [docs/BRAINS.md](docs/BRAINS.md).
+## Brains
 
-### Give her a voice, and ears (optional)
+| brain | good for | |
+|---|---|---|
+| **Claude** (Anthropic API) | doing things: the agent that works any app, plans, the best judgement on read-backs | your key, paid per use |
+| **Ollama** (local) | chatting, plans and the built-in routines, fully offline | free, private |
+| **Gemini** | a capable cloud brain on a free key | your key |
 
-Without setup she uses your system voice. For a natural one: [docs/VOICES.md](docs/VOICES.md) covers the local open-source Kokoro voice (one script) and ElevenLabs (an API key). The same script installs Whisper, so with the local voice on you can talk to her: ⌘⇧Space (Ctrl+Shift+Space), the **mic** button, or **Listen hands-free** in the tray.
+Claude Code jobs use your own `claude` install whichever brain she has. Models and settings:
+[docs/BRAINS.md](docs/BRAINS.md). Voice (Kokoro, ElevenLabs, system) and ears (Whisper): [docs/VOICES.md](docs/VOICES.md).
+Her hands, the agent, Chrome, notices and the phone remote: [docs/AGENT.md](docs/AGENT.md).
 
-### Give her hands (optional)
+## Privacy
 
-On a Mac she can message people on Discord and Slack and prompt the Claude app for you: switch on **Accessibility** for Deskmate when she asks (System Settings → Privacy & Security → Accessibility). Messages and Spotify go through their own scripting instead: say **Allow** the first time macOS asks whether Deskmate may control them. Details: [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
+With Ollama and the local voice, nothing leaves your machine except the update check (one request to GitHub's
+releases API with the app version; `DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs, chat
+text, screenshots (when she looks, or you ask about the screen) and spoken lines go to those services under your own
+keys. Speech is transcribed on your machine. A Claude Code job sends your instruction and what Claude reads in that
+folder to Anthropic, as running `claude` yourself would. With the phone remote on, your messages and her replies pass
+through Telegram under your own bot. Notification banners and calendar events are read on your Mac; only the line
+she says about one leaves it. Memory, settings, plans and logs live in your user-data folder.
 
-On a Mac she can also drive the Chrome you have open: say yes when macOS asks, and switch on **View → Developer → Allow JavaScript from Apple Events** in Chrome once so she can read pages and click. Details and the safety rules: [docs/AGENT.md](docs/AGENT.md#browser-she-drives-your-chrome).
+## How it compares
 
-If [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is installed and logged in on your machine, she can give it jobs: "ask Claude to …", "resume the vlog edit", "stop the task". Pick the folder she works in from the tray menu, or name it in the sentence. How it works, what Claude is allowed to do, and how to turn the read-back confirmation on or off: [docs/AGENT.md](docs/AGENT.md).
+|  | Deskmate | Terminal / chat agents (OpenClaw, Hermes) | Companion apps and desktop pets |
+|---|---|---|---|
+| Where it lives | on your desktop, as a character | a terminal, or a chat app you message | a phone app, a chat window, or a pet on screen |
+| Does things on your computer | native app control, Chrome, Claude Code, plans | shell, files, browser and many integrations | mostly no |
+| Sees your screen | yes, when you ask or let her watch | some, through tools | rarely |
+| Extending it | JSON skills (+ optional code), characters | large plugin / skill ecosystems | closed |
+| Asks before sending | built into the hands, not the prompt | depends on the setup | n/a |
+| Runs fully local | yes (Ollama + Kokoro + Whisper) | yes, with a local model | usually cloud |
 
-### Control her from your phone (optional)
-
-Make a Telegram bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste its token in the setup window (**4 · From your phone**), then send `/start` to your bot from your phone and say yes on the Mac. The tray menu turns it on and off. Details and the safety rules: [docs/AGENT.md](docs/AGENT.md#from-your-phone-telegram).
+Honestly: OpenClaw and Hermes are further along as general agents, with far more integrations, server and headless
+use, and bigger communities; if you live in a terminal or want an agent on a server, use them. Deskmate is for
+people who want the agent on the desktop they are sitting at, with a face, a voice and physical cues (she walks
+over, points, waits for your yes), and app control that works through the real UI of the apps you already use.
+Companion apps have the personality but not the hands; Deskmate tries to have both.
 
 ## Run from source
 
@@ -106,65 +193,47 @@ Make a Telegram bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste
 git clone https://github.com/MuhammadMurtuzaHussain/deskmate.git
 cd deskmate
 npm install
-cp .env.example .env     # edit: brain, voice, watch folder
+cp .env.example .env     # optional: brain, voice, shortcuts
 npm run dev
 ```
 
-`npm run dist` builds installers for your current OS into `release/`.
-
-## Make her yours
-
-| what | where | how |
-|---|---|---|
-| Personality | `character/<id>/persona.md` | Plain English. Who she is, how she talks, what she reacts to, how far flirting goes. |
-| Look | `character/<id>/character.json` | Live2D Cubism 3/4 (incl. VTube Studio models), VRM 0.x/1.0, a rigged FBX / Collada / glTF character, MMD `.pmx`, or a static `.obj`/`.glb`. Map her expressions to nine emotions. |
-| Moves | `character/<id>/character.json` | 3D only: `dance.bpm`, `animations` (Mixamo `.fbx` or `.vrma` for VRM, `.vmd` for MMD), `outfits` (other model files, parts to hide, materials to recolour). |
-| Private tweaks | `character/<id>/local.json` | Gitignored overlay for your own clips, voice or model path, merged over `character.json`. |
-| Voice | `character/<id>/character.json` → `voice` | Kokoro preset, ElevenLabs voice id, system voice. |
-| Jiggle | `physics` in `character.json` | `sway` and `bounce` drive the model's own physics rig (hair, tail, chest). |
-| New character | Setup → **Characters** → **Add a character…** | Pick a `.vrm`, a Live2D folder, a `.pmx`, a rigged `.fbx`, or a `.zip`: she is copied into your user-data folder with her expressions mapped, her licence read, and a starter personality. Cards with pictures to switch between them; voice, speed, zoom and personality editable there. Or copy `character/mika/` by hand. |
-
-Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each with her own personality: Mika (Live2D, the free sample model Haru) and four 3D girls from VRoid's CC0 sample set, Victoria, Vita, Vivi and Shino, fetched on first use so the download stays small. Want a specific character from a game or an app? Bring the model yourself: VRoid Hub and Booth are full of VRM avatars, including fan versions of popular AI companions and VTubers; MMD models (.pmx) load as they are. Check each model's licence; most fan and commissioned models are for personal use only, which is why this repository ships none.
-
-## Settings reference
-
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), the phone remote's bot token, notices (quiet hours, how often she checks for banners), watch folder and interval, default character, update check.
-
-| folder | macOS | Windows | Linux |
-|---|---|---|---|
-| user data (settings, memory, your characters) | `~/Library/Application Support/deskmate` | `%APPDATA%\deskmate` | `~/.config/deskmate` |
+`npm test` runs the unit tests, `npm run typecheck` the types, `npm run dist` builds installers for your OS into
+`release/`. Testing alongside your own copy, writing skills and the code layout: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
 ```
-Electron main ──── Ollama / Gemini / Claude (text + screenshot) ──► {say, emotion, speak, remember, action, tool}
-   │  desktopCapturer every N s, chokidar on your project folder
-   │  mic ──► Whisper (local) ──► text · Kokoro / ElevenLabs / say ──► audio
-   │  tool: claude ──► `claude -p` in the project folder (stream-json) ──► she reports back
-   │  tool: browse / page ──► Chrome over AppleScript (tabs, page text, click, type) ──► look · decide · act loop
-   │  tool: app ──► native/bin/deskmate-hands (Swift: open -b, key events, accessibility titles) ──► Discord · Slack · Claude routines
-   │  phone ──► Telegram Bot API (long polling, one paired account) ──► same path as typed chat ──► her lines back to the phone
-   ▼ IPC
-Renderer: Live2D: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
-          3D: three.js + three-vrm (VRM) · vendored MMDLoader + Ammo physics (MMD) · OBJ/GLTF (static)
-          emotion → expression / morphs · audio volume → mouth · sway, bounce, choreography → bones + physics
+Electron main ─ brain (Ollama / Gemini / Claude): text + screenshot ─► {say, emotion, action, tool}
+  │  hands: native/bin/deskmate-hands (Swift, macOS) or PowerShell + UI Automation (Windows, experimental)
+  │         ─► app routines (Discord, Slack, Messages, Spotify, Claude app) · skills/ · the Claude agent
+  │  plans: planner ─► workers (agent, Chrome, Claude Code, app, skill, find, open, say, ask)
+  │  Claude Code: `claude -p` in the project folder · Chrome over AppleScript · Telegram bot (phone)
+  │  ears: Whisper (local) · voice: Kokoro / ElevenLabs / system
+  ▼ IPC
+Renderer: Live2D (PixiJS + pixi-live2d-display) · 3D (three.js + three-vrm, MMD, FBX)
+          emotion → expression · audio → mouth · body: walk, sit, point, sleep
 ```
 
-The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, the line goes to TTS, and the audio drives the mouth. Memory is a small JSON store with importance-weighted forgetting. The whole thing started as a reverse-engineering exercise of a commercial companion app; the write-up is in [docs/REVERSE-ENGINEERING.md](docs/REVERSE-ENGINEERING.md).
-
-## Privacy
-
-Local mode sends nothing anywhere, apart from the update check: one request to GitHub's releases API at launch and every 6 hours, which carries only the app version (`DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them, her selfies and her notices pass through Telegram under your own bot. Notification banners and calendar events are read on your Mac; only the line she says about one leaves it (to your brain when she words a reminder or an event, to your phone with the remote on). Memory and settings live in your user-data folder and nowhere else.
+It started as a reverse-engineering exercise of a commercial companion app:
+[docs/REVERSE-ENGINEERING.md](docs/REVERSE-ENGINEERING.md).
 
 ## Roadmap
 
-- More for her hands: a shell tool with spoken approval
-- Voice cloning via Chatterbox as a local option
-- More settings in the setup window (voice provider, wake word, shortcuts)
-- Signed builds
+- Skills: more of them, a gallery, and recording a skill by showing her once
+- Windows hands out of experimental (needs testers with a PC), Linux hands
+- Signed and notarized macOS builds, signed Windows builds
+- A shell tool with spoken approval
+- Local voice cloning as an option
+- More of the settings in the setup window (voice provider, wake word, shortcuts)
+
+## Contributing
+
+Issues and pull requests are welcome, skills especially. Start with [CONTRIBUTING.md](CONTRIBUTING.md); security
+reports go to [SECURITY.md](SECURITY.md); everyone follows the [Code of Conduct](CODE_OF_CONDUCT.md). What changed:
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Credits
 
-[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own license; the sample model Haru is under the Live2D Free Material License) · [three.js](https://threejs.org) and [three-vrm](https://github.com/pixiv/three-vrm) by pixiv · MMD loading vendored from three.js r170 (MIT) with [Ammo.js](https://github.com/kripken/ammo.js) physics · [Victoria Rubin](https://github.com/madjin/vrm-samples) sample model by VRoid Project, CC0 · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Ollama](https://ollama.com) · PixiJS · Electron.
+[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) and the [lip-sync fork](https://github.com/RaSan147/pixi-live2d-display) by RaSan147 · [Live2D Cubism SDK](https://www.live2d.com/en/sdk/about/) (Cubism Core is proprietary and loaded from Live2D's CDN under its own licence; the sample model Haru is under the Live2D Free Material License) · [three.js](https://threejs.org) and [three-vrm](https://github.com/pixiv/three-vrm) by pixiv · MMD loading vendored from three.js r170 (MIT) with [Ammo.js](https://github.com/kripken/ammo.js) physics · VRoid Project sample models (Victoria, Vita, Vivi, Shino) via [vrm-samples](https://github.com/madjin/vrm-samples), CC0 · [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Ollama](https://ollama.com) · PixiJS · Electron.
 
 MIT © 2026 Muhammad Murtuza Hussain

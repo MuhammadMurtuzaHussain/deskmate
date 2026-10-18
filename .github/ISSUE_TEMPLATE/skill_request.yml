@@ -1,0 +1,36 @@
+name: Skill
+description: A routine for one app (propose one, or ask for one)
+labels: [skill]
+body:
+  - type: input
+    id: app
+    attributes:
+      label: App
+      description: Its name, and its bundle id if you know it (osascript -e 'id of app "Name"').
+      placeholder: Signal (org.whispersystems.signal-desktop)
+    validations:
+      required: true
+  - type: textarea
+    id: phrases
+    attributes:
+      label: What you'd say
+      placeholder: |
+        message {to} on signal: {text}
+        signal {to}: {text}
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How you'd do it by hand
+      description: The keys and menu items, in order (docs/SKILLS.md lists the steps a skill can use).
+      placeholder: |
+        1. Open Signal
+        2. ⌘F, type the name, Return
+        3. click into the message box, type, Return
+  - type: checkboxes
+    id: offer
+    attributes:
+      label: Help
+      options:
+        - label: I can write the skill.json and test it on my own machine.

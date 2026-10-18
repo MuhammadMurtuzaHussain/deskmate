@@ -1,0 +1,54 @@
+name: Bug report
+description: Something she did wrong, or didn't do
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security problems** (she sent or typed something without asking, keys reached the wrong app, someone else could control her) go to a private report instead: see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you said or typed, what she did, and what you expected.
+      placeholder: 'I typed "message Sam on WhatsApp: running late" and she…'
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Deskmate version
+      description: The release you installed, or "source" plus the commit if you run from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS (Apple Silicon), macOS (Intel), Windows 11, Windows 10, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: brain
+    attributes:
+      label: Brain
+      options: [Claude, Ollama, Gemini, not sure]
+  - type: input
+    id: model
+    attributes:
+      label: Model and character
+      placeholder: qwen2.5:7b, Victoria
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The terminal output if you run from source, or the run's log from `<user data>/tasks/` (skills, app routines, the agent). Read it first and remove anything private (names, messages).
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I'm on the latest release (or main), and I removed anything private from the logs.
+          required: true

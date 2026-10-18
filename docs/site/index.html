@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deskmate · an agent with a face</title>
+<meta name="description" content="Deskmate is an open-source AI agent that lives on your desktop as a Live2D or 3D character. She works your apps, plans bigger jobs, hands code to Claude Code, and asks before anything goes out. Runs fully local.">
+<meta property="og:title" content="Deskmate · an agent with a face">
+<meta property="og:description" content="An open-source AI agent that lives on your desktop as a Live2D or 3D character.">
+<meta property="og:image" content="../hero.png">
+<meta name="theme-color" content="#191428">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c5cff'/%3E%3Cstop offset='1' stop-color='%23ff6fae'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='64' y='64' width='896' height='896' rx='220' fill='url(%23g)'/%3E%3Cpath d='M292 296h440a96 96 0 0 1 96 96v232a96 96 0 0 1-96 96H520l-128 112v-112h-100a96 96 0 0 1-96-96V392a96 96 0 0 1 96-96z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #14101f;
+    --bg-2: #1c1729;
+    --card: #221c33;
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #ece9f5;
+    --muted: #a49dbb;
+    --accent: #b18cff;
+    --accent-2: #ff6fae;
+    --ok: #8fe3b0;
+    --radius: 18px;
+    --max: 1120px;
+  }
+  * { box-sizing: border-box }
+  html { scroll-behavior: smooth }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; height: auto; display: block }
+  a { color: var(--accent) }
+  a:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 3px; border-radius: 10px }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px }
+  @media (max-width: 480px) { .wrap { padding: 0 16px } }
+  .skip { position: absolute; left: -999px; top: 8px; background: var(--card); color: var(--text); padding: 8px 14px; border-radius: 10px; z-index: 10 }
+  .skip:focus { left: 8px }
+
+  /* nav */
+  header.nav { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(14px); background: rgba(20, 16, 31, 0.72); border-bottom: 1px solid var(--line) }
+  header.nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; letter-spacing: -0.01em }
+  .brand svg { width: 28px; height: 28px }
+  nav ul { display: flex; gap: 22px; list-style: none; margin: 0; padding: 0; font-size: 15px }
+  nav a { color: var(--muted); text-decoration: none }
+  nav a:hover { color: var(--text) }
+  @media (max-width: 720px) { nav ul li.hide-sm { display: none } }
+
+  /* hero */
+  .hero { position: relative; overflow: hidden; padding: 72px 0 40px;
+    background: radial-gradient(900px 500px at 80% 0%, rgba(177, 140, 255, 0.28), transparent 60%),
+                radial-gradient(700px 500px at 0% 100%, rgba(255, 111, 174, 0.16), transparent 60%) }
+  .eyebrow { display: inline-block; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); background: rgba(177, 140, 255, 0.12); border: 1px solid rgba(177, 140, 255, 0.25); padding: 4px 12px; border-radius: 999px }
+  h1 { font-size: clamp(42px, 7vw, 76px); line-height: 1.02; letter-spacing: -0.035em; margin: 18px 0 18px; max-width: 12ch }
+  h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent }
+  .lede { font-size: clamp(18px, 2.2vw, 21px); color: #cfc9e2; max-width: 46ch; margin: 0 0 28px }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 13px 22px; border-radius: 12px; font-weight: 650; text-decoration: none; font-size: 16px; border: 1px solid transparent }
+  .btn.primary { background: var(--accent); color: #1a1030 }
+  .btn.primary:hover { background: #c3a6ff }
+  .btn.ghost { color: var(--text); border-color: rgba(255, 255, 255, 0.18) }
+  .btn.ghost:hover { background: rgba(255, 255, 255, 0.06) }
+  .meta { font-size: 14px; color: var(--muted) }
+  .shot-hero { margin-top: 44px; border-radius: 16px; overflow: hidden; box-shadow: 0 40px 100px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line) }
+
+  /* sections */
+  section { padding: 84px 0 }
+  section.alt { background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line) }
+  h2 { font-size: clamp(30px, 4.4vw, 44px); line-height: 1.1; letter-spacing: -0.025em; margin: 0 0 14px }
+  .sub { color: var(--muted); max-width: 60ch; margin: 0 0 40px; font-size: 18px }
+  h3 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em }
+
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(3, 1fr) }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr) } }
+  @media (max-width: 600px) { .grid { grid-template-columns: minmax(0, 1fr) } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 22px 20px }
+  .card p { margin: 0; color: #c8c1dc; font-size: 16px }
+  .card .say { display: block; margin-top: 12px; font-size: 14px; color: var(--muted); font-style: italic }
+  .icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 14px; background: linear-gradient(135deg, rgba(177, 140, 255, 0.25), rgba(255, 111, 174, 0.18)); font-size: 20px }
+
+  .row { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; margin-bottom: 72px }
+  .row:last-child { margin-bottom: 0 }
+  .row.flip { grid-template-columns: 1.15fr 1fr }
+  .row.flip .text { order: 2 }
+  @media (max-width: 860px) { .row, .row.flip { grid-template-columns: minmax(0, 1fr); gap: 24px } .row.flip .text { order: 0 } }
+  .row > *, .grid > *, ol.steps > *, ul.checks > * { min-width: 0 }
+  .row .text p { color: #c8c1dc; margin: 0 0 12px }
+  .row figure { margin: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--line) }
+  .row figcaption { font-size: 13px; color: var(--muted); padding: 10px 14px; background: var(--card) }
+  .quote { display: inline-block; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; margin: 4px 6px 4px 0; font-size: 15px; color: var(--text) }
+
+  ul.checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; grid-template-columns: repeat(2, 1fr) }
+  @media (max-width: 760px) { ul.checks { grid-template-columns: minmax(0, 1fr) } }
+  ul.checks li { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 16px 50px; position: relative; color: #c8c1dc; font-size: 16px }
+  ul.checks li::before { content: "✓"; position: absolute; left: 18px; top: 15px; width: 22px; height: 22px; border-radius: 50%; background: rgba(143, 227, 176, 0.15); color: var(--ok); display: grid; place-items: center; font-size: 13px; font-weight: 700 }
+  ul.checks b { color: var(--text) }
+
+  pre.code { background: #100d19; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.6; color: #d9d4ea; margin: 0 }
+  .k { color: #c9a7ff } .s { color: #9fe0b5 } .n { color: #ffcf8a }
+
+  .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--line) }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; font-size: 15px }
+  th, td { text-align: left; padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: top }
+  thead th { background: var(--card); font-size: 14px; color: var(--muted); font-weight: 600 }
+  tbody th { color: var(--text); font-weight: 600; width: 22% }
+  td { color: #c8c1dc }
+  td.us { color: var(--text); background: rgba(177, 140, 255, 0.07) }
+  tr:last-child th, tr:last-child td { border-bottom: 0 }
+  .note { color: var(--muted); font-size: 16px; max-width: 75ch; margin-top: 22px }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; grid-template-columns: repeat(4, 1fr) }
+  @media (max-width: 900px) { ol.steps { grid-template-columns: repeat(2, 1fr) } }
+  @media (max-width: 560px) { ol.steps { grid-template-columns: minmax(0, 1fr) } }
+  ol.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; color: #c8c1dc; font-size: 16px }
+  ol.steps li::before { content: counter(s); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #1a1030; font-weight: 700; margin-bottom: 12px }
+  ol.steps b { color: var(--text) }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px }
+  .pill { font-size: 14px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px }
+
+  .cta-band { text-align: center; padding: 90px 0; background: radial-gradient(700px 300px at 50% 0%, rgba(177, 140, 255, 0.22), transparent 70%) }
+  .cta-band .ctas { justify-content: center }
+  footer { border-top: 1px solid var(--line); padding: 30px 0 40px; color: var(--muted); font-size: 14px }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between }
+  footer a { color: var(--muted) }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Deskmate home">
+      <svg viewBox="0 0 1024 1024" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff6fae"/></linearGradient></defs><rect x="64" y="64" width="896" height="896" rx="220" fill="url(#lg)"/><path d="M292 296h440a96 96 0 0 1 96 96v232a96 96 0 0 1-96 96H520l-128 112v-112h-100a96 96 0 0 1-96-96V392a96 96 0 0 1 96-96z" fill="#fff"/><path d="M512 668c-6 0-12-2-16-7l-98-98c-34-34-34-90 0-124 32-32 84-34 118-6l-4-4 4 4c34-28 86-26 118 6 34 34 34 90 0 124l-98 98c-4 5-10 7-16 7h-8z" fill="#ff5c9a"/></svg>
+      Deskmate
+    </a>
+    <nav aria-label="Main">
+      <ul>
+        <li class="hide-sm"><a href="#does">What she does</a></li>
+        <li class="hide-sm"><a href="#safety">Safety</a></li>
+        <li class="hide-sm"><a href="#skills">Skills</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="https://github.com/MuhammadMurtuzaHussain/deskmate">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="hero" id="top">
+    <div class="wrap">
+      <span class="eyebrow">Open source · MIT · local first</span>
+      <h1>An agent with a <em>face.</em></h1>
+      <p class="lede">Deskmate is an AI agent that lives on your desktop as a Live2D or 3D character. Talk to her and she works your apps, plans bigger jobs, hands code to Claude Code, and asks before anything goes out.</p>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest">Download for macOS, Windows, Linux</a>
+        <a class="btn ghost" href="https://github.com/MuhammadMurtuzaHussain/deskmate">View on GitHub</a>
+      </div>
+      <p class="meta">Free. Runs fully offline with Ollama, Whisper and Kokoro, or on Claude or Gemini with your own key.</p>
+      <div class="shot-hero">
+        <img src="../hero.png" width="1980" height="1230" alt="Victoria, a 3D character, standing on the desktop and saying: Here's the plan, 3 steps. Beside her, a plan card waiting for a go, and an editor showing a skill recipe for WhatsApp.">
+      </div>
+    </div>
+  </div>
+
+  <section id="does">
+    <div class="wrap">
+      <h2>Not a chat window. Someone on your desk.</h2>
+      <p class="sub">Most agents live in a terminal or a chat app. Deskmate lives on top of your desktop, where you can see her work, hear her, and stop her.</p>
+      <div class="grid">
+        <div class="card"><div class="icon" aria-hidden="true">💬</div><h3>Works your apps</h3><p>Discord, Slack, Messages, WhatsApp, Telegram, Notes, Spotify. She finds the chat, checks it's the right one, reads the message back, and sends on your yes.</p><span class="say">"Tell Sam on Discord I'm running late."</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">🗂️</div><h3>Plans bigger jobs</h3><p>A goal becomes steps on a card beside her. She waits for your go, hands each step to the right worker, and pauses if one fails.</p><span class="say">"Get ready for my 3pm demo."</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">🛠️</div><h3>Puts Claude Code to work</h3><p>She runs the job in the right folder, follows it, dozes on your terminal while it runs, and tells you what came back.</p><span class="say">"Ask Claude to fix the failing tests."</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">🔔</div><h3>Notices things</h3><p>A job done, a message from Sam, a meeting in ten minutes, the reminders you asked for. Quiet hours hold it all for later.</p><span class="say">"Remind me at 6 to call mum."</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">🎙️</div><h3>Talks and listens</h3><p>Whisper hears you and Kokoro answers, lip-synced, on your machine. Or press ⌥Space and type.</p><span class="say">"Victoria, what's this error?"</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">📱</div><h3>Answers your phone</h3><p>Text her through your own Telegram bot. Her "send it?" questions come back as Yes and No buttons.</p><span class="say">"What's on my screen?"</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <div class="row">
+        <div class="text">
+          <h2>Plans you can see, and change.</h2>
+          <p>Ask for something bigger and she lays it out first: who does each step, in order. Nothing runs until you say go.</p>
+          <p><span class="quote">"skip step 2"</span><span class="quote">"change step 3 to…"</span><span class="quote">"pause"</span><span class="quote">"stop the plan"</span></p>
+        </div>
+        <figure><img src="../plan-card.png" width="1600" height="1000" loading="lazy" alt="The plan card: Prepare for 3pm Demo, three steps (run tests with Claude Code, find demo slides in Finder, notify team), with Go and Cancel. Victoria stands beside it."><figcaption>A real plan from a local model, waiting for a go.</figcaption></figure>
+      </div>
+      <div class="row flip">
+        <div class="text">
+          <h2>A command bar, anywhere.</h2>
+          <p>Press ⌥Space over any app, type what you want, Enter. Her answer shows underneath; when she asks "send it?", type yes right there. Works with her hidden.</p>
+        </div>
+        <figure><img src="../command-bar.png" width="1920" height="600" loading="lazy" alt="The command bar with the request 'make a plan to get ready for my 3pm demo' and her answer underneath."><figcaption>The command bar.</figcaption></figure>
+      </div>
+      <div class="row">
+        <div class="text">
+          <h2>Your character, your rules.</h2>
+          <p>Five ship: Mika in Live2D and four CC0 VRoid girls. Add your own: a .vrm, a Live2D folder, an MMD .pmx, a rigged .fbx, or a .zip. Her expressions are mapped, her licence read, and her personality is a text file you edit.</p>
+          <p>She walks over, sits on your windows, points at the file you asked for, and swats at your pointer.</p>
+        </div>
+        <figure><img src="../characters.png" width="2120" height="1428" loading="lazy" alt="The character picker with five bundled characters, beside Mika, a Live2D character, saying hello."><figcaption>The character picker, and Mika.</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="safety">
+    <div class="wrap">
+      <h2>An agent you can leave on.</h2>
+      <p class="sub">The rules live in the code that presses the keys, not in a prompt a model could talk its way around.</p>
+      <ul class="checks">
+        <li><b>Read-backs before anything goes out.</b> Messages, posts, purchases, deletions: she says what she's about to do and waits for your yes.</li>
+        <li><b>Keys only reach the app she means.</b> If anything else comes to the front, the helper refuses and she stops.</li>
+        <li><b>She checks before she types.</b> The chat is confirmed from the window before a word goes in; the box is read back before Return.</li>
+        <li><b>Off-limits apps.</b> Password managers, Keychain, System Settings and terminals are never driven. Secrets are never typed.</li>
+        <li><b>Skills can't skip the rules.</b> A skill that could send without a yes and a read-back doesn't load.</li>
+        <li><b>Local first.</b> With Ollama, Whisper and Kokoro, nothing leaves your machine.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="alt" id="skills">
+    <div class="wrap">
+      <div class="row">
+        <div class="text">
+          <h2>Teach her a new app in one file.</h2>
+          <p>A skill is a small JSON recipe: the app, the phrases that trigger it, and the steps. Drop it in your skills folder and she can do it by voice, the Claude agent gets it as a tool, and plans can use it as a step.</p>
+          <p>Bundled: WhatsApp message, Telegram message, Notes new note. <a href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/docs/SKILLS.md">Write your own →</a></p>
+        </div>
+<pre class="code" aria-label="Example skill.json for a new note in Apple Notes">{
+  <span class="k">"name"</span>: <span class="s">"notes-new-note"</span>,
+  <span class="k">"app"</span>: { <span class="k">"name"</span>: <span class="s">"Notes"</span>, <span class="k">"bundleId"</span>: <span class="s">"com.apple.Notes"</span> },
+  <span class="k">"slots"</span>: [{ <span class="k">"name"</span>: <span class="s">"text"</span> }],
+  <span class="k">"triggers"</span>: [
+    <span class="s">"(make|create) a [new] note [saying] {text}"</span>
+  ],
+  <span class="k">"steps"</span>: [
+    { <span class="k">"do"</span>: <span class="s">"launch"</span> },
+    { <span class="k">"do"</span>: <span class="s">"menu"</span>, <span class="k">"path"</span>: [<span class="s">"File"</span>, <span class="s">"New Note"</span>] },
+    { <span class="k">"do"</span>: <span class="s">"paste"</span>, <span class="k">"text"</span>: <span class="s">"{text}"</span> },
+    { <span class="k">"do"</span>: <span class="s">"readBack"</span>, <span class="k">"text"</span>: <span class="s">"{text}"</span> }
+  ],
+  <span class="k">"done"</span>: <span class="s">"Added it to Notes."</span>
+}</pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <h2>How it compares</h2>
+      <p class="sub">An honest look. Each of these is good at something different.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">Deskmate</th><th scope="col">Terminal and chat agents<br>(OpenClaw, Hermes)</th><th scope="col">Companion apps and desktop pets</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Lives</th><td class="us">on your desktop, as a character</td><td>a terminal, or a chat app you message</td><td>a phone app, a chat window, or a pet on screen</td></tr>
+            <tr><th scope="row">Does things</th><td class="us">native app control, Chrome, Claude Code, plans</td><td>shell, files, browser, many integrations</td><td>mostly no</td></tr>
+            <tr><th scope="row">Extending it</th><td class="us">JSON skills, characters</td><td>large plugin and skill ecosystems</td><td>closed</td></tr>
+            <tr><th scope="row">Asks before sending</th><td class="us">built into the hands</td><td>depends on the setup</td><td>n/a</td></tr>
+            <tr><th scope="row">Fully local</th><td class="us">yes</td><td>yes, with a local model</td><td>usually cloud</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">OpenClaw and Hermes are further along as general agents, with far more integrations and server use; if you live in a terminal, use them. Deskmate is for the desktop you sit at: an agent with a face, a voice, and physical cues, working through the real UI of the apps you already use.</p>
+    </div>
+  </section>
+
+  <section class="alt" id="install">
+    <div class="wrap">
+      <h2>Up and running in five minutes</h2>
+      <p class="sub">macOS is the full experience. App control on Windows is experimental; on Linux she talks, plans, reminds and runs Claude Code.</p>
+      <ol class="steps">
+        <li><b>Download</b> the latest release for your OS and open it. She appears in the corner.</li>
+        <li><b>Give her a brain</b> in the setup window: a local Ollama model, an Anthropic key for the full agent, or a free Gemini key.</li>
+        <li><b>Let her act:</b> allow Screen Recording and Accessibility when she asks.</li>
+        <li><b>Ask her something.</b> "Remind me in 20 minutes to stretch." "Make a plan to clean up my downloads."</li>
+      </ol>
+      <div class="pills" aria-label="Runs with">
+        <span class="pill">Live2D</span><span class="pill">VRM</span><span class="pill">MMD</span><span class="pill">Ollama</span><span class="pill">Claude</span><span class="pill">Gemini</span><span class="pill">Claude Code</span><span class="pill">Whisper</span><span class="pill">Kokoro</span><span class="pill">Telegram</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="cta-band">
+    <div class="wrap">
+      <h2>Put someone on your desk.</h2>
+      <p class="sub" style="margin: 0 auto 28px">Open source under the MIT licence. Skills, characters and Windows testers welcome.</p>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest">Download Deskmate</a>
+        <a class="btn ghost" href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/CONTRIBUTING.md">Contribute</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>MIT © 2026 Muhammad Murtuza Hussain</span>
+    <span><a href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/README.md#privacy">Privacy</a> · <a href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/CHANGELOG.md">Changelog</a></span>
+    <span>Characters: VRoid Project samples (CC0) and Live2D's Haru (Free Material License).</span>
+  </div>
+</footer>
+</body>
+</html>
