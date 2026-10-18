@@ -14,6 +14,7 @@ import { Memory } from '../src/main/memory.ts'
 import { describeHits, ftsQuery, PastIndex } from '../src/main/past.ts'
 import { describeGuide, findGuide, guideIndex, guidePath, loadGuides, parseGuide, parseYaml, scriptsHash, slug, splitFrontmatter } from '../src/main/skillmd.ts'
 import { loadSkills } from '../src/main/skills.ts'
+import { fastRoute } from '../src/main/fastpath.ts'
 import { buildTools } from '../src/main/tools.ts'
 import { FakeHost } from './evals/fake.ts'
 
@@ -449,4 +450,16 @@ test('the system prompt: rules cached, notes and skills cached, fading facts aft
   assert.equal(r.calls.find((c) => c.name === 'forget')?.ok, false)
   assert.match(readFileSync(host.memFiles.path('user'), 'utf8'), /Ayesha/)
   host.dispose()
+})
+
+test('shortcuts leave "my sister", "my portfolio" and "my usual" to the agent, which has her notes', () => {
+  assert.equal(fastRoute('text my sister that dinner is at 8'), null)
+  assert.equal(fastRoute('tell my boss on slack I am sick'), null)
+  assert.equal(fastRoute('get claude to fix the broken contact form on my portfolio'), null)
+  assert.equal(fastRoute('put on my usual coding music'), null)
+  // names stay instant, and so does Mum (what most contacts are called)
+  assert.equal(fastRoute("tell sam on discord I'm late")?.tool, 'send_message')
+  assert.equal(fastRoute('text mum on imessage that I will be late')?.input.to, 'mum')
+  assert.equal(fastRoute('ask claude to add a dark mode to deskmate')?.tool, 'claude_code')
+  assert.equal(fastRoute('/claude fix my portfolio')?.tool, 'claude_code', 'a slash command is always a shortcut')
 })

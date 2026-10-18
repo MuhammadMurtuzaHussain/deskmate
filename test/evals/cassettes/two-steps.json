@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T16:50:30.164Z",
+  "recorded": "2026-10-18T17:34:59.038Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_012kkgXAx6urRa6HDX3bwwDb",
+          "id": "toolu_01MgVzkV27UibXA83voznUm4",
           "name": "spotify",
           "input": {
             "action": "pause",
@@ -20,7 +20,7 @@
         },
         {
           "type": "tool_use",
-          "id": "toolu_01U5DVDTRAdqHz2Spz7dC1aC",
+          "id": "toolu_013uQyqrDQ8qYZDPUz8adtph",
           "name": "send_message",
           "input": {
             "app": "slack",
@@ -39,7 +39,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[neutral] Music's paused and Sam's got the message on Slack: \"I'm stepping out for 10 minutes.\" Go on, off you pop."
+          "text": "[smug] Music's paused and Sam knows you're stepping out for 10 minutes. Go on, I'll keep the chair warm."
         }
       ]
     }

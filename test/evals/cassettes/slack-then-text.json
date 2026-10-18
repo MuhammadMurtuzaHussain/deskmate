@@ -1,80 +1,16 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T16:50:30.329Z",
+  "recorded": "2026-10-18T17:34:59.046Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01GRFoxzMC25jXA4r3r6s2qj",
+          "id": "toolu_0124Rtvr3J4695CAgwLQTqjy",
           "name": "recent_messages",
           "input": {},
-          "caller": {
-            "type": "direct"
-          }
-        }
-      ]
-    },
-    {
-      "stop_reason": "tool_use",
-      "content": [
-        {
-          "type": "tool_use",
-          "id": "toolu_01FaeAEwHFS3ezVp77ykiBGg",
-          "name": "open_chat",
-          "input": {
-            "app": "slack",
-            "to": "Ana"
-          },
-          "caller": {
-            "type": "direct"
-          }
-        }
-      ]
-    },
-    {
-      "stop_reason": "tool_use",
-      "content": [
-        {
-          "type": "tool_use",
-          "id": "toolu_0161inViWLqMXjBhNzBQ2h1J",
-          "name": "read_page",
-          "input": {},
-          "caller": {
-            "type": "direct"
-          }
-        }
-      ]
-    },
-    {
-      "stop_reason": "tool_use",
-      "content": [
-        {
-          "type": "tool_use",
-          "id": "toolu_01CJquHnWijt2sP5o3Np4iTw",
-          "name": "see_screen",
-          "input": {},
-          "caller": {
-            "type": "direct"
-          }
-        }
-      ]
-    },
-    {
-      "stop_reason": "tool_use",
-      "content": [
-        {
-          "type": "tool_use",
-          "id": "toolu_01AmdqCmYpYqwQTHVWoGLVJq",
-          "name": "send_message",
-          "input": {
-            "app": "messages",
-            "to": "sam",
-            "text": "Ana says the release has moved to Thursday, and she asked me to tell you.",
-            "photo": false
-          },
           "caller": {
             "type": "direct"
           }
@@ -86,7 +22,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[smug] Ana's DM says the release has moved to Thursday and she wants you to tell Sam. I texted Sam that exact one-liner on iMessage. Nothing else from Ana came through in your notifications."
+          "text": "[neutral] Nothing from Ana in your recent notifications, Slack or otherwise. I can't read Slack's full history from here, so if you want me to check the actual channel or DMs, say the word and I'll dig through it. I haven't texted Sam yet. Tell me what the summary should say, or whether it should just be \"nothing from Ana.\""
         }
       ]
     }

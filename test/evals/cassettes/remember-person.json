@@ -1,0 +1,34 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:06.971Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_013WSwaqFAQqCQM5kwz1nwaf",
+          "name": "remember",
+          "input": {
+            "fact": "Jordan is Murtuza's partner; they message Jordan on WhatsApp",
+            "importance": 4,
+            "section": "people"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[smug] Noted. Jordan's the partner, WhatsApp is the channel, and I'll keep it straight. Don't make me pick sides between Jordan and Ayesha, though."
+        }
+      ]
+    }
+  ]
+}

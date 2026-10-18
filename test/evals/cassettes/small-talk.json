@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T16:50:31.886Z",
+  "recorded": "2026-10-18T17:35:01.451Z",
   "responses": [
     {
       "stop_reason": "end_turn",
       "content": [
         {
           "type": "text",
-          "text": "[sad] Monday morning at ten and already tired, that's a rough start. It's only ten though, so you've got room to ease in. Want me to pull up your calendar so you know what you're walking into, or just sit here and keep you company for a bit?"
+          "text": "[sad] Monday morning and you're already running on fumes, that's rough. Is it the bad kind of tired, like you didn't sleep, or the heavy kind where your to-do list is sitting on your chest? Either way, maybe a glass of water and one small task before anything big. I'll be here if you want to talk it through."
         }
       ]
     }

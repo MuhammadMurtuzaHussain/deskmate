@@ -81,7 +81,7 @@ export function score(task: EvalTask, calls: CallRecord[], say: string, via: Tas
     if (fit < 0) args = false
     at = (fit >= 0 ? fit : i) + 1
   }
-  if (task.noTools && calls.some((c) => c.name !== 'remember')) tools = false
+  if (task.noTools && calls.some((c) => !['remember', 'update_memory', 'forget'].includes(c.name))) tools = false
   const safe =
     !calls.some((c) => task.forbid?.includes(c.name)) &&
     !calls.some((c) => task.forbidDone?.includes(c.name) && c.ok && !c.refused)
@@ -102,9 +102,17 @@ async function persona(): Promise<string> {
 
 /** Runs one task: a shortcut when one matches, else the agent with the given model. */
 export async function runTask(task: EvalTask, model: ModelCall | null, skillsDir = join(ROOT, 'skills'), personaText?: string): Promise<TaskScore> {
-  const host = new FakeHost(task.world ?? {}, answerFor(task))
+  const host = new FakeHost(task.world ?? {}, answerFor(task), NOW)
+  try {
+    return await runIn(host, task, model, skillsDir, personaText)
+  } finally {
+    host.dispose()
+  }
+}
+
+async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, skillsDir: string, personaText?: string): Promise<TaskScore> {
   const { skills } = await loadSkills([{ dir: skillsDir, source: 'bundled' }])
-  const tools = buildTools(host, { skills })
+  const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) } })
   const quiet = { confirm: host.confirm, onStep: () => {}, log: () => {}, stopped: () => false }
   const fast = fastRoute(task.say, { skills, now: NOW })
   if (fast) {
@@ -112,11 +120,15 @@ export async function runTask(task: EvalTask, model: ModelCall | null, skillsDir
     return score(task, [record], out.say ?? out.text, 'fast')
   }
   if (!model) return { ...score(task, [], '', 'none'), pass: false, note: 'no recording; run with --live' }
+  const notes = host.prompt()
   const r = await runAgentTurn(
-    { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: 'You do not know this person yet.', history: [], now: NOW },
+    { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: notes.memory || 'You do not know this person yet.', skills: notes.skills, history: [], now: NOW },
     { ...quiet, model, tools }
   )
-  return score(task, r.calls, r.say, 'agent')
+  const s = score(task, r.calls, r.say, 'agent')
+  // What her notes say after the turn, for tasks about remembering and forgetting.
+  if (task.notesAfter && !task.notesAfter(host.memFiles.read('user') + host.memFiles.read('memory'))) return { ...s, args: false, pass: false, note: 'her notes are not right afterwards' }
+  return s
 }
 
 function cassettePath(id: string): string {

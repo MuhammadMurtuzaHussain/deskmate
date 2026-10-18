@@ -1,0 +1,33 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:09.315Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01Gh3LSkHKRXjyQuhDrDH9Hr",
+          "name": "update_memory",
+          "input": {
+            "old": "Likes lo-fi beats while coding, on Spotify",
+            "new": "Used to like lo-fi beats while coding; now prefers jazz while coding, on Spotify"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[smug] Jazz while coding. Bold move, and I'll allow it if the bugs stay as polite as the saxophone. I've noted the switch, so I won't keep pushing lo-fi playlists at you."
+        }
+      ]
+    }
+  ]
+}

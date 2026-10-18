@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:13.154Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01GnbMeUr3VffdTEUFiJMGJM",
+          "name": "browse",
+          "input": {
+            "goal": "Find the closing time tonight (Monday 19 October 2026) of the Lidl store on Thomas Street (check which city; Lidl Thomas Street is likely in Dublin or Manchester area, pick the one that matches the user's location if clear). Report the opening hours for Monday and the closing time."
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] The Lidl on Thomas Street is listed as open today until 22:00. The lookup didn't say which city that store is in, though, and Thomas Street exists in more than one place, so check the address before you set off."
+        }
+      ]
+    }
+  ]
+}

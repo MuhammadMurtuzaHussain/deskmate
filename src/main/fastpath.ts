@@ -34,6 +34,21 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+/** People named by who they are to the user ("my sister", "my boss"): her notes say who that is, so the agent reads
+ * it. Mum, Mom and Dad are left out: those are what most people's contacts are called. */
+const RELATION = /^(?:my\s+|our\s+)?(?:little |big |older |younger |best )?(?:sister|sis|brother|bro|wife|husband|partner|girlfriend|boyfriend|gf|bf|fiancee?|boss|manager|team ?lead|landlord|flatmate|roommate|housemate|cousin|aunt|auntie|uncle|grandma|grandpa|nan|nana|son|daughter|kids?|babysitter|nanny|doctor|dentist|therapist|coach|tutor|teacher|best friend|friend|colleague|coworker|co-worker|team|client|accountant)$/i
+
+/** A call that names something only her notes can resolve goes to the agent instead. */
+function needsNotes(call: FastCall, text: string): boolean {
+  const to = typeof call.input.to === 'string' ? call.input.to.trim() : ''
+  if (to && RELATION.test(to)) return true
+  // "fix the contact form on my portfolio": which project is "my portfolio" is in her notes.
+  const folder = typeof call.input.folder === 'string' ? call.input.folder.trim() : ''
+  if (call.tool === 'claude_code' && folder && new RegExp(`\\b(?:my|our)\\s+(?:\\w+\\s+)?${folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text)) return true
+  // "my usual", "the usual": a preference.
+  return /\b(?:my|the) usual\b/i.test(text)
+}
+
 /** A moment as the local clock string set_reminder takes. */
 export function localStamp(at: number): string {
   const d = new Date(at)
@@ -78,6 +93,12 @@ function reminderCall(text: string, now: Date): FastCall | null {
 
 /** The shortcut for this message, or null when the agent should read it. */
 export function fastRoute(raw: string, opts: { skills?: Skill[]; now?: Date } = {}): FastCall | null {
+  const call = shortcut(raw, opts)
+  if (!call || raw.trim().startsWith('/')) return call
+  return needsNotes(call, raw) ? null : call
+}
+
+function shortcut(raw: string, opts: { skills?: Skill[]; now?: Date }): FastCall | null {
   const text = raw.replace(/\s+/g, ' ').trim()
   if (!text) return null
   const now = opts.now ?? new Date()

@@ -1,0 +1,65 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:12.321Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01S39t13uZXmBbSH8KDR8oVm",
+          "name": "read_skill",
+          "input": {
+            "name": "weekly-report",
+            "file": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01QHysMxrBQZtEpmXCuDYNpF",
+          "name": "find_file",
+          "input": {
+            "query": "weekly report template"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01AYgWZ4VcYhEXcyed3oispx",
+          "name": "open",
+          "input": {
+            "target": "/Users/me/Documents/Work/Weekly report template.docx"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] I've opened your weekly report template from Documents/Work, ready for this week's numbers. Give me the highlights and I'll help you fill it in."
+        }
+      ]
+    }
+  ]
+}

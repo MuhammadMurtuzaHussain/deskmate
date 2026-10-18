@@ -1,0 +1,33 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:05.758Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01HaA9jPPWK9bC1det3ybkp1",
+          "name": "spotify",
+          "input": {
+            "action": "play_query",
+            "query": "lo-fi beats"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Lo-fi beats are on. Good choice for a Monday morning, and I'll leave you to the code."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:11.410Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01TyctaNA4fjhCzMjDJsxWaF",
+          "name": "search_past",
+          "input": {
+            "query": "downloads PDF",
+            "days_back": null,
+            "kind": "did"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] I moved 12 PDFs to Documents when we tidied the downloads folder on Thursday, October 15. That same plan also deleted 5 old .dmg installers."
+        }
+      ]
+    }
+  ]
+}

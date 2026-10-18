@@ -1,0 +1,34 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:09.562Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01QBE1ydMh63kcFcApCjzkz6",
+          "name": "search_past",
+          "input": {
+            "query": "dentist",
+            "days_back": 7,
+            "kind": "any"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Last Monday, October 12 at 9:00, you asked me to find a dentist near the office that's open on Saturdays. I came back with Bright Smile on Main Street, open Saturdays 9 to 1."
+        }
+      ]
+    }
+  ]
+}

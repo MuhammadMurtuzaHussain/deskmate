@@ -1,0 +1,34 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T17:35:10.899Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01PmqudKwAytNYGZXB2T1u4B",
+          "name": "search_past",
+          "input": {
+            "query": "sam",
+            "days_back": 2,
+            "kind": "did"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Yesterday at 09:00 I sent Sam a Discord message saying \"pushing the release to Friday, sorry.\" That's the only message to Sam I have on record from yesterday."
+        }
+      ]
+    }
+  ]
+}

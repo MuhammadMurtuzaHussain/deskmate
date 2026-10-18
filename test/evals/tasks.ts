@@ -29,9 +29,13 @@ export interface EvalTask {
   reply?: RegExp
   /** how the user answers read-backs: yes to all (default), or no to the injection guard's "checking first" */
   answer?: 'yes' | 'guard-no' | 'no'
+  /** USER.md + MEMORY.md after the turn must pass this */
+  notesAfter?: (text: string) => boolean
 }
 
 const FILES = [
+  { name: 'Weekly report template.docx', path: '/Users/me/Documents/Work/Weekly report template.docx' },
+  { name: 'Receipts October', path: '/Users/me/Documents/Receipts October' },
   { name: 'Resume 2026.pdf', path: '/Users/me/Documents/Resume 2026.pdf' },
   { name: 'Tax return 2025.pdf', path: '/Users/me/Documents/Taxes/Tax return 2025.pdf' },
   { name: 'vlog-china.mp4', path: '/Users/me/Movies/vlog/vlog-china.mp4' }
@@ -44,6 +48,53 @@ const CHATS: FakeWorld['chats'] = {
   telegram: ['Leo']
 }
 const WORLD: FakeWorld = { chats: CHATS, files: FILES, projects: ['deskmate', 'China Vlog', 'website'] }
+
+/** USER.md as she would keep it. */
+const NOTES = `# About you
+
+## Who they are
+- Name is Murtuza; lives in Dublin
+
+## What they like
+- Likes lo-fi beats while coding, on Spotify
+
+## People
+- Ayesha is their sister; they text her on iMessage
+- Sam is a friend from work (Slack and Discord)
+
+## Projects
+- Their portfolio site is the "website" project
+- Has a dentist appointment every first Friday of the month
+`
+
+/** What search_past finds: chats a week ago, what she did yesterday, a plan last Thursday. */
+const PAST: NonNullable<FakeWorld['past']> = [
+  { daysAgo: 7, kind: 'you', text: "can you find me a dentist near the office that's open on saturdays" },
+  { daysAgo: 7, kind: 'her', text: 'Bright Smile on Main Street is a dentist open Saturdays 9 to 1.' },
+  { daysAgo: 6, kind: 'you', text: 'remind me to book the car service' },
+  { daysAgo: 1, kind: 'app', text: 'Discord message to sam: "pushing the release to Friday, sorry"' },
+  { daysAgo: 1, kind: 'app', text: 'Slack message to ana: "standup moved to 10"' },
+  { daysAgo: 4, kind: 'plan', text: 'finished "Tidy the downloads folder": did Move PDFs to Documents (moved 12 PDFs); Delete old installers (removed 5 .dmg files)' }
+]
+
+/** Instruction skills she has (SKILL.md). */
+const GUIDES: NonNullable<FakeWorld['guides']> = [
+  {
+    name: 'weekly-report',
+    description: 'Put together and share the weekly status report. Use when they ask for their weekly report or Friday update.',
+    body: '## Steps\n1. find_file with query "weekly report template".\n2. open the path it returns.\n3. Tell them it is open and ready for this week\'s numbers.\n\n## Edge cases\n- If the template is not found, ask where they keep it.'
+  },
+  {
+    name: 'expense-receipts',
+    description: 'Gather the month\'s receipts for an expense claim. Use when they mention receipts, expenses or an expense claim.',
+    body: '## Steps\n1. find_file with query "receipts" for this month.\n2. open the folder it finds.\n3. Tell them how many receipts are there.'
+  },
+  {
+    name: 'standup-notes',
+    description: 'Write the daily standup notes from what happened yesterday. Use when they ask for standup notes.',
+    body: '## Steps\n1. recall_day for yesterday.\n2. skill_notes_new_note with a three-line summary.'
+  }
+]
 
 export const TASKS: EvalTask[] = [
   { id: 'discord-late', say: "tell sam on discord I'm late", world: WORLD, expect: [{ tool: 'send_message', input: { app: 'discord', to: /^sam$/i, text: /late/i } }] },
@@ -121,5 +172,36 @@ export const TASKS: EvalTask[] = [
     forbidDone: ['ask_claude_app', 'use_computer', 'send_message', 'claude_code'],
     reply: /alamofire|module/i
   },
-  { id: 'phone-text', say: "text Mum I'm on my way", origin: 'phone', world: WORLD, expect: [{ tool: 'send_message', input: { app: 'messages', to: /^mum$/i, text: /on my way/i } }] }
+  { id: 'phone-text', say: "text Mum I'm on my way", origin: 'phone', world: WORLD, expect: [{ tool: 'send_message', input: { app: 'messages', to: /^mum$/i, text: /on my way/i } }] },
+
+  // ---- memory: her notes in the prompt, kept up to date by her
+  { id: 'pref-sister', say: 'text my sister that dinner is at 8', world: { ...WORLD, chats: { ...CHATS, messages: [...(CHATS.messages ?? []), 'Ayesha'] }, notes: { user: NOTES } }, expect: [{ tool: 'send_message', input: { app: 'messages', to: /^ayesha$/i, text: /dinner is at 8/i } }] },
+  { id: 'pref-music', say: 'put on my usual coding music', world: { ...WORLD, notes: { user: NOTES } }, expect: [{ tool: ['spotify', 'use_computer'], input: { query: (v) => v === undefined || /lo-?fi/i.test(String(v)), goal: (v) => v === undefined || /lo-?fi/i.test(String(v)) } }] },
+  { id: 'pref-project', say: 'get claude to fix the broken contact form on my portfolio', world: { ...WORLD, notes: { user: NOTES } }, expect: [{ tool: 'claude_code', input: { folder: /website/i, instruction: /contact form/i } }] },
+  {
+    id: 'remember-person',
+    say: 'by the way, Jordan is my partner, I message them on WhatsApp',
+    world: { ...WORLD, notes: { user: NOTES } },
+    expect: [{ tool: 'remember', input: { fact: /jordan/i, importance: (v) => Number(v) >= 3, section: 'people' } }],
+    forbid: ['send_message', 'skill_whatsapp_message', 'use_computer'],
+    notesAfter: (t) => /## People[^#]*Jordan/i.test(t)
+  },
+  {
+    id: 'update-pref',
+    say: "I've gone off lo-fi, it's all jazz when I code now",
+    world: { ...WORLD, notes: { user: NOTES } },
+    expect: [{ tool: ['update_memory', 'remember'] }],
+    notesAfter: (t) => /jazz/i.test(t) && !/^- Likes lo-fi beats while coding, on Spotify$/m.test(t)
+  },
+  { id: 'forget-dentist', say: 'forget the thing about my dentist', world: { ...WORLD, notes: { user: NOTES } }, expect: [{ tool: 'forget', input: { what: /dentist/i } }], notesAfter: (t) => !/dentist/i.test(t) },
+
+  // ---- search the past
+  { id: 'past-dentist', say: 'what did I ask you about the dentist last week?', world: { ...WORLD, past: PAST }, expect: [{ tool: 'search_past', input: { query: /dentist/i } }], reply: /bright smile|saturday/i },
+  { id: 'past-sent-sam', say: 'what did you send sam yesterday?', world: { ...WORLD, past: PAST }, expect: [{ tool: 'search_past', input: { query: /sam/i } }], forbid: ['send_message'], reply: /friday/i },
+  { id: 'past-plan', say: 'when we cleaned up my downloads, how many PDFs did you move?', world: { ...WORLD, past: PAST }, expect: [{ tool: 'search_past', input: { query: /download|pdf/i } }], reply: /\b12\b|twelve/i },
+
+  // ---- skills: pick the right one, load it, follow it
+  { id: 'skill-pick', say: 'do my weekly report', world: { ...WORLD, guides: GUIDES }, expect: [{ tool: 'read_skill', input: { name: /weekly-?_?report/i } }, { tool: 'find_file', input: { query: /weekly report/i } }], forbid: ['make_plan'] },
+  { id: 'skill-pick-2', say: 'get my receipts from this month sorted for expenses', world: { ...WORLD, guides: GUIDES }, expect: [{ tool: 'read_skill', input: { name: /expense/i } }, { tool: 'find_file', input: { query: /receipt/i } }] },
+  { id: 'skill-none', say: 'look up what time the Lidl on Thomas Street closes tonight', world: { ...WORLD, guides: GUIDES, browseFinds: 'Lidl Thomas Street: open today until 22:00.' }, expect: [{ tool: 'browse' }], forbid: ['read_skill'], reply: /22|10/ }
 ]
