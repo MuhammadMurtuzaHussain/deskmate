@@ -89,6 +89,11 @@ function cleanText(s: string): string {
 /** "the general channel" → "#general", "my dms with sam" → "sam", "@ana" → "ana". */
 export function cleanTarget(raw: string): string {
   let s = raw.trim().replace(/^["“'](.*)["”']$/, '$1')
+  // Her brain sometimes hands over a whole phrase: "go to the Gigabyte's Harem chat and send exactly".
+  s = s
+    .replace(/^(?:please )?(?:go to|open|switch to|jump to|find|head to|get to)\s+/i, '')
+    .replace(/,?\s+(?:and |then )?(?:send|say|tell|write|post|type|message|text)(?: (?:them|him|her|it|this|that))?(?: (?:exactly|this|that))?$/i, '')
+    .replace(/\s+(?:chat|group chat|group|conversation|thread|server)$/i, '')
   s = s.replace(/^(?:the |my |our )/i, '').replace(/^(?:dms?|direct messages?|chat|conversation) with /i, '')
   const channel = /^(.+?) channel$/i.exec(s) ?? /^channel (.+)$/i.exec(s)
   if (channel) s = `#${channel[1].replace(/^#/, '')}`
