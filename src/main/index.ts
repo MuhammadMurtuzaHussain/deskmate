@@ -4098,6 +4098,13 @@ function makeChannel(id: ChannelId): Channel | null {
 /** iMessage's way out: the Messages AppleScript, into the chat the message came from. A file goes from Pictures,
  * where Messages may read it, and is removed a while after. */
 async function sendIMessage(chat: string, text: string, file?: OutFile): Promise<void> {
+  // Testing only: what she would send is written to a file instead (DESKMATE_DEBUG_IMESSAGE_SEND=<path>), so a test
+  // with a fixture chat.db never texts a real number.
+  const debugSend = process.env.DESKMATE_DEBUG_IMESSAGE_SEND?.trim()
+  if (debugSend) {
+    appendFileSync(debugSend, `${JSON.stringify({ chat, text, file: file ? { name: file.name, bytes: file.bytes.byteLength, mime: file.mime } : null })}\n`)
+    return
+  }
   let path = ''
   if (file) {
     const dir = join(app.getPath('pictures'), 'Deskmate', 'sent')
