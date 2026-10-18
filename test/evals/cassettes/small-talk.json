@@ -1,0 +1,16 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:31.886Z",
+  "responses": [
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[sad] Monday morning at ten and already tired, that's a rough start. It's only ten though, so you've got room to ease in. Want me to pull up your calendar so you know what you're walking into, or just sit here and keep you company for a bit?"
+        }
+      ]
+    }
+  ]
+}

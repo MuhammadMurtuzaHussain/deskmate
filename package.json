@@ -11,6 +11,7 @@
     "start": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/*.test.ts",
+    "eval": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/evals/run.ts",
     "build:hands": "node scripts/build-hands.cjs",
     "dist": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder",
     "dist:mac": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder --mac",

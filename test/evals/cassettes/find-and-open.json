@@ -1,0 +1,48 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:22.647Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01YcA9XH6eSpPY6paGJT7Xtu",
+          "name": "find_file",
+          "input": {
+            "query": "resume"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01W7MTyk9DbthQm6Rqa5xBax",
+          "name": "open",
+          "input": {
+            "target": "/Users/me/Documents/Resume 2026.pdf"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Found it and opened it: Resume 2026.pdf in your Documents folder. Looks like it's ready for whatever you're sending it to."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:35.406Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01BkDyN4bihJW8sfWDrQ9rhT",
+          "name": "send_message",
+          "input": {
+            "app": "messages",
+            "to": "Mum",
+            "text": "I'm on my way",
+            "photo": false
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done, I sent \"I'm on my way\" to Mum on Messages. Safe travels."
+        }
+      ]
+    }
+  ]
+}

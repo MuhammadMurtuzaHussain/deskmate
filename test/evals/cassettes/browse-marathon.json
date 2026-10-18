@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:26.652Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01PTBB44ywQ5n6CL7p7RbUjN",
+          "name": "browse",
+          "input": {
+            "goal": "Look up the date of the Dublin Marathon in 2026. Today is Monday 2026-10-19. Report the exact date of the 2026 Dublin Marathon, and if it has already passed this year, say so."
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] The Dublin Marathon is on Sunday 25 October 2026, with an 8:45 start. That's six days from today, so if you're running it, you're in the final taper now."
+        }
+      ]
+    }
+  ]
+}

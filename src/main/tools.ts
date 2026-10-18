@@ -179,6 +179,7 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
       name: 'claude_jobs',
       description: 'How the Claude Code jobs are doing (status), or stop the running one (cancel).',
       input_schema: schema({ action: { type: 'string', enum: ['status', 'cancel'] } }),
+      strict: false,
       run: (i, ctx) => host.claudeJobs({ action: i.action === 'cancel' ? 'cancel' : 'status' }, ctx)
     })
   }
@@ -282,12 +283,14 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
     name: 'calendar',
     description: "The user's calendar events: today, tomorrow, or the next one.",
     input_schema: schema({ which: { type: 'string', enum: ['today', 'tomorrow', 'next'] } }),
+    strict: false,
     run: (i, ctx) => host.calendar({ which: (['tomorrow', 'next'].includes(String(i.which)) ? i.which : 'today') as 'today' | 'tomorrow' | 'next' }, ctx)
   })
   add({
     name: 'recall_day',
     description: 'Your log of what you did for the user today or yesterday (messages sent, jobs run, files found).',
     input_schema: schema({ day: { type: 'string', enum: ['today', 'yesterday'] } }),
+    strict: false,
     run: (i, ctx) => host.recallDay({ day: i.day === 'yesterday' ? 'yesterday' : 'today' }, ctx)
   })
   add({
@@ -347,8 +350,18 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
   return tools
 }
 
-/** The tools as the Messages API takes them. */
+/** The API takes at most this many strict tools in one request. */
+export const STRICT_LIMIT = 20
+
+/** The tools as the Messages API takes them: strict where it was asked for and the tool has inputs, in list order,
+ * up to the API's limit (the rest are sent without strict and still validated by their schema's shape). */
 export function apiTools(tools: ToolSpec[]): Anthropic.Beta.BetaTool[] {
-  return tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema, ...(t.strict ? { strict: true } : {}) }))
+  let strict = 0
+  return tools.map((t) => {
+    const hasInputs = Object.keys((t.input_schema.properties ?? {}) as object).length > 0
+    const on = t.strict && hasInputs && strict < STRICT_LIMIT
+    if (on) strict++
+    return { name: t.name, description: t.description, input_schema: t.input_schema, ...(on ? { strict: true } : {}) }
+  })
 }
 

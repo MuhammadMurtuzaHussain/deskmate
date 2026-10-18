@@ -1,0 +1,36 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:22.665Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01ViN7BTkPTKAKBj5hkzarX1",
+          "name": "set_reminder",
+          "input": {
+            "text": "Do your standup notes.",
+            "in_minutes": null,
+            "at": "2026-10-20T09:00",
+            "timer": false,
+            "repeat": "weekdays"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Done. You'll get a reminder every weekday at 9:00 to do your standup notes, starting tomorrow, Tuesday the 20th, since it's already past nine today."
+        }
+      ]
+    }
+  ]
+}

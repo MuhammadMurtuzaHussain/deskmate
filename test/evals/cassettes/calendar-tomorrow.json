@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:28.146Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01NJb35LTT1zPN9TKa43q2gP",
+          "name": "calendar",
+          "input": {
+            "which": "tomorrow"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Tomorrow you've got a dentist appointment at 10:00 and a design review at 14:30. Maybe don't schedule anything fun before the dentist, unless you enjoy being talked at with a drill in your mouth."
+        }
+      ]
+    }
+  ]
+}

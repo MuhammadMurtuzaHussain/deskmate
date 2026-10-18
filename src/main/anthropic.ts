@@ -19,12 +19,13 @@ function takesEffort(model: string): boolean {
   return !/claude-(?:3|haiku-4|sonnet-4-5|opus-4-5|opus-4-1|opus-4-0|sonnet-4-0)/.test(model)
 }
 
+export type ClaudeErrorCode = 'auth' | 'rate' | 'overloaded' | 'refusal' | 'bad_request' | 'network' | 'other'
+
 export class ClaudeError extends Error {
-  constructor(
-    message: string,
-    readonly code: 'auth' | 'rate' | 'overloaded' | 'refusal' | 'bad_request' | 'network' | 'other'
-  ) {
+  readonly code: ClaudeErrorCode
+  constructor(message: string, code: ClaudeErrorCode) {
     super(message)
+    this.code = code
   }
 }
 

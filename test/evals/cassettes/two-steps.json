@@ -1,0 +1,47 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:30.164Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_012kkgXAx6urRa6HDX3bwwDb",
+          "name": "spotify",
+          "input": {
+            "action": "pause",
+            "query": ""
+          },
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01U5DVDTRAdqHz2Spz7dC1aC",
+          "name": "send_message",
+          "input": {
+            "app": "slack",
+            "to": "sam",
+            "text": "I'm stepping out for 10 minutes",
+            "photo": false
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Music's paused and Sam's got the message on Slack: \"I'm stepping out for 10 minutes.\" Go on, off you pop."
+        }
+      ]
+    }
+  ]
+}

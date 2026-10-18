@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:30.502Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01UBeThvdi3P9HrsB1hGHxy9",
+          "name": "make_plan",
+          "input": {
+            "goal": "Clean up my Downloads folder. Look through what is in it, group the files by type (documents, images, installers, archives, and so on), and move each group into a sorted subfolder. Leave anything that looks recent or unclear where it is. At the end, list exactly what was moved and where."
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] The plan is on the card beside me, three steps, waiting for your go. It sorts Downloads by file type, leaves anything recent or unclear alone, and ends with a list of what moved and where. Say the word and I'll start."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:28.595Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Fine, I'll come sit on your window. Don't make it weird, I'm only here for the view."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01YHRnYVGQiJWUtb6QsEgpEZ",
+          "name": "move",
+          "input": {
+            "action": "sit"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] I'm up on the window now, settled in. Monday morning, ten o'clock, so you're allowed to be slow for a bit."
+        }
+      ]
+    }
+  ]
+}

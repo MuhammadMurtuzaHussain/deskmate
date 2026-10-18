@@ -1,0 +1,35 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:22.603Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_013Pqt4YkkNveMC1mgMCBnv9",
+          "name": "send_message",
+          "input": {
+            "app": "slack",
+            "to": "Ana",
+            "text": "The deploy is done",
+            "photo": false
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Done, Ana's been told on Slack that the deploy is done."
+        }
+      ]
+    }
+  ]
+}

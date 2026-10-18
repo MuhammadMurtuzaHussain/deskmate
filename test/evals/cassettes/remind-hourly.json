@@ -1,0 +1,36 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T16:50:22.665Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01SbZwyenFCVu17am8FZPYjh",
+          "name": "set_reminder",
+          "input": {
+            "text": "Drink some water.",
+            "in_minutes": 60,
+            "at": null,
+            "timer": false,
+            "repeat": "hourly"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[smug] Done, hourly water reminders are set, the first one at 11:00. Don't pretend you'll ignore me."
+        }
+      ]
+    }
+  ]
+}
