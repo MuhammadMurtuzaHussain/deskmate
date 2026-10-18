@@ -95,7 +95,7 @@ export interface CharacterConfig {
   renderer?: 'live2d' | 'vrm' | 'mmd' | 'mesh'
   model: string
   expressions: Record<Emotion, string>
-  motions: { idle: string; react: string }
+  motions: { idle: string; react: string; /** Live2D: a motion group that loops while she walks */ walk?: string }
   voice: CharacterVoice
   /** sway: idle body motion amplitude; bounce: impulse strength on taps/replies. Both feed the model's own physics rig. */
   physics?: { sway?: number; bounce?: number; simulate?: boolean }
@@ -114,7 +114,7 @@ export interface CharacterConfig {
   /** 3D: meshes or materials to leave out at load, by name fragment (a rip's broken wings, a prop) */
   hide?: string[]
   /** Live2D: expressions that are really poses (VTube Studio toggles), layered on top of her emotion */
-  poses?: { sit?: string; point?: string; sleep?: string; dance?: string[] }
+  poses?: { sit?: string; point?: string; sleep?: string; dance?: string[]; /** always on (e.g. a model's own watermark-off toggle) */ base?: string[] }
 }
 
 export type BrainMode = 'gemini' | 'ollama' | 'anthropic' | 'demo'

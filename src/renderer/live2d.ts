@@ -75,7 +75,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   async function loadPoses(): Promise<void> {
     if (!model || !character.poses) return
     const settings = model.internalModel.settings as unknown as { url: string; expressions?: { Name: string; File: string }[] }
-    const wanted = new Set([character.poses.sit, character.poses.point, character.poses.sleep, ...(character.poses.dance ?? [])].filter(Boolean) as string[])
+    const wanted = new Set([character.poses.sit, character.poses.point, character.poses.sleep, ...(character.poses.dance ?? []), ...(character.poses.base ?? [])].filter(Boolean) as string[])
     for (const e of settings.expressions ?? []) {
       if (!wanted.has(e.Name)) continue
       try {
@@ -142,7 +142,8 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     const pose = activePose(beats)
     for (const name of poseParams.keys()) {
       const prev = poseWeight.get(name) ?? 0
-      const w = prev + ((name === pose ? 1 : 0) - prev) * Math.min(1, dt * 6)
+      const on = name === pose || (character.poses?.base ?? []).includes(name)
+      const w = prev + ((on ? 1 : 0) - prev) * Math.min(1, dt * 6)
       poseWeight.set(name, w)
       if (w < 0.01) continue
       for (const p of poseParams.get(name) ?? []) {
@@ -302,6 +303,13 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       }
       // Walking, sitting, sleeping or pointing ends a dance.
       if (state.mode !== 'idle') dancing = false
+      // A model with its own walk motion (character.json → motions.walk) loops it as her idle while she walks.
+      const walkGroup = character.motions.walk
+      if (model && walkGroup && hasMotions(walkGroup) && (state.mode === 'walk') !== (body.mode === 'walk')) {
+        const mm = model.internalModel.motionManager as unknown as { groups: { idle: string }; stopAllMotions(): void }
+        mm.groups.idle = state.mode === 'walk' ? walkGroup : character.motions.idle
+        mm.stopAllMotions()
+      }
       body = state
     },
 

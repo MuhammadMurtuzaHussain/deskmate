@@ -29,3 +29,15 @@ src/renderer/public/models/chunli/
 src/renderer/public/models/victoria/test.vrma
 tts-local/.venv/
 tts-local/__pycache__/
+character/2b/
+src/renderer/public/models/2b/
+character/ella/
+src/renderer/public/models/ella/
+character/miku/
+src/renderer/public/models/miku/
+character/zen/
+src/renderer/public/models/zen/
+character/ellen/
+src/renderer/public/models/ellen/
+character/aniya/
+src/renderer/public/models/aniya/
