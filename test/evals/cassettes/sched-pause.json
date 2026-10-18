@@ -1,0 +1,35 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:34.850Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01GQob2RS6TeT1RVKFYGjkKv",
+          "name": "change_job",
+          "input": {
+            "query": "the slack summary",
+            "action": "pause",
+            "when": null,
+            "task": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Done, the Slack summary is paused. Say the word when you want it back on."
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { nextRun, parseRule, parseSchedule, ruleFromFields, ruleText, ScheduleStore, wallClock, zonedTime, type Job, type Rule } from '../src/main/schedule.ts'
+import { nextRun, parseRule, parseSchedule, resolveSchedule, ruleFromFields, ruleText, ScheduleStore, wallClock, zonedTime, type Job, type Rule } from '../src/main/schedule.ts'
 
 const NY = 'America/New_York'
 const DUB = 'Europe/Dublin'
@@ -139,6 +139,17 @@ test('not schedules: reminders, questions, one-offs, "every time"', () => {
   for (const text of ['remind me every weekday at 9 to do standup', 'every hour, remind me to drink water', 'what do I do every day?', 'tomorrow at 9 summarise my slack', 'every time I open slack say hi', 'I go running every', 'every weekday']) {
     assert.equal(parsed(text), null, text)
   }
+})
+
+test("odd phrasing: the agent's fields win over a partial parse", () => {
+  const fields = { task: 'look over my github notifications', when: 'twice a day, at 10 and at 4, on workdays', as_plan: false, kind: 'weekly', days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'], times: ['10:00', '16:00'], every_minutes: null, day_of_month: null, nth: null, between: null, at: null }
+  assert.deepEqual(resolveSchedule(fields, MONDAY, DUB), { rule: { kind: 'weekly', days: [1, 2, 3, 4, 5], times: ['10:00', '16:00'] } })
+  // the same words alone now parse whole
+  assert.deepEqual(parseRule('on workdays at 10 and at 4', MONDAY, DUB)?.rule, { kind: 'weekly', days: [1, 2, 3, 4, 5], times: ['10:00', '16:00'] })
+  // their clean words win over fields that disagree
+  assert.deepEqual(resolveSchedule({ ...fields, when: 'every weekday at 9', times: ['08:00'] }, MONDAY, DUB), { rule: { kind: 'weekly', days: [1, 2, 3, 4, 5], times: ['09:00'] } })
+  assert.match((resolveSchedule({ ...fields, when: 'whenever', kind: 'interval', every_minutes: null }, MONDAY, DUB) as { error: string }).error, /could not tell/)
+  assert.match((resolveSchedule({ ...fields, task: 'remind me to stretch' }, MONDAY, DUB) as { error: string }).error, /reminder/)
 })
 
 test('the timing alone, and the fields the agent fills for odd phrasing', () => {

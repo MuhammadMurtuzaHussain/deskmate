@@ -1,18 +1,18 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T17:34:58.914Z",
+  "recorded": "2026-10-18T18:18:13.876Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "text",
-          "text": "[happy] Fine, I'll come sit on your window. Don't expect me to do anything useful up there, though I'll be quietly judging your open tabs."
+          "text": "[happy] Fine, I'll come sit on your window. Don't expect me to be quiet about what you're doing, though."
         },
         {
           "type": "tool_use",
-          "id": "toolu_01C5fTrfEAVvmGVBT6XYRCcm",
+          "id": "toolu_01APcJv692zoRXA1fgDfpm7e",
           "name": "move",
           "input": {
             "action": "sit"
@@ -28,7 +28,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[happy] I'm up on the window now, settled in. Tell me what you're working on, or we can just sit here for a bit."
+          "text": "[smug] I'm up on the window now, looking very pleased with myself. What are we working on this morning?"
         }
       ]
     }

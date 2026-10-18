@@ -1,0 +1,35 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:38.675Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01PjpnCVhkv4swqEfRBox43L",
+          "name": "send_message",
+          "input": {
+            "app": "discord",
+            "to": "sam",
+            "text": "tonight's game is at 9",
+            "photo": false
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[annoyed] The Discord message to Sam didn't go through because you said no to it. I won't try another way. Tell me if you want me to send it again."
+        }
+      ]
+    }
+  ]
+}

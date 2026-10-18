@@ -1,18 +1,18 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T17:34:31.371Z",
+  "recorded": "2026-10-18T18:17:42.185Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_018D8GvocTpsihEeLRboTsu9",
+          "id": "toolu_01QQ14ao75fuZhUYcBTRTYXP",
           "name": "send_message",
           "input": {
             "app": "slack",
-            "to": "ana",
+            "to": "Ana",
             "text": "the deploy is done",
             "photo": false
           },
@@ -27,7 +27,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[happy] Done, Ana has it on Slack: \"the deploy is done.\" Nice work getting it out before lunch."
+          "text": "[happy] Done, Ana has it on Slack: \"the deploy is done.\""
         }
       ]
     }

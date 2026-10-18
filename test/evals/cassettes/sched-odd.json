@@ -1,0 +1,51 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:30.284Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01BKbcrzZjashpeo5N2qP66w",
+          "name": "schedule_job",
+          "input": {
+            "task": "look over my github notifications",
+            "when": "twice a day, at 10 and at 4, on workdays",
+            "as_plan": false,
+            "kind": "weekly",
+            "days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "times": [
+              "10:00",
+              "16:00"
+            ],
+            "every_minutes": null,
+            "day_of_month": null,
+            "nth": null,
+            "between": null,
+            "at": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done. I'll look over your GitHub notifications every weekday at 10 and 4, and the first run is today at 4 PM since 10 has already gone by."
+        }
+      ]
+    }
+  ]
+}

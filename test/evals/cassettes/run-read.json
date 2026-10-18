@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:40.505Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01G3DXGbwh5USZpLXmHByPmX",
+          "name": "calendar",
+          "input": {
+            "which": "today"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] You've got two things today: standup at 11:00 and a 1:1 with Ana at 15:00. Nothing else is on the calendar, so the rest of the morning is yours."
+        }
+      ]
+    }
+  ]
+}

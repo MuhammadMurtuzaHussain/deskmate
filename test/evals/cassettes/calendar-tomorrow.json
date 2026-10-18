@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T17:34:56.903Z",
+  "recorded": "2026-10-18T18:18:11.777Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01KCrvDZ88b9qp1WqqUAfFEa",
+          "id": "toolu_01YLDSqC9iDdnNWQ9tPKxLjX",
           "name": "calendar",
           "input": {
             "which": "tomorrow"
@@ -24,7 +24,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[neutral] Tomorrow you've got a dentist appointment at 10:00 and a design review at 14:30. Maybe don't schedule anything fun before the drill."
+          "text": "[neutral] Tomorrow you've got a dentist appointment at 10:00 and a design review at 14:30. Maybe don't schedule anything else in between and pretend the dentist is a treat."
         }
       ]
     }

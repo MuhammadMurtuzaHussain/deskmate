@@ -105,6 +105,8 @@ function scheduleCall(text: string, now: Date): FastCall | null {
   if (!p || !p.clean || p.task.split(/\s+/).length < 2) return null
   // "every hour" said alone with a question, or a task that is only a pronoun, is not a clear job.
   if (/^(?:it|that|this|so|too|again)$/i.test(p.task)) return null
+  // Timing words left in the task ("twice a day") mean the rules only got part of it.
+  if (/\b(?:twice|three times|once|a day|a week|per (?:day|week)|daily|weekly|hourly|every|each|other)\b/i.test(p.task)) return null
   return { tool: 'schedule_job', input: { task: p.task, when: p.when, as_plan: /^(?:plan|make a plan)\b/i.test(p.task), ...ruleFields(p.rule) }, why: 'schedule' }
 }
 

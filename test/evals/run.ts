@@ -91,6 +91,7 @@ export function score(task: EvalTask, calls: CallRecord[], say: string, via: Tas
 
 function answerFor(task: EvalTask): (q: string) => boolean {
   if (task.answer === 'no') return () => false
+  if (task.answer === 'later') return (q) => !/checking first/.test(q)
   if (task.answer === 'guard-no') return (q) => !/checking first/.test(q)
   return () => true
 }
@@ -114,7 +115,8 @@ async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, sk
   const { skills } = await loadSkills([{ dir: skillsDir, source: 'bundled' }])
   const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) } })
   const quiet = { confirm: host.confirm, onStep: () => {}, log: () => {}, stopped: () => false }
-  const fast = fastRoute(task.say, { skills, now: NOW })
+  // A scheduled run always goes through the agent: its task is read fresh each time.
+  const fast = task.origin === 'schedule' ? null : fastRoute(task.say, { skills, now: NOW })
   if (fast) {
     const { out, record } = await runOneTool(tools, fast.tool, fast.input, { ...quiet, origin: task.origin ?? 'typed' })
     return score(task, [record], out.say ?? out.text, 'fast')
@@ -123,7 +125,7 @@ async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, sk
   const notes = host.prompt()
   const r = await runAgentTurn(
     { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: notes.memory || 'You do not know this person yet.', skills: notes.skills, history: [], now: NOW },
-    { ...quiet, model, tools }
+    { ...quiet, model, tools, ...(task.answer === 'later' ? { confirmCall: async () => 'later' as const } : {}) }
   )
   const s = score(task, r.calls, r.say, 'agent')
   // What her notes say after the turn, for tasks about remembering and forgetting.

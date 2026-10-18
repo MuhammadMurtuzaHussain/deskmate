@@ -1,0 +1,35 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:36.940Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01BKfhvmmdhm4brCYfpTKSJw",
+          "name": "change_job",
+          "input": {
+            "query": "slack summary",
+            "action": "change",
+            "when": "every weekday at 8:30",
+            "task": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done. Your Slack summary now runs every weekday at 8:30 AM, and the first run is tomorrow morning since it's already past 8:30 today."
+        }
+      ]
+    }
+  ]
+}

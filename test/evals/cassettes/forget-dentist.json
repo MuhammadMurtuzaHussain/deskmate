@@ -1,17 +1,17 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T17:35:09.319Z",
+  "recorded": "2026-10-18T18:18:25.086Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_019ZrfMVkQ5UgJ3LMWbkYty3",
+          "id": "toolu_01RA4q5Ed4qU46caZzYNPCDh",
           "name": "forget",
           "input": {
-            "what": "dentist"
+            "what": "dentist appointment"
           },
           "caller": {
             "type": "direct"
@@ -24,7 +24,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[neutral] Done, I've forgotten the dentist appointment. Your first-Friday reminder is gone from my notes, so you're on your own for that one now."
+          "text": "[neutral] Done, the dentist note is gone. I won't bring up the first-Friday appointment again."
         }
       ]
     }

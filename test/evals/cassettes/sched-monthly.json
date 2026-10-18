@@ -1,0 +1,44 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T18:18:31.570Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01R67JNDyHTDjQ1Z4F5i6Gmz",
+          "name": "schedule_job",
+          "input": {
+            "task": "gather my receipts into one folder",
+            "when": "on the last day of each month around 5pm",
+            "as_plan": false,
+            "kind": "monthly",
+            "days": [],
+            "times": [
+              "17:00"
+            ],
+            "every_minutes": null,
+            "day_of_month": -1,
+            "nth": null,
+            "between": null,
+            "at": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done. On the last day of every month at 5:00 PM I'll gather your receipts into one folder. The first run is Saturday, October 31 at 5:00 PM."
+        }
+      ]
+    }
+  ]
+}

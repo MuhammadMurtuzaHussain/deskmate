@@ -480,7 +480,7 @@ export function parseRule(raw: string, now = new Date(), tz = localZone()): Pars
 
   // ---- clock times: "at 9", "at 9:30am and 5pm", "at noon"
   const times: number[] = []
-  const at = take(new RegExp(`\\b(?:at|@|by)\\s+(${CLOCK}(?:\\s*(?:,|and|&)\\s*${CLOCK})*|noon|midday|midnight)(?![\\d:])`).exec(s))
+  const at = take(new RegExp(`\\b(?:at|@|by)\\s+(${CLOCK}(?:\\s*(?:,|and|&)\\s*(?:at\\s+)?${CLOCK})*|noon|midday|midnight)(?![\\d:])`).exec(s))
   if (at) {
     if (/^(?:noon|midday)$/.test(at[1])) times.push(720)
     else if (at[1] === 'midnight') times.push(0)
@@ -859,11 +859,24 @@ export interface ScheduleFields {
   at: string | null
 }
 
-/** The rule for schedule_job: their words first, the agent's fields when the words are too odd for the rules. */
+/** Words of a timing phrase the rules did not account for ("twice a day"): a sign the parse is only partial. */
+function leftover(when: string, spans: Span[]): string {
+  let rest = when.toLowerCase()
+  for (const sp of [...spans].sort((a, b) => b.start - a.start)) rest = rest.slice(0, sp.start) + ' ' + rest.slice(sp.end)
+  return rest
+    .replace(/\b(?:at|on|in|and|the|a|an|every|each|of|from|to|starting|beginning|o'?clock|please|then|also|both|local|time)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+/** The rule for schedule_job: their words first, the agent's fields when the words are too odd for the rules (a parse
+ * that leaves words unexplained gives way to valid fields). */
 export function resolveSchedule(a: ScheduleFields, now = new Date(), tz = localZone()): { rule: Rule } | { error: string } {
   if (!a.task.trim()) return { error: 'What should the job do each time? Ask the user.' }
   if (REMINDER_WORDS.test(a.task) && /^(?:remind|nudge|ping|poke|wake)\b/i.test(a.task.trim())) return { error: 'That is a reminder, not a job: use set_reminder with a repeat.' }
-  const rule = parseRule(a.when, now, tz)?.rule ?? ruleFromFields(a, now, tz)
+  const parsed = parseRule(a.when, now, tz)
+  const fields = ruleFromFields(a, now, tz)
+  const rule = parsed && (!leftover(a.when, parsed.spans) || !fields) ? parsed.rule : (fields ?? parsed?.rule ?? null)
   if (!rule) return { error: `I could not tell when "${a.when}" is. Ask the user for a day and a time ("every weekday at 9", "every hour").` }
   if (rule.kind === 'once' && rule.at <= now.getTime()) return { error: `${a.at ?? a.when} has already passed; ask the user.` }
   if (nextRun(rule, now.getTime(), tz) === null) return { error: `"${a.when}" never comes round; ask the user.` }
