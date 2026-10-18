@@ -103,9 +103,10 @@ async function localKokoro(text: string, voice: CharacterVoice): Promise<Audio> 
 const PYTHON_BIN = process.platform === 'win32' ? join('Scripts', 'python.exe') : join('bin', 'python')
 
 /** The venv lives next to the scripts in a checkout, or under the user-data folder for the packaged app (whose
- * Resources must not change: that would break its signature). */
+ * Resources must not change: that would break its signature), or wherever DESKMATE_TTS_VENV says (setup.sh too). */
 export function venvCandidates(root: string, userData?: string): string[] {
-  return [join(root, 'tts-local', '.venv'), ...(userData ? [join(userData, 'tts-local', '.venv')] : [])]
+  const own = process.env.DESKMATE_TTS_VENV?.trim()
+  return [...(own ? [own] : []), join(root, 'tts-local', '.venv'), ...(userData ? [join(userData, 'tts-local', '.venv')] : [])]
 }
 
 /** The Kokoro venv that is set up, or null. */

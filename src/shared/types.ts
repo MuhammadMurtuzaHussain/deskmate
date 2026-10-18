@@ -580,7 +580,8 @@ export interface DeskmateApi {
   chooseVoice?(choice: 'local' | 'system'): Promise<OnboardState>
   tryRequest?(text: string): Promise<Reply>
   onboardDone?(): Promise<void>
-  restartApp?(): Promise<void>
+  /** relaunch the app; with a tour step, the tour opens again there */
+  restartApp?(step?: string): Promise<void>
   onOnboardChanged?(cb: () => void): void
   /** Setup → Characters */
   listCharacters?(): Promise<CharacterCard[]>

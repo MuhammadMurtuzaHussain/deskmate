@@ -120,6 +120,9 @@ export function setupError(lines: string[]): string {
   const text = lines.join('\n')
   if (/need Python 3\.10/.test(text)) return 'Kokoro needs Python 3.10–3.12. Install it with Homebrew (brew install python@3.12) or uv, then press Install again.'
   if (/No space left/i.test(text)) return 'The disk is full: Kokoro and Whisper need about 2 GB.'
+  // espeak-ng (Kokoro's fallback for unknown words) cuts its data path at about 160 characters and then looks in a
+  // folder that only existed where it was built: a very long user-data path (a long user name) does this.
+  if (/espeak-ng-data\/phontab/.test(text)) return "Kokoro's espeak-ng could not open its data: the voice folder's path is too long for it (over about 160 characters). Set DESKMATE_TTS_VENV to a shorter folder and run tts-local/setup.sh, or keep the system voice."
   if (/Could not find a version|No matching distribution|Temporary failure|Connection|timed out/i.test(text)) return 'The download failed: check the internet connection and press Install again.'
   const last = lines.filter((l) => l.trim()).at(-1)
   return `The install stopped${last ? `: ${last.slice(0, 200)}` : '.'}`

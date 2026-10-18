@@ -1202,10 +1202,10 @@ function showStep(i: number): void {
   window.scrollTo(0, 0)
 }
 
-function startTour(): void {
+function startTour(at = 0): void {
   tourOn = true
   document.body.classList.add('tour')
-  showStep(0)
+  showStep(at)
 }
 function endTour(): void {
   tourOn = false
@@ -1214,7 +1214,7 @@ function endTour(): void {
   $<HTMLElement>('title').textContent = 'Set up Deskmate'
   $<HTMLElement>('subtitle').textContent = "Everything she can do, in one place. Come back any time: menu-bar icon → Setup…"
 }
-;(window as unknown as { startTour: () => void }).startTour = startTour
+;(window as unknown as { startTour: () => void }).startTour = () => startTour()
 
 $<HTMLButtonElement>('tour-back').addEventListener('click', () => showStep(tourAt - 1))
 $<HTMLButtonElement>('tour-next').addEventListener('click', async () => {
@@ -1282,8 +1282,12 @@ function renderPerms(rows: OnboardPermRow[]): void {
 
 // ---- her voice: install Kokoro here (tts-local/setup.sh with a progress bar), or keep the system voice
 
+let wasInstalling = false
 function renderKokoro(o: OnboardState): void {
   const k = o.kokoro
+  // the voice chip above comes from the full state: ask again once an install ends
+  if (wasInstalling && !k.installing) void refresh()
+  wasInstalling = k.installing
   const box = $<HTMLDivElement>('kokoro')
   box.classList.toggle('hidden', o.platform === 'win32')
   const install = $<HTMLButtonElement>('kokoro-install')
@@ -1310,7 +1314,7 @@ function renderKokoro(o: OnboardState): void {
 $<HTMLButtonElement>('kokoro-install').addEventListener('click', () => void api.installKokoro?.().then(refreshOnboard))
 $<HTMLButtonElement>('kokoro-use').addEventListener('click', async () => applyOnboard((await api.chooseVoice?.('local')) ?? null))
 $<HTMLButtonElement>('voice-system').addEventListener('click', async () => applyOnboard((await api.chooseVoice?.('system')) ?? null))
-$<HTMLButtonElement>('restart-now').addEventListener('click', () => void api.restartApp?.())
+$<HTMLButtonElement>('restart-now').addEventListener('click', () => void api.restartApp?.(tourOn ? steps[Math.min(tourAt + 1, steps.length - 1)]?.id : undefined))
 
 // ---- try me: three examples and a box; her answer shows here (and she says it out loud)
 
@@ -1385,5 +1389,8 @@ setInterval(() => {
   if (permsShown || onboard?.kokoro.installing) void refreshOnboard()
 }, 3000)
 
-if (new URLSearchParams(location.search).get('tour') === '1') startTour()
-else void refreshOnboard()
+{
+  const q = new URLSearchParams(location.search)
+  if (q.get('tour') === '1') startTour(Math.max(0, tourSteps().findIndex((t) => t.id === q.get('step'))))
+  else void refreshOnboard()
+}

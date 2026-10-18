@@ -5033,7 +5033,7 @@ async function channelAction(id: ChannelId, action: ChannelAction, data: Record<
 let setupWin: BrowserWindow | null = null
 let setupStartMode: string = brain.mode
 
-function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety' | 'tour'): void {
+function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety' | 'tour', step?: string): void {
   if (setupWin && !setupWin.isDestroyed()) {
     setupWin.show()
     setupWin.focus()
@@ -5066,7 +5066,7 @@ function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety' | 'tou
     setupWin = null
     finishSetup()
   })
-  loadPage(setupWin, 'setup', section === 'tour' ? { tour: '1' } : undefined)
+  loadPage(setupWin, 'setup', section === 'tour' ? { tour: '1', ...(step ? { step } : {}) } : undefined)
   if (section && section !== 'tour') setupWin.webContents.once('did-finish-load', () => void setupWin?.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`))
 }
 
@@ -5245,7 +5245,7 @@ async function installKokoro(): Promise<void> {
     onboardChanged()
     return
   }
-  const venv = app.isPackaged ? join(USER_DATA, 'tts-local', '.venv') : join(ROOT, 'tts-local', '.venv')
+  const venv = process.env.DESKMATE_TTS_VENV?.trim() || (app.isPackaged ? join(USER_DATA, 'tts-local', '.venv') : join(ROOT, 'tts-local', '.venv'))
   mkdirSync(dirname(venv), { recursive: true })
   Object.assign(kokoro, { installing: true, step: 0, of: 4, line: 'Starting…', error: undefined })
   onboardChanged()
@@ -5325,7 +5325,9 @@ ipcMain.handle('onboard:done', () => {
   settings.set({ onboarded: true, setupDone: true })
   console.log('[setup] tour finished')
 })
-ipcMain.handle('onboard:restart', () => {
+ipcMain.handle('onboard:restart', (_event, step?: string) => {
+  // back in the tour after the relaunch, at the step after the voice
+  if (typeof step === 'string' && /^[a-z]{2,12}$/.test(step)) settings.set({ tourResume: step })
   app.relaunch()
   app.quit()
 })
@@ -5508,7 +5510,11 @@ app.whenReady().then(async () => {
   })
   // First run: the tour (brain, character, voice, permissions, try me). It does not come back once closed; the tray
   // has "Welcome tour…". A checkout with a brain in .env skips it, as before.
-  if (!settings.get().setupDone && (brain.mode === 'demo' || app.isPackaged)) openSetup('tour')
+  const resume = settings.get().tourResume
+  if (resume) {
+    settings.set({ tourResume: undefined })
+    openSetup('tour', resume)
+  } else if (!settings.get().setupDone && (brain.mode === 'demo' || app.isPackaged)) openSetup('tour')
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
   void startUpdates()

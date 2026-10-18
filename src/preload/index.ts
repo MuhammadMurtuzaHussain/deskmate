@@ -92,7 +92,7 @@ const api: DeskmateApi = {
   chooseVoice: (choice) => ipcRenderer.invoke('onboard:voice', choice),
   tryRequest: (text) => ipcRenderer.invoke('onboard:try', text),
   onboardDone: () => ipcRenderer.invoke('onboard:done'),
-  restartApp: () => ipcRenderer.invoke('onboard:restart'),
+  restartApp: (step) => ipcRenderer.invoke('onboard:restart', step),
   onOnboardChanged: (cb) => {
     ipcRenderer.on('onboard:changed', () => cb())
   }

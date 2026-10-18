@@ -79,6 +79,7 @@ test('setup.sh progress lines and errors', () => {
   assert.match(setupError(['setup.sh: [1/4] looking for Python 3.10–3.12', 'setup.sh: need Python 3.10–3.12 on PATH (brew install python@3.12)']), /brew install python@3\.12/)
   assert.match(setupError(['ERROR: Could not find a version that satisfies the requirement torch']), /download failed/)
   assert.match(setupError(['OSError: [Errno 28] No space left on device']), /disk is full/)
+  assert.match(setupError(["Error processing file '/Users/runner/work/espeakng-loader/espeakng-loader/espeak-ng/_dynamic/share/espeak-ng-data/phontab': No such file or directory."]), /path is too long/)
   assert.equal(setupError(['boom', '']), 'The install stopped: boom')
   assert.equal(setupError([]), 'The install stopped.')
 })

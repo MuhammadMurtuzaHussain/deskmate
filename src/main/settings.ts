@@ -40,6 +40,8 @@ export interface SettingsData {
   voice?: 'local' | 'system'
   /** the first-run tour was finished (it can be run again from the tray) */
   onboarded?: boolean
+  /** "Restart now" in the tour: open it again at this step after the relaunch, once */
+  tourResume?: string
   /** newest release the "update available" status line was already shown for, so it is said once per version */
   updateNotified?: string
   /** what she tells you about on her own (Setup → "What she tells you about"); missing fields take the defaults */
