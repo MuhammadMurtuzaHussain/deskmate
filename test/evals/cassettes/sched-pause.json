@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:34.850Z",
+  "recorded": "2026-10-18T19:09:34.180Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01GQob2RS6TeT1RVKFYGjkKv",
+          "id": "toolu_01GzeSgHEHwH8pcezY1k7Wkx",
           "name": "change_job",
           "input": {
             "query": "the slack summary",

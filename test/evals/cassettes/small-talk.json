@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:17.039Z",
+  "recorded": "2026-10-18T19:09:13.420Z",
   "responses": [
     {
       "stop_reason": "end_turn",
       "content": [
         {
           "type": "text",
-          "text": "[sad] Monday at ten in the morning and already tired, that's rough. Is it a bad night's sleep or just the week ahead of you? Tell me which and I'll either sympathise properly or start bossing you about coffee."
+          "text": "[sad] Monday at ten in the morning and already tired, that's rough. Did you sleep badly, or is it just the week hitting you early? Coffee's a fair answer, but I'm not your doctor."
         }
       ]
     }

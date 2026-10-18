@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:25.086Z",
+  "recorded": "2026-10-18T19:09:25.785Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01RA4q5Ed4qU46caZzYNPCDh",
+          "id": "toolu_01ECGYVjq9RGwWBxu9FFvNgm",
           "name": "forget",
           "input": {
             "what": "dentist appointment"
@@ -24,7 +24,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[neutral] Done, the dentist note is gone. I won't bring up the first-Friday appointment again."
+          "text": "[neutral] Done, the dentist note is gone from my notes. Hope you're not ditching the appointment itself, mind."
         }
       ]
     }

@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:14.624Z",
+  "recorded": "2026-10-18T19:09:10.582Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01ShqYg2D5gzmRADEEMeCGGY",
+          "id": "toolu_0194nRjEV6Q5VjXDhUehWfpE",
           "name": "spotify",
           "input": {
             "action": "pause",
@@ -20,7 +20,7 @@
         },
         {
           "type": "tool_use",
-          "id": "toolu_015h1sFEKRr5mXonVh3RwjFS",
+          "id": "toolu_01Up2RUhckg9MRrtNKwFwGH9",
           "name": "send_message",
           "input": {
             "app": "slack",
@@ -39,7 +39,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[smug] Music's paused and Sam knows you're stepping out for 10 minutes. Try not to come back with a snack and a 40-minute detour."
+          "text": "[smug] Music's paused and Sam knows you're stepping out for 10 minutes. Don't make me wait for you."
         }
       ]
     }

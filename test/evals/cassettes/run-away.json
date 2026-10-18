@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:38.882Z",
+  "recorded": "2026-10-18T19:09:36.317Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01BLgWVCiwLmGQktVzf4S7Wi",
+          "id": "toolu_01UWvhZT1gzN38o8WBJ5EhZf",
           "name": "calendar",
           "input": {
             "which": "tomorrow"
@@ -24,7 +24,7 @@
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01QjnRxsrfwJh8yLFDLa2xtg",
+          "id": "toolu_01WX1MhhzqYDaN6hVpcSHiCk",
           "name": "send_message",
           "input": {
             "app": "messages",
@@ -43,7 +43,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[neutral] Tomorrow you've got a 10:00 dentist and a 14:30 design review. I haven't texted Mum yet, because you're away and the message needs your yes first. It's waiting for you with: \"Tomorrow I have: 10:00 Dentist; 14:30 Design review.\""
+          "text": "[neutral] Tomorrow you have a 10:00 dentist and a 14:30 design review. I haven't texted Mum yet, because it's waiting for your yes since you're away. The message reads: \"Tomorrow I have: 10:00 Dentist; 14:30 Design review.\""
         }
       ]
     }

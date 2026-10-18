@@ -1,18 +1,18 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:13.876Z",
+  "recorded": "2026-10-18T19:09:09.741Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "text",
-          "text": "[happy] Fine, I'll come sit on your window. Don't expect me to be quiet about what you're doing, though."
+          "text": "[happy] Sure, I'll come sit on your window. Don't expect me to stay quiet the whole time, though."
         },
         {
           "type": "tool_use",
-          "id": "toolu_01APcJv692zoRXA1fgDfpm7e",
+          "id": "toolu_01DiiSFPV2rHyddbeMongZBK",
           "name": "move",
           "input": {
             "action": "sit"
@@ -28,7 +28,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[smug] I'm up on the window now, looking very pleased with myself. What are we working on this morning?"
+          "text": "[happy] I'm up on the window now, settled in. Monday morning, so go easy on yourself today."
         }
       ]
     }

@@ -1,19 +1,19 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:18:36.940Z",
+  "recorded": "2026-10-18T19:09:35.248Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_01BKfhvmmdhm4brCYfpTKSJw",
+          "id": "toolu_018L66wXmyMeS98Wu8pViBkz",
           "name": "change_job",
           "input": {
             "query": "slack summary",
             "action": "change",
-            "when": "every weekday at 8:30",
+            "when": "every day at 8:30",
             "task": null
           },
           "caller": {
@@ -27,7 +27,7 @@
       "content": [
         {
           "type": "text",
-          "text": "[happy] Done. Your Slack summary now runs every weekday at 8:30 AM, and the first run is tomorrow morning since it's already past 8:30 today."
+          "text": "[annoyed] Done, but I guessed the frequency. I set it to every day at 8:30 AM, and I shouldn't have assumed that. If it used to run on weekdays, say so and I'll switch it back. The first run is tomorrow at 8:30."
         }
       ]
     }

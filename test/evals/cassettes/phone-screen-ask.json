@@ -1,0 +1,41 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:09:17.949Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01EHbH9neXuM1BdWgGs6qoCh",
+          "name": "see_screen",
+          "input": {},
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01Qiryjh5Df9n2dWPdnScB6V",
+          "name": "claude_jobs",
+          "input": {
+            "action": "status"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Nope, it's finished. The terminal shows \"npm run build\" completed in 41 seconds with no errors. Nothing is still running."
+        }
+      ]
+    }
+  ]
+}

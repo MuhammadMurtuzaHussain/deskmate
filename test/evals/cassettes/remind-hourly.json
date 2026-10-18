@@ -1,14 +1,14 @@
 {
   "model": "claude-haiku-5-5",
   "effort": "low",
-  "recorded": "2026-10-18T18:17:42.259Z",
+  "recorded": "2026-10-18T19:09:03.932Z",
   "responses": [
     {
       "stop_reason": "tool_use",
       "content": [
         {
           "type": "tool_use",
-          "id": "toolu_019uBGLcqsQ8dBbjM3tWdKjs",
+          "id": "toolu_01QL5zsQeRTJYYrMM6M41uap",
           "name": "set_reminder",
           "input": {
             "text": "Drink some water.",

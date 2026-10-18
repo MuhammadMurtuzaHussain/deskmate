@@ -113,10 +113,12 @@ export async function runTask(task: EvalTask, model: ModelCall | null, skillsDir
 
 async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, skillsDir: string, personaText?: string): Promise<TaskScore> {
   const { skills } = await loadSkills([{ dir: skillsDir, source: 'bundled' }])
-  const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) } })
+  // A message from a chat app on the phone: send_to_me is in the list, as it is in the app.
+  const channel = task.origin === 'phone'
+  const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) }, has: { channel } })
   const quiet = { confirm: host.confirm, onStep: () => {}, log: () => {}, stopped: () => false }
   // A scheduled run always goes through the agent: its task is read fresh each time.
-  const fast = task.origin === 'schedule' ? null : fastRoute(task.say, { skills, now: NOW })
+  const fast = task.origin === 'schedule' ? null : fastRoute(task.say, { skills, now: NOW, channel })
   if (fast) {
     const { out, record } = await runOneTool(tools, fast.tool, fast.input, { ...quiet, origin: task.origin ?? 'typed' })
     return score(task, [record], out.say ?? out.text, 'fast')
@@ -124,7 +126,7 @@ async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, sk
   if (!model) return { ...score(task, [], '', 'none'), pass: false, note: 'no recording; run with --live' }
   const notes = host.prompt()
   const r = await runAgentTurn(
-    { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: notes.memory || 'You do not know this person yet.', skills: notes.skills, history: [], now: NOW },
+    { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: notes.memory || 'You do not know this person yet.', skills: notes.skills, history: [], now: NOW, channel: channel ? (task.channel ?? 'Telegram') : undefined },
     { ...quiet, model, tools, ...(task.answer === 'later' ? { confirmCall: async () => 'later' as const } : {}) }
   )
   const s = score(task, r.calls, r.say, 'agent')
