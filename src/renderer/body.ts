@@ -160,8 +160,8 @@ export function yawnPose(base: Pose, k: number): Pose {
     spine: v(base.spine.x - 0.04, base.spine.y, base.spine.z),
     neck: v(-0.08 * tip, base.neck.y, 0.04),
     head: v(-0.16 * tip, base.head.y, 0.08),
-    armR: { swing: -1.15, out: 0.25, raise: 0.35 },
-    elbowR: 2.1
+    armR: { swing: -0.8, out: 0, raise: -0.3 },
+    elbowR: 2.3
   }
 }
 

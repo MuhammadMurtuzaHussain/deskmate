@@ -75,6 +75,8 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   // a stretch, yawn or glance in progress (ms timestamps on the model's clock; start is set on the next frame)
   let gesture: (Gesture & { start: number; dur: number }) | null = null
   const GESTURE_MS: Record<Gesture['kind'], number> = { stretch: 2600, yawn: 2800, glance: 1800 }
+  /** mouth and eyes for the gesture, applied after expressions and blinking (which would otherwise undo them) */
+  let gestureFace = { mouth: 0, eyes: 0 }
 
   async function loadPoses(): Promise<void> {
     if (!model || !character.poses) return
@@ -169,6 +171,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
    * vertical offset in pixels.
    */
   function gestureFrame(core: Core, now: number): number {
+    gestureFace = { mouth: 0, eyes: 0 }
     if (!gesture || !model) return 0
     if (gesture.start < 0) gesture.start = now
     const k = (now - gesture.start) / gesture.dur
@@ -178,6 +181,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     }
     const w = gestureWeight(k)
     if (gesture.kind === 'stretch') {
+      gestureFace.eyes = 0.6 * w
       core.addParameterValueById('ParamAngleY', 14 * w)
       core.addParameterValueById('ParamBodyAngleY', 5 * w)
       core.addParameterValueById('ParamBodyAngleZ', Math.sin(k * Math.PI * 2) * 7 * w)
@@ -188,7 +192,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       const open = Math.sin(Math.min(1, k * 1.25) * Math.PI)
       core.addParameterValueById('ParamAngleY', 12 * w)
       core.addParameterValueById('ParamAngleZ', 7 * w)
-      if (fakeMouth === 0) core.setParameterValueById('ParamMouthOpenY', 0.85 * w * open)
+      gestureFace = { mouth: 0.9 * w * open, eyes: 0.7 * w }
       return 0
     }
     const a = avatar.anchors?.()
@@ -217,13 +221,26 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       app.stage.addChild(model)
       avatar.layout()
       void loadPoses()
+      // Last word on mouth and eyes during a yawn or stretch: after the expression and the blink have had theirs.
+      const events = model.internalModel as unknown as { on(event: string, fn: () => void): void }
+      events.on('beforeModelUpdate', () => {
+        if (!model || (gestureFace.mouth <= 0 && gestureFace.eyes <= 0)) return
+        const core = model.internalModel.coreModel as unknown as Core & { getParameterValueById(id: string): number }
+        if (gestureFace.mouth > 0 && fakeMouth === 0) core.setParameterValueById('ParamMouthOpenY', Math.max(core.getParameterValueById('ParamMouthOpenY'), gestureFace.mouth))
+        if (gestureFace.eyes > 0) {
+          for (const id of ['ParamEyeLOpen', 'ParamEyeROpen']) core.setParameterValueById(id, core.getParameterValueById(id) * (1 - gestureFace.eyes))
+        }
+      })
       const manager = model.internalModel.motionManager as unknown as { update: (core: Core, now: number) => boolean }
       const original = manager.update.bind(manager)
       manager.update = (core, now) => {
         const r = original(core, now)
+        // `now` here is the model's clock in seconds; the sway, taps, dances and body all run on performance.now()
+        // milliseconds (taking it for milliseconds had the idle sway and walk bob all but frozen).
+        const ms = performance.now()
         // Runs before physics evaluate, so these offsets excite the model's physics rig.
-        bodyFrame(core, now)
-        const o = swayOffsets(now)
+        bodyFrame(core, ms)
+        const o = swayOffsets(ms)
         core.addParameterValueById('ParamBodyAngleX', o.x)
         core.addParameterValueById('ParamBodyAngleY', o.y)
         core.addParameterValueById('ParamBodyAngleZ', o.z)

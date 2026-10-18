@@ -301,9 +301,11 @@ export class Body {
         if (stale()) return
       }
       this.send({ mode: 'idle' })
-      const [x, y] = win.getPosition()
+      const [x0, y] = win.getPosition()
       const [w, h] = win.getSize()
-      const { workArea } = screen.getDisplayNearestPoint({ x: Math.round(x + w / 2), y: Math.round(y + h / 2) })
+      const { workArea } = screen.getDisplayNearestPoint({ x: Math.round(x0 + w / 2), y: Math.round(y + h / 2) })
+      // A window that left with a Space switch slid off the screen first, and she rode along: land back on it.
+      const x = clamp(x0, workArea.x - w * 0.25, workArea.x + workArea.width - w * 0.75)
       const floor = workArea.y + workArea.height - h + 8
       await this.walkTo(x, floor)
       if (stale() || !opts.home || !this.home) return
@@ -341,7 +343,8 @@ export class Body {
   userMoved(): void {
     this.epoch++
     this.walking?.cancel()
-    if (this.sitting) {
+    // (still 'sit' while she stretches before getting down)
+    if (this.sitting || this.state.mode === 'sit') {
       this.stopSitting()
       this.send({ mode: 'idle' })
     }
