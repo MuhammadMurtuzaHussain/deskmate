@@ -18,6 +18,29 @@ export interface Reminder {
   timer: boolean
   /** a timer's length, for "your 5 minute timer is up" */
   ms?: number
+  /** goes off again: every hour, every day, on weekdays, every week ("remind me every weekday at 9 to …") */
+  repeat?: Repeat
+}
+
+export type Repeat = 'hourly' | 'daily' | 'weekdays' | 'weekly'
+export const REPEATS: Repeat[] = ['hourly', 'daily', 'weekdays', 'weekly']
+
+/** The next time a repeating reminder goes off after `now` (clock time kept across daylight saving). */
+export function nextRepeat(at: number, repeat: Repeat, now: number): number {
+  const d = new Date(at)
+  const step = (): void => {
+    if (repeat === 'hourly') d.setHours(d.getHours() + 1)
+    else if (repeat === 'weekly') d.setDate(d.getDate() + 7)
+    else d.setDate(d.getDate() + 1)
+  }
+  step()
+  for (let i = 0; i < 100_000 && (d.getTime() <= now || (repeat === 'weekdays' && (d.getDay() === 0 || d.getDay() === 6))); i++) step()
+  return d.getTime()
+}
+
+/** "every weekday", "every day", for her lines. */
+export function repeatText(repeat: Repeat): string {
+  return repeat === 'weekdays' ? 'every weekday' : repeat === 'hourly' ? 'every hour' : repeat === 'weekly' ? 'every week' : 'every day'
 }
 
 export type ReminderIntent =
@@ -347,7 +370,9 @@ export function setLine(r: Reminder, now: number): string {
   if (r.timer) return `Timer set: ${formatDuration(r.ms ?? r.at - now)}${/ timer$/.test(r.text) ? '' : `, for ${r.text}`}.`
   // "to call mum", but "about the dentist".
   const about = /^(?:the|a|an|your|his|her|their|our|this|that|those|these)\b/i.test(r.text)
-  return `Okay, I'll remind you ${whenText(r.at, now)}${r.text ? ` ${about ? 'about' : 'to'} ${r.text}` : ''}.`
+  const what = r.text ? ` ${about ? 'about' : 'to'} ${r.text}` : ''
+  if (r.repeat) return `Okay, I'll remind you ${repeatText(r.repeat)}${what}, starting ${whenText(r.at, now)}.`
+  return `Okay, I'll remind you ${whenText(r.at, now)}${what}.`
 }
 
 /** The plain line when it goes off. */
@@ -363,7 +388,9 @@ export function listLine(list: Reminder[], now: number): string {
     const ms = r.at - now
     return ms < 60_000 ? formatDuration(Math.max(1000, Math.round(ms / 1000) * 1000)) : formatDuration(Math.round(ms / 60_000) * 60_000)
   }
-  const items = list.slice(0, 6).map((r) => (r.timer ? `${/ timer$/.test(r.text) ? `a ${r.text}` : `the ${r.text} timer`}, ${left(r)} left` : `${r.text || 'a reminder'} ${whenText(r.at, now)}`))
+  const items = list
+    .slice(0, 6)
+    .map((r) => (r.timer ? `${/ timer$/.test(r.text) ? `a ${r.text}` : `the ${r.text} timer`}, ${left(r)} left` : `${r.text || 'a reminder'} ${whenText(r.at, now)}${r.repeat ? ` (${repeatText(r.repeat)})` : ''}`))
   const more = list.length > 6 ? `, and ${list.length - 6} more` : ''
   const head = list.length === 1 ? 'One' : `${list.length}`
   return `${head}: ${items.join('; ')}${more}.`
@@ -455,6 +482,12 @@ export class ReminderStore {
     const due = this.list().filter((r) => r.at <= now + 250)
     if (due.length) {
       this.items = this.items.filter((r) => !due.includes(r))
+      // A repeating one comes back for its next time.
+      for (const r of due) {
+        if (!r.repeat) continue
+        const at = nextRepeat(r.at, r.repeat, now)
+        this.items.push({ ...r, id: `${r.id.split('~')[0]}~${at.toString(36)}`, at })
+      }
       this.save()
       for (const r of due) {
         try {

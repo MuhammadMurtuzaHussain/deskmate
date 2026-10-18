@@ -107,8 +107,16 @@
       <div class="msg" id="notices-msg"></div>
     </section>
 
+    <section id="mcp" class="hidden">
+      <div class="head"><h2>6 · Tool servers <span class="dim">(MCP, optional)</span></h2><span class="chip" id="mcp-chip">…</span></div>
+      <div class="hint">Servers listed in <b>mcp.json</b>, in the same shape as Claude Desktop's config, give her more tools: your files, GitHub, a database. She uses them with Claude as her brain. What a server answers is read as data, never as instructions, and a tool that can change things asks you first once she has read anything from outside.</div>
+      <div id="mcp-list" class="sub flat"></div>
+      <div class="row"><button id="mcp-open">Edit mcp.json…</button><button id="mcp-reload" class="link">Reload</button></div>
+      <div class="msg" id="mcp-msg"></div>
+    </section>
+
     <section id="characters" class="hidden">
-      <div class="head"><h2>6 · Characters</h2><button id="char-add">Add a character…</button></div>
+      <div class="head"><h2>7 · Characters</h2><button id="char-add">Add a character…</button></div>
       <div class="hint">Click one to switch to her. Add your own: a <b>.vrm</b>, a Live2D model (its <b>.model3.json</b> or the whole folder), a <b>.pmx</b>, a rigged <b>.fbx</b>, or a <b>.zip</b> with one inside.</div>
       <div id="char-grid" class="cards"></div>
       <div class="msg" id="char-msg"></div>

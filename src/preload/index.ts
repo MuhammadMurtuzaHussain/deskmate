@@ -49,6 +49,9 @@ const api: DeskmateApi = {
   remote: (action: RemoteAction) => ipcRenderer.invoke('setup:remote', action),
   setNotices: (patch: Partial<NoticePrefs>) => ipcRenderer.invoke('setup:notices', patch),
   calendarAccess: () => ipcRenderer.invoke('setup:calendar'),
+  mcpToggle: (name, on) => ipcRenderer.invoke('setup:mcp-toggle', name, on),
+  mcpReload: () => ipcRenderer.invoke('setup:mcp-reload'),
+  mcpOpenConfig: () => ipcRenderer.invoke('setup:mcp-open'),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
   },

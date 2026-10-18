@@ -5,6 +5,12 @@ import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
+import { callClaude, ClaudeError, toClaudeError } from './anthropic'
+import { runAgentTurn, runOneTool } from './core'
+import { fastRoute, FILEISH, RE_FIND } from './fastpath'
+import { McpHub } from './mcp'
+import { buildTools, type Origin, type ToolCtx, type ToolOutcome, type ToolSpec, type WorkerHost } from './tools'
+import { untrusted } from './untrusted'
 import { APP_PLAN_SCHEMA, APP_PLAN_SYSTEM, APPS, fromPlan, handsMessage, parseAppRequest, runApp, type AppRequest } from './apps'
 import { ACKNOWLEDGEMENTS, Brain, type Stimulus, type TaskReport } from './brain'
 import { browse } from './browse'
@@ -1164,31 +1170,37 @@ async function startJob(call: ToolCall, project: Project, acknowledged: boolean)
 
 /** Opens a website, a known project folder, a path, or an application by name. */
 async function openThing(raw: string): Promise<Reply> {
+  const r = await openTarget(raw)
+  return sayPlain(r.line, r.ok ? 'neutral' : 'sad')
+}
+
+/** openThing without the line said: what was opened, for her brain or a plan step. */
+async function openTarget(raw: string): Promise<{ ok: boolean; line: string }> {
   const input = raw
     .trim()
     .replace(/^(?:the |my )/i, '')
     .replace(/\s+(?:folder|project|directory|repo|app|website|site)$/i, '')
   if (/^(?:https?:\/\/|www\.)/i.test(input) || /^[\w-]+\.(?:com|org|net|io|dev|app|ai|co|uk|ie|de|fr)(?:\/|$)/i.test(input)) {
     await shell.openExternal(/^https?:/i.test(input) ? input : `https://${input}`)
-    return sayPlain(`Opening ${input}.`)
+    return { ok: true, line: `Opening ${input}.` }
   }
   const project = projects.resolve(input)
   if (project) {
     await shell.openPath(project.path)
-    return sayPlain(`Opening ${project.name}.`)
+    return { ok: true, line: `Opening ${project.name}.` }
   }
   const expanded = input.startsWith('~') ? join(homedir(), input.slice(1)) : input
   if (existsSync(expanded)) {
     await shell.openPath(expanded)
-    return sayPlain(`Opening ${basename(expanded)}.`)
+    return { ok: true, line: `Opening ${basename(expanded)}.` }
   }
-  if (await openApp(input)) return sayPlain(`Opening ${input}.`)
+  if (await openApp(input)) return { ok: true, line: `Opening ${input}.` }
   if (/^[\w-]+$/.test(input)) {
     // Not an app, one word: most likely a site ("open youtube").
     await shell.openExternal(`https://${input.toLowerCase()}.com`)
-    return sayPlain(`Opening ${input.toLowerCase()}.com.`)
+    return { ok: true, line: `Opening ${input.toLowerCase()}.com.` }
   }
-  return sayPlain(`I couldn't find anything called ${input} to open.`, 'sad')
+  return { ok: false, line: `I couldn't find anything called ${input} to open.` }
 }
 
 function openApp(name: string): Promise<boolean> {
@@ -1207,51 +1219,54 @@ function chromeMessage(err: unknown): string {
 
 /** Tab, navigation and page verbs from the spoken-command router: fast, no model involved. */
 async function chromeVerb(input: string): Promise<Reply> {
+  const r = await chromeAct(input)
+  if (r.quiet) {
+    status(r.line)
+    return QUIET
+  }
+  return sayPlain(r.line, r.ok ? 'neutral' : /can't see/.test(r.line) ? 'annoyed' : 'sad')
+}
+
+/** chromeVerb without speaking: `quiet` lines only go to the status row. */
+async function chromeAct(input: string): Promise<{ ok: boolean; line: string; quiet?: boolean }> {
   const colon = input.indexOf(':')
   const verb = colon >= 0 ? input.slice(0, colon) : input
   const arg = colon >= 0 ? input.slice(colon + 1).trim() : ''
+  const quiet = (line: string): { ok: boolean; line: string; quiet: boolean } => ({ ok: true, line, quiet: true })
   try {
     switch (verb) {
       case 'next_tab':
-        status(`tab: ${await chrome.switchTab(1)}`)
-        return QUIET
+        return quiet(`tab: ${await chrome.switchTab(1)}`)
       case 'prev_tab':
-        status(`tab: ${await chrome.switchTab(-1)}`)
-        return QUIET
+        return quiet(`tab: ${await chrome.switchTab(-1)}`)
       case 'close_tab':
         await chrome.closeTab()
-        status('closed the tab')
-        return QUIET
+        return quiet('closed the tab')
       case 'back':
       case 'forward':
       case 'reload':
         await chrome.navigate(verb)
-        return QUIET
+        return quiet(verb)
       case 'scroll_down':
       case 'scroll_up':
         await chrome.scroll(verb === 'scroll_down' ? 'down' : 'up')
-        return QUIET
+        return quiet(verb.replace('_', ' '))
       case 'search':
         await chrome.open(chrome.searchUrl(arg))
-        return sayPlain(`Searching for ${arg}.`)
+        return { ok: true, line: `Searching for ${arg}.` }
       case 'click': {
         const result = await chrome.clickText(arg)
-        if (result === 'missing') return sayPlain(`I can't see anything called "${arg}" to click on this page.`, 'annoyed')
-        status(result)
-        return QUIET
+        if (result === 'missing') return { ok: false, line: `I can't see anything called "${arg}" to click on this page.` }
+        return quiet(result)
       }
-      case 'find': {
-        if (await chrome.find(arg)) {
-          status(`found "${arg}"`)
-          return QUIET
-        }
-        return sayPlain(`"${arg}" isn't on this page.`)
-      }
+      case 'find':
+        if (await chrome.find(arg)) return quiet(`found "${arg}"`)
+        return { ok: false, line: `"${arg}" isn't on this page.` }
       default:
-        return sayPlain(`I don't know how to ${verb} in Chrome.`)
+        return { ok: false, line: `I don't know how to ${verb} in Chrome.` }
     }
   } catch (err) {
-    return sayPlain(chromeMessage(err), 'sad')
+    return { ok: false, line: chromeMessage(err) }
   }
 }
 
@@ -1585,9 +1600,7 @@ const BODY_PHRASES: [RegExp, BodyCommand][] = [
   [/^(?:walk around|wander(?: around)?|go explore|explore|roam(?: around)?)[.!]?$/i, 'wander'],
   [/^(?:stay(?: put| there| here)?|stop (?:walking|wandering)(?: around)?)[.!]?$/i, 'stay']
 ]
-const RE_FIND = /^(?:where(?:'s| is| are| did i (?:put|save|leave))|find|show me(?: where)?|locate|look for|can you find)\s+(?:my|the|that|this|a|an)\s+(.+?)(?:\s+(?:is|are|went|file|folder|document))?(?: on (?:my|this) (?:mac|computer|laptop))?[?.!]*$/i
 
-const FILEISH = /\b(?:file|files|folder|pdf|docx?|document|photo|picture|pic|image|screenshot|resume|cv|invoice|receipt|spreadsheet|slides|presentation|zip|video|recording|download(?:s|ed)?|\.\w{2,4})\b/i
 const FIND_STOP = new Set(['my', 'the', 'a', 'an', 'file', 'files', 'document', 'doc', 'folder', 'that', 'this', 'from', 'with', 'of', 'for', 'and', 'on', 'in', 'mac', 'computer'])
 const EXTENSIONS: Record<string, string[]> = {
   pdf: ['.pdf'],
@@ -1643,7 +1656,7 @@ function findFiles(query: string): Promise<string[]> {
 
 /** "Where's my resume?": find it, show it in Finder, walk over and point at it. */
 /** Finds it, shows it in Finder and points at it; null when nothing matched. */
-async function findAndReveal(what: string): Promise<{ name: string; where: string; more: number } | null> {
+async function findAndReveal(what: string): Promise<{ name: string; where: string; path: string; more: number } | null> {
   status(`looking for ${what}…`)
   const found = await findFiles(what)
   if (!found.length) return null
@@ -1662,7 +1675,7 @@ async function findAndReveal(what: string): Promise<{ name: string; where: strin
   }
   if (rect) void body.pointAt(rect)
   journal.add('find', `${what} → ${file}`)
-  return { name, where, more: found.length - 1 }
+  return { name, where, path: file, more: found.length - 1 }
 }
 
 /** "Where's my resume?": find it, show it in Finder, walk over and point at it. */
@@ -1697,29 +1710,36 @@ function showPlan(): void {
 }
 
 async function makePlan(goal: string): Promise<Reply> {
+  const r = await planFor(goal)
+  return sayPlain(r.line, r.emotion)
+}
+
+/** Makes the plan and shows the card; the line about it is for the caller to say (or for her brain to read). */
+async function planFor(goal: string): Promise<{ ok: boolean; line: string; emotion: Emotion }> {
+  const line = (text: string, emotion: Emotion = 'neutral'): { ok: boolean; line: string; emotion: Emotion } => ({ ok: emotion === 'neutral', line: text, emotion })
   const what = goal.trim()
-  if (!what) return sayPlain('A plan for what?')
-  if (!brain.canThink) return sayPlain('I need a brain to plan with. Pick one in Setup, from my menu.', 'sad')
-  if (planRunning) return sayPlain('I\'m in the middle of a plan. Say "stop the plan" first.', 'annoyed')
+  if (!what) return line('A plan for what?')
+  if (!brain.canThink) return line('I need a brain to plan with. Pick one in Setup, from my menu.', 'sad')
+  if (planRunning) return line('I\'m in the middle of a plan. Say "stop the plan" first.', 'annoyed')
   status('planning…')
   const workers = planWorkers()
   let obj: Record<string, unknown>
   try {
     obj = await brain.plan(plannerSystem(workers, skillsForPlanner(skills)), `Goal: ${what}`, PLAN_SCHEMA)
   } catch (err) {
-    return sayPlain(`I couldn't plan that: ${(err as Error).message.slice(0, 120)}`, 'sad')
+    return line(`I couldn't plan that: ${(err as Error).message.slice(0, 120)}`, 'sad')
   }
   const next = toPlan(what, obj, workers)
-  if (!next) return sayPlain("I couldn't break that into steps. Say it another way?", 'sad')
+  if (!next) return line("I couldn't break that into steps. Say it another way?", 'sad')
   plan = next
   console.log(`[plan] ${next.title}: ${next.steps.map((s) => `${s.worker}: ${s.text}`).join(' | ')}`)
   journal.add('plan', `planned "${next.title}" (${next.steps.length} steps)`)
   showPlan()
   if (PLAN_AUTO) {
     void runPlan()
-    return sayPlain(`On it: ${next.title}.`)
+    return line(`On it: ${next.title}.`)
   }
-  return sayPlain(planSummary(next))
+  return line(planSummary(next))
 }
 
 /** "Change step 3 to …", "add a step …": the planner rewrites the steps not yet done. */
@@ -2185,6 +2205,12 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     const line = await runBodyCommand(move[1], { boo: /boo|seek/i.test(said) })
     return line ? sayPlain(line) : QUIET
   }
+  // With a Claude brain the agent core takes it from here: a shortcut for an unambiguous command, else one tool-use
+  // turn with every worker as a tool. Null means Claude could not be reached; the routing below answers instead.
+  if (useAgentCore()) {
+    const handled = await agentDispatch(text, opts)
+    if (handled) return handled
+  }
   const lookFor = RE_FIND.exec(said)
   if (lookFor && !/\b(?:page|tab|website|site|screen|error|bug|flight|price|cheapest|best|weather)\b/i.test(lookFor[1])) {
     // "where's my …" is about a place on this Mac; "find the …" only when it names a file-like thing.
@@ -2467,6 +2493,8 @@ async function pollBanners(): Promise<void> {
       }
       const line = messageLine(b, prefs.readMessages)
       console.log(`[inbox] ${b.app}: ${line.text.slice(0, 90)}`)
+      recentBanners.push({ at: Date.now(), text: line.text })
+      if (recentBanners.length > 20) recentBanners.shift()
       notices.post({ kind: 'message', key: `message:${b.app}|${b.title}|${b.subtitle}|${b.body}`, text: line.text, brief: line.brief })
     }
   } finally {
@@ -2502,7 +2530,14 @@ async function pollCalendar(): Promise<void> {
 
 /** "What's on my calendar today?", "what's next?": read straight from the calendar. */
 async function calendarAnswer(which: 'today' | 'tomorrow' | 'next'): Promise<Reply> {
-  if (!appHands.available) return sayPlain('I need my hands helper to read your calendar (it comes with the Mac app).', 'sad')
+  const r = await calendarLine(which)
+  return sayPlain(r.line, r.ok ? 'neutral' : 'sad')
+}
+
+/** The calendar for today, tomorrow or the next event, as one line. */
+async function calendarLine(which: 'today' | 'tomorrow' | 'next'): Promise<{ ok: boolean; line: string }> {
+  const line = (text: string, emotion: Emotion = 'neutral'): { ok: boolean; line: string } => ({ ok: emotion !== 'sad', line: text })
+  if (!appHands.available) return line('I need my hands helper to read your calendar (it comes with the Mac app).', 'sad')
   if ((await refreshCalendarAccess()) === 'notDetermined') {
     status('asking macOS for your calendars…')
     await appHands.requestCalendarAccess()
@@ -2510,7 +2545,7 @@ async function calendarAnswer(which: 'today' | 'tomorrow' | 'next'): Promise<Rep
     setupChanged()
   }
   if (calendarAccess !== 'fullAccess') {
-    return sayPlain("I can't see your calendar. Let me in: System Settings → Privacy & Security → Calendars, switch me on, then ask again.", 'sad')
+    return line("I can't see your calendar. Let me in: System Settings → Privacy & Security → Calendars, switch me on, then ask again.", 'sad')
   }
   const now = new Date()
   const startOfDay = new Date(now)
@@ -2526,14 +2561,14 @@ async function calendarAnswer(which: 'today' | 'tomorrow' | 'next'): Promise<Rep
     } else {
       events = (await appHands.calendarEvents(7 * 24 * 60, 0)).filter((e) => !e.allDay && !e.cancelled && e.start > now.getTime())
       const next = events[0]
-      if (!next) return sayPlain('Nothing on your calendar in the next week.')
-      return sayPlain(`Next up: ${next.title || 'an event'} ${whenText(next.start, now.getTime())}.`)
+      if (!next) return line('Nothing on your calendar in the next week.')
+      return line(`Next up: ${next.title || 'an event'} ${whenText(next.start, now.getTime())}.`)
     }
   } catch (err) {
-    return sayPlain(`I couldn't read your calendar: ${(err as Error).message}`, 'sad')
+    return line(`I couldn't read your calendar: ${(err as Error).message}`, 'sad')
   }
   journal.add('calendar', `read the calendar for ${which}`)
-  return sayPlain(agendaLine(events, now.getTime(), which))
+  return line(agendaLine(events, now.getTime(), which))
 }
 
 // Reminders and timers (reminders.ts): kept in reminders.json, fired through notices like an alarm (even in quiet time).
@@ -2643,6 +2678,384 @@ async function remindTool(input: string, said?: string): Promise<Reply> {
       return sayPlain(hits.length > 1 ? `Cancelled all ${hits.length}.` : `Cancelled ${name(hits[0])}.`)
     }
   }
+}
+
+// ---- the agent core: one Claude tool-use loop over every worker (core.ts), with zero-latency shortcuts in front
+// (fastpath.ts) and the MCP servers from <user data>/mcp.json as extra tools. Gemini and Ollama keep the routing above.
+
+/** DESKMATE_AGENT_CORE=0 keeps the older routing even with a Claude brain. */
+const AGENT_CORE = !/^(0|false|no|off)$/i.test(process.env.DESKMATE_AGENT_CORE?.trim() || '')
+const AGENT_ROUNDS = Math.max(2, Number(process.env.DESKMATE_AGENT_ROUNDS) || 10)
+const MCP_CONFIG = join(USER_DATA, 'mcp.json')
+const mcp = new McpHub({
+  configPath: MCP_CONFIG,
+  isEnabled: (name, config) => !config.disabled && !(settings.get().mcpDisabled ?? []).includes(name),
+  journal: (text) => journal.add('mcp', text),
+  log: (line) => console.log(line),
+  version: app.getVersion()
+})
+/** The message banners she saw lately (as Setup lets her read them), for "anything new?". */
+const recentBanners: { at: number; text: string }[] = []
+let agentBusy = false
+
+function confirmFor(policy: 'always' | 'voice' | 'never', ctx: ToolCtx): boolean {
+  return ctx.mustConfirm || policy === 'always' || (policy === 'voice' && ctx.origin === 'voice')
+}
+
+const done = (text: string, say = text): ToolOutcome => ({ ok: true, text, say })
+const failed = (text: string, say = text): ToolOutcome => ({ ok: false, text, say })
+
+/** Her hands need Accessibility for keys; the AppleScript routines (Messages, Spotify) do not. */
+async function handsReady(needsKeys: boolean): Promise<ToolOutcome | null> {
+  if (!appHands.available) return failed(handsMessage(new HandsError('', 'unavailable')))
+  if (needsKeys && !(await checkAppTrust())) {
+    askForAccessibility()
+    return failed('I need Accessibility to press keys for you. Turn it on in the window I just opened, then ask me again.')
+  }
+  return null
+}
+
+async function appRoutine(req: AppRequest, ctx: ToolCtx): Promise<ToolOutcome> {
+  const blocked = await handsReady(req.app !== 'messages' && req.app !== 'spotify')
+  if (blocked) return blocked
+  const log = taskLogger(`app-${req.app}`)
+  log(`request: ${JSON.stringify(req)} (agent core, ${ctx.origin})`)
+  const r = await runApp(req, {
+    hands: appHands,
+    confirm,
+    confirmMessages: confirmFor(CONFIRM_SENDS, ctx),
+    confirmPrompts: confirmFor(CONFIRM_JOBS, ctx),
+    onStep: status,
+    log,
+    stopped: () => ctx.stopped(),
+    portrait
+  })
+  journal.add('app', r.summary)
+  return { ok: r.ok, text: `${r.summary}${r.where ? ` (in ${r.where})` : ''}`, say: r.say }
+}
+
+/** The workers, for the agent core and the shortcuts. Each one returns facts for her brain and a plain line. */
+const workerHost: WorkerHost = {
+  sendMessage: (a, ctx) => appRoutine({ app: a.app, action: 'message', to: a.to, text: a.text, photo: a.photo }, ctx),
+  openChat: (a, ctx) => appRoutine({ app: a.app, action: 'open', to: a.to, text: '' }, ctx),
+  async spotify(a, ctx) {
+    if (a.action === 'play_query') {
+      if (brain.claudeForAgent && appHands.available) return workerHost.useComputer({ goal: `In Spotify, find and play ${a.query}.` }, ctx)
+      return appRoutine({ app: 'spotify', action: 'play_query', to: '', text: a.query }, ctx)
+    }
+    return appRoutine({ app: 'spotify', action: 'control', to: '', text: a.action === 'now_playing' ? 'now' : a.action }, ctx)
+  },
+  askClaudeApp: (a, ctx) => appRoutine({ app: 'claude', action: 'prompt', to: '', text: a.prompt }, ctx),
+  async claudeCode(a, ctx) {
+    if (!hands) return failed("I can't find Claude Code on this computer. Install it and log in once, then ask me again.")
+    const project = projects.resolve(a.folder) ?? mentionedProject(projects.list(), a.instruction) ?? projects.current() ?? (a.resume ? lastJobProject() : null)
+    if (!project) {
+      const known = projects.list().slice(0, 12).map((p) => p.name).join(', ')
+      return failed(`Which folder? Known projects: ${known || 'none yet'}. Ask the user which one.`, 'Which folder? Pick one under "Claude works in" in my menu, or say it: "in the vlog".')
+    }
+    if (!a.resume && !a.instruction.trim()) return failed('Tell me what Claude should do.')
+    const busy = agent.running().find((t) => t.cwd === project.path)
+    if (busy) return failed(`Claude is still busy in ${project.name} with "${busy.title}".`, `Claude is still busy in ${project.name} with "${busy.title}". Say "stop the task", or wait.`)
+    const title = a.resume ? (a.instruction ? `continue, then: ${a.instruction}` : 'continue the last session') : a.instruction
+    // A misheard sentence must never start a job; nor may a page or a message that talked her into it.
+    if (confirmFor(CONFIRM_JOBS, ctx) && !(await confirm(`Send this to Claude in ${project.name}: ${title}?`))) {
+      return failed('The user said no; no job was started.', 'Dropped. Not sending that.')
+    }
+    let task: Task
+    try {
+      const resume = a.resume ? agent.latestFor(project.path)?.sessionId ?? 'last' : undefined
+      task = agent.run({ prompt: a.instruction, cwd: project.path, resume })
+    } catch (err) {
+      return failed(`I couldn't start Claude: ${(err as Error).message}`)
+    }
+    console.log(`[hands] job ${task.id} in ${project.path}: ${task.title}`)
+    if (remote?.active) phoneJobs.add(task.id)
+    status(`Claude · ${task.title} · starting…`)
+    refreshTray()
+    return done(`Started a Claude Code job in ${project.name}: "${task.title}". It runs in the background and you will hear when it is done.`, `On it: Claude's working in ${project.name}.`)
+  },
+  async claudeJobs(a) {
+    if (a.action === 'status') {
+      const detail = agent.describe()
+      return done(detail || 'No Claude jobs have run yet.', detail ? detail.split('\n')[0] : 'No Claude jobs yet.')
+    }
+    const task = agent.cancel()
+    refreshTray()
+    return task ? done(`Stopped the job "${task.title}" in ${basename(task.cwd)}.`) : done("Nothing's running right now.")
+  },
+  async browse(a, ctx) {
+    if (!chrome.chromeAvailable()) return failed('I can only drive Chrome on a Mac for now.')
+    if (browsing) return failed("I'm already in the middle of something in Chrome.")
+    browsing = true
+    browseStop = false
+    refreshTray()
+    const log = taskLogger('browse')
+    status(`browsing · ${a.goal.slice(0, 40)}`)
+    try {
+      const r = await browse(a.goal, { plan: (system, user, schema) => brain.plan(system, user, schema), confirm, onStep: status, log, stopped: () => browseStop || ctx.stopped() })
+      console.log(`[browse] ${r.ok ? 'done' : 'stopped'} after ${r.steps} step(s): ${r.answer.slice(0, 120)}`)
+      journal.add('browse', `${a.goal} → ${r.answer.slice(0, 200)}`)
+      return { ok: r.ok, text: `${r.ok ? 'Found' : 'Stopped before the end'}${r.url ? ` (at ${r.url})` : ''}:\n${untrusted('web', r.answer, r.url)}`, untrusted: 'web' }
+    } catch (err) {
+      return failed(chromeMessage(err))
+    } finally {
+      browsing = false
+      refreshTray()
+    }
+  },
+  async readPage() {
+    try {
+      const page = await chrome.pageText(8000)
+      status(`reading ${page.title.slice(0, 40) || page.url}…`)
+      return { ok: true, text: `"${page.title}" (${page.url}):\n${untrusted('web', page.text, page.url)}`, untrusted: 'web' }
+    } catch (err) {
+      return failed(chromeMessage(err))
+    }
+  },
+  async browserTab(a) {
+    const r = await chromeAct(a.text ? `${a.verb === 'find_on_page' ? 'find' : a.verb}:${a.text}` : a.verb)
+    if (r.quiet) status(r.line)
+    return { ok: r.ok, text: r.line || 'Done.', say: r.quiet ? '' : r.line }
+  },
+  async open(a) {
+    const r = await openTarget(a.target)
+    return { ok: r.ok, text: r.line, say: r.line }
+  },
+  async findFile(a) {
+    const hit = await findAndReveal(a.query)
+    if (!hit) return failed(`Nothing called ${a.query} on this Mac.`, `I couldn't find anything called ${a.query} on this Mac.`)
+    const more = hit.more > 0 ? ` There ${hit.more === 1 ? 'is one more' : `are ${hit.more} more`} with that name.` : ''
+    return done(`Found ${hit.name} at ${hit.path}; it is selected in Finder and you are pointing at it.${more}`, `Here: ${hit.name}, in ${hit.where}.${more}`)
+  },
+  async useComputer(a, ctx) {
+    if (!brain.claudeForAgent) return failed('That needs Claude as my brain.')
+    const blocked = await handsReady(true)
+    if (blocked) return blocked
+    const r = await agentGoal(a.goal, taskLogger('computer'), () => ctx.stopped())
+    console.log(`[computer] ${r.ok ? 'done' : 'not done'} after ${r.steps} step(s): ${r.answer.slice(0, 160)}`)
+    journal.add('mac', `${a.goal} → ${r.answer.slice(0, 200)}`)
+    // What it says comes from reading the screen.
+    return { ok: r.ok, text: r.answer, say: r.answer, untrusted: 'screen' }
+  },
+  async seeScreen() {
+    const shot = await captureScreen().catch(() => undefined)
+    if (!shot) return failed('No screenshot: Screen Recording is not allowed for me. Tell the user to allow it in System Settings and restart me.')
+    return { ok: true, text: 'Screenshot of their screen attached (her own window is greyed out).', image: shot, untrusted: 'screen' }
+  },
+  async setReminder(a) {
+    const now = Date.now()
+    const at = a.in_minutes !== null && a.in_minutes > 0 ? now + a.in_minutes * 60_000 : a.at ? new Date(a.at).getTime() : NaN
+    if (!Number.isFinite(at)) return failed('Give in_minutes or at.', 'When should I remind you?')
+    if (at < now - 30_000) return failed(`${a.at} has already passed; ask the user or pick the next one.`)
+    const ms = a.in_minutes !== null ? Math.round(a.in_minutes * 60_000) : undefined
+    const text = a.text || (a.timer && ms ? timerName(ms) : '')
+    const r = reminderStore.add({ text, at, timer: a.timer, ...(ms ? { ms } : {}), ...(a.repeat !== 'none' ? { repeat: a.repeat } : {}) })
+    console.log(`[reminders] set ${r.timer ? 'timer' : 'reminder'} "${r.text}" for ${new Date(r.at).toString()}${r.repeat ? `, ${r.repeat}` : ''}`)
+    journal.add('reminder', `set: ${r.text} ${whenText(r.at, now)}${r.repeat ? ` (${r.repeat})` : ''}`)
+    refreshTray()
+    const line = setLine(r, now)
+    return done(line, line)
+  },
+  async listReminders() {
+    const line = listLine(reminderStore.list(), Date.now())
+    return done(line, line)
+  },
+  async cancelReminder(a) {
+    const hits = reminderStore.match({ query: a.query, all: a.all, timer: false })
+    if (!hits.length) return failed(`No reminder matches. ${listLine(reminderStore.list(), Date.now())}`)
+    for (const r of hits) reminderStore.remove(r.id)
+    journal.add('reminder', `cancelled: ${hits.map((r) => r.text).join('; ')}`)
+    refreshTray()
+    const line = hits.length > 1 ? `Cancelled all ${hits.length}.` : `Cancelled the reminder to ${hits[0].text}.`
+    return done(line, line)
+  },
+  async makePlan(a) {
+    const r = await planFor(a.goal)
+    return { ok: r.ok, text: r.ok ? `${r.line} (The plan is on the card beside you; it waits for their go.)` : r.line, say: r.line }
+  },
+  async calendar(a) {
+    const r = await calendarLine(a.which)
+    return { ok: r.ok, text: r.line, say: r.line }
+  },
+  async recallDay(a) {
+    const log = journal.describe(a.day === 'yesterday' ? -1 : 0)
+    return done(log || '(nothing logged)', log ? log.split('\n').slice(-3).join(' ') : 'Nothing yet.')
+  },
+  async recentMessages() {
+    const fresh = recentBanners.filter((b) => Date.now() - b.at < 6 * 60 * 60_000)
+    if (!fresh.length) return done('No message notifications in the last few hours.')
+    const lines = fresh.map((b) => `${new Date(b.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${b.text}`).join('\n')
+    return { ok: true, text: untrusted('notification', lines), untrusted: 'notification' }
+  },
+  async move(a) {
+    if ((BODY_COMMANDS as string[]).includes(a.action)) {
+      const line = await runBodyCommand(a.action as BodyCommand, { boo: a.action === 'peek' })
+      return line ? failed(line) : done(`Moving: ${a.action}.`, '')
+    }
+    sendCommand(a.action)
+    return done(`Doing it: ${a.action}.`, '')
+  },
+  async remember(a) {
+    memory.remember([{ text: a.fact, importance: Math.min(5, Math.max(1, Math.round(a.importance))) }])
+    return done('Kept.', '')
+  },
+  async runSkill(skill, slots, ctx) {
+    const blocked = await handsReady(true)
+    if (blocked) return blocked
+    const log = taskLogger(`skill-${skill.name}`)
+    console.log(`[skills] ${skill.name} ${JSON.stringify(slots).slice(0, 120)}`)
+    const r = await runSkill(skill, slots, skillDeps(log, () => ctx.stopped(), confirmFor(CONFIRM_SENDS, ctx)))
+    journal.add('app', r.summary)
+    return { ok: r.ok, text: r.ok ? r.say : `${r.say} (${r.summary})`, say: r.say }
+  }
+}
+
+/** The tool list right now: what this computer can do, the skills, and the connected MCP servers. */
+function currentTools(): ToolSpec[] {
+  return buildTools(workerHost, {
+    skills: appHands.available ? skills : [],
+    external: mcp.tools(),
+    has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available }
+  })
+}
+
+function useAgentCore(): boolean {
+  return AGENT_CORE && Boolean(brain.claudeForAgent)
+}
+
+/** What she remembers about them, as her brain reads it. */
+function memoryLines(): string {
+  const facts = memory.recall()
+  return facts.length ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}` : 'You do not know this person yet.'
+}
+
+/** A note on the state she is in, for her brain: a plan on the card, Claude jobs running. */
+function turnContext(): string | undefined {
+  const notes: string[] = []
+  if (plan && (plan.status === 'draft' || plan.status === 'paused' || plan.status === 'running')) notes.push(`[A plan is on the card (${plan.status}): "${plan.title}". "go", "pause" and "stop the plan" work on it.]`)
+  const running = agent.running()
+  if (running.length) notes.push(`[Claude Code jobs running: ${running.map((t) => `"${t.title}" in ${basename(t.cwd)}`).join('; ')}]`)
+  return notes.join('\n') || undefined
+}
+
+/**
+ * A message through the agent core: a shortcut when the command is unambiguous, else one agent turn. Returns null to
+ * hand the message to the older routing (no Claude brain, or Claude unreachable before anything was done).
+ */
+async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<Reply | null> {
+  const origin: Origin = remote?.active ? 'phone' : opts.voice ? 'voice' : 'typed'
+  const said = stripName(text)
+  const tools = currentTools()
+  const fast = fastRoute(said, { skills: appHands.available ? skills : [] })
+  if (fast && tools.some((t) => t.name === fast.tool)) {
+    if (agentBusy || acting) return sayPlain("I'm already doing something. Say \"stop\" first.", 'annoyed')
+    acting = true
+    actStop = false
+    refreshTray()
+    console.log(`[agent] shortcut (${fast.why}): ${fast.tool} ${JSON.stringify(fast.input).slice(0, 120)}`)
+    try {
+      const { out } = await runOneTool(tools, fast.tool, fast.input, { origin, confirm, onStep: status, log: taskLogger('shortcut'), stopped: () => actStop || quitting })
+      memory.addTurn('user', text)
+      const line = out.say ?? (out.untrusted ? '' : out.text)
+      if (!line) return QUIET
+      memory.addTurn('assistant', line)
+      return sayPlain(line, out.ok ? 'happy' : 'sad')
+    } finally {
+      acting = false
+      refreshTray()
+      status(listening ? listeningStatus() : 'idle')
+    }
+  }
+  const claude = brain.claudeForAgent
+  if (!claude) return null
+  if (agentBusy || acting) return sayPlain("I'm still on the last thing. Say \"stop\" to cut it short.", 'annoyed')
+  // Let her see the screen when the message is about it ("what's this error").
+  const aboutScreen = /\b(this|that|these|here|screen|error|tab|window|what am i|what i'm|see|look)\b/i.test(said) && !/\b(?:message|text|tell|remind)\b/i.test(said)
+  const screenshot = aboutScreen ? await captureScreen().catch(() => undefined) : undefined
+  agentBusy = acting = true
+  actStop = false
+  refreshTray()
+  status('thinking…')
+  const log = taskLogger('agent')
+  log(`message (${origin}): ${text}`)
+  let modelCalls = 0
+  try {
+    const result = await runAgentTurn(
+      {
+        text: said,
+        origin,
+        persona,
+        memory: memoryLines(),
+        history: memory.recentTurns(12).map((t) => ({ role: t.role === 'assistant' ? 'assistant' : 'user', text: t.text })),
+        now: new Date(),
+        screenshot,
+        context: turnContext()
+      },
+      {
+        model: async (req) => {
+          modelCalls++
+          return callClaude(claude.client, { ...req, model: claude.model, effort: claude.effort, maxTokens: 16000 })
+        },
+        tools,
+        confirm,
+        onStep: (line) => status(line),
+        log,
+        stopped: () => actStop || quitting,
+        onSay: (line) => {
+          if (line) void sayPlain(line)
+        },
+        maxRounds: AGENT_ROUNDS
+      }
+    )
+    console.log(`[agent] ${result.rounds} round(s)${result.calls.length ? `: ${result.calls.map((c) => `${c.name}${c.ok ? '' : ' ✗'}`).join(', ')}` : ''}${result.tainted.length ? ` (read ${result.tainted.join(', ')})` : ''}`)
+    memory.addTurn('user', text)
+    // What she did goes into the history as names only: tool output can hold someone else's text.
+    if (result.calls.length) memory.addTurn('user', `[you used: ${result.calls.map((c) => `${c.name} (${c.refused ? 'the user said no' : c.ok ? 'done' : 'not done'})`).join(', ')}]`)
+    const reply: Reply = { say: result.say, emotion: result.emotion, speak: true, remember: [] }
+    memory.addTurn('assistant', reply.say)
+    await deliver(reply, 'chat')
+    return reply
+  } catch (err) {
+    const e = err instanceof ClaudeError ? err : toClaudeError(err)
+    console.warn(`[agent] ${e.code}: ${e.message}`)
+    log(`error: ${e.message}`)
+    // Nothing done yet and Claude is just unreachable: the older routing (and a local model, when there is one) answers.
+    if (modelCalls <= 1 && (e.code === 'rate' || e.code === 'overloaded' || e.code === 'network')) return null
+    const say =
+      e.code === 'auth'
+        ? 'My Anthropic key stopped working. Fix it in Setup, from my menu.'
+        : e.code === 'refusal'
+          ? "Mm, I'm not touching that one."
+          : `I can't reach Claude right now (${e.message.slice(0, 100)}). Try me again in a minute.`
+    return sayPlain(say, 'sad')
+  } finally {
+    agentBusy = acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+/** Setup → Tool servers: what mcp.json lists and how each one is doing. */
+function mcpState(): NonNullable<SetupState['mcp']> {
+  return { configPath: MCP_CONFIG, exists: existsSync(MCP_CONFIG), servers: mcp.status(), errors: mcp.configErrors(), agentCore: useAgentCore() }
+}
+
+async function setMcpEnabled(name: string, on: boolean): Promise<void> {
+  const off = new Set(settings.get().mcpDisabled ?? [])
+  if (on) off.delete(name)
+  else off.add(name)
+  settings.set({ mcpDisabled: [...off] })
+  await mcp.setEnabled(name, on)
+  console.log(`[mcp] ${name} ${on ? 'on' : 'off'}`)
+}
+
+/** A starter mcp.json when there is none, then the file in their editor. */
+async function openMcpConfig(): Promise<void> {
+  if (!existsSync(MCP_CONFIG)) {
+    const starter = { mcpServers: { filesystem: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', join(homedir(), 'Documents')], disabled: true } } }
+    writeFileSync(MCP_CONFIG, `${JSON.stringify(starter, null, 2)}\n`)
+  }
+  await shell.openPath(MCP_CONFIG)
 }
 
 // ---- ears: hands-free listening
@@ -3054,7 +3467,8 @@ async function setupState(): Promise<SetupState> {
       request: remote?.pairing && pairAnswer ? { name: remote.pairing.name, code: remote.pairing.code } : null,
       error: remoteError
     },
-    notices: noticeState()
+    notices: noticeState(),
+    mcp: mcpState()
   }
 }
 
@@ -3141,6 +3555,15 @@ ipcMain.handle('setup:calendar', async () => {
   setupChanged()
   return result
 })
+ipcMain.handle('setup:mcp-toggle', async (_event, name: string, on: boolean) => {
+  await setMcpEnabled(String(name), Boolean(on))
+  return mcpState()
+})
+ipcMain.handle('setup:mcp-reload', async () => {
+  await mcp.start()
+  return mcpState()
+})
+ipcMain.handle('setup:mcp-open', () => openMcpConfig())
 ipcMain.handle('setup:finish', () => {
   setupWin?.close()
 })
@@ -3211,6 +3634,12 @@ app.whenReady().then(async () => {
   startRemote()
   // What she comes to tell you about on her own: reminders (kept across restarts), messages, the calendar.
   reminderStore.start()
+  // Tool servers connect in the background; Setup shows how each one is doing.
+  void mcp.start().then(() => {
+    const ready = mcp.status().filter((m) => m.state === 'ready')
+    if (ready.length) console.log(`[mcp] ${ready.map((m) => `${m.name} (${m.tools.length})`).join(', ')}`)
+    setupChanged()
+  })
   setInterval(() => void pollBanners(), BANNER_POLL_MS).unref()
   setInterval(() => {
     notices.tick()
@@ -3245,6 +3674,7 @@ app.on('before-quit', () => {
   actStop = true
   appHands.stop()
   reminderStore.stop()
+  void mcp.close()
   remote?.stop()
   bar.destroy()
   body.destroy()

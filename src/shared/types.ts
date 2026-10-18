@@ -276,6 +276,18 @@ export interface SetupState {
   }
   /** what she tells you about on her own; missing from an older main process */
   notices?: NoticeState
+  /** tool servers from <user data>/mcp.json; missing from an older main process */
+  mcp?: McpSetupState
+}
+
+export interface McpSetupState {
+  configPath: string
+  exists: boolean
+  servers: { name: string; kind: 'stdio' | 'http'; target: string; enabled: boolean; state: 'off' | 'connecting' | 'ready' | 'error'; tools: string[]; error?: string }[]
+  /** problems reading mcp.json */
+  errors: string[]
+  /** the tools reach her brain only through the agent core (a Claude brain) */
+  agentCore: boolean
 }
 
 export type RemoteAction = 'allow' | 'refuse' | 'forget' | 'on' | 'off'
@@ -365,6 +377,10 @@ export interface DeskmateApi {
   setNotices?(patch: Partial<NoticePrefs>): Promise<NoticeState>
   /** asks macOS for read access to the calendars */
   calendarAccess?(): Promise<{ granted: boolean; status: string; error?: string }>
+  /** Setup → Tool servers: switch one on or off, reread mcp.json, open it in an editor */
+  mcpToggle?(name: string, on: boolean): Promise<McpSetupState>
+  mcpReload?(): Promise<McpSetupState>
+  mcpOpenConfig?(): Promise<void>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
   /** Setup → Characters */

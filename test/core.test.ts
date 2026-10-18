@@ -10,6 +10,7 @@ import { parseSpoken, runAgentTurn, runOneTool, type ModelCall } from '../src/ma
 import { fastRoute, localStamp } from '../src/main/fastpath.ts'
 import { McpHub, namespacedName, outcomeFrom, parseMcpConfig } from '../src/main/mcp.ts'
 import { buildTools, type ExternalTool } from '../src/main/tools.ts'
+import { DESTRUCTIVE_KEY } from '../src/main/checks.ts'
 import { guardQuestion, Taint, untrusted } from '../src/main/untrusted.ts'
 import { FakeHost } from './evals/fake.ts'
 
@@ -267,4 +268,9 @@ test('mcp: a stdio server connects, its tools are namespaced, calls are journale
   } finally {
     await hub.close()
   }
+})
+
+test('the computer agent asks before shortcuts that delete', () => {
+  for (const k of ['cmd+backspace', 'cmd+delete', 'shift+cmd+backspace', 'cmd+alt+backspace', 'cmd+shift+delete']) assert.ok(DESTRUCTIVE_KEY.test(k), k)
+  for (const k of ['backspace', 'delete', 'cmd+z', 'return', 'cmd+shift+n']) assert.ok(!DESTRUCTIVE_KEY.test(k), k)
 })

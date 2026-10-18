@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -258,12 +258,88 @@ $<HTMLButtonElement>('n-cal-allow').addEventListener('click', async (e) => {
   await refresh()
 })
 
+// ---- Tool servers (MCP)
+
+const mcpMsg = $<HTMLDivElement>('mcp-msg')
+function mcpMessage(text: string, kind: 'good' | 'bad' | '' = ''): void {
+  mcpMsg.textContent = text
+  mcpMsg.className = `msg${kind ? ` ${kind}` : ''}`
+}
+
+function renderMcp(m: McpSetupState | undefined): void {
+  $<HTMLElement>('mcp').classList.toggle('hidden', !m || !api.mcpToggle)
+  if (!m) return
+  const list = $<HTMLDivElement>('mcp-list')
+  list.replaceChildren()
+  for (const s of m.servers) {
+    const row = document.createElement('label')
+    row.className = 'toggle'
+    const box = document.createElement('input')
+    box.type = 'checkbox'
+    box.checked = s.enabled
+    box.addEventListener('change', async () => {
+      if (!api.mcpToggle) return
+      mcpMessage(box.checked ? `Connecting to ${s.name}…` : `Closing ${s.name}…`)
+      const next = await api.mcpToggle(s.name, box.checked)
+      renderMcp(next)
+      const now = next.servers.find((x) => x.name === s.name)
+      if (now?.state === 'error') mcpMessage(`${s.name}: ${now.error ?? 'did not connect'}`, 'bad')
+      else mcpMessage(box.checked ? `${s.name} is on.` : `${s.name} is off.`, 'good')
+    })
+    const text = document.createElement('div')
+    const name = document.createElement('b')
+    name.textContent = s.name
+    const note = document.createElement('span')
+    const state =
+      s.state === 'ready' ? `${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}` : s.state === 'error' ? `not connected: ${s.error ?? 'error'}` : s.state === 'connecting' ? 'connecting…' : 'off'
+    note.textContent = `${s.target.length > 70 ? `${s.target.slice(0, 69)}…` : s.target} · ${state}`
+    note.title = s.tools.join(', ')
+    if (s.state === 'error') note.className = 'bad'
+    text.append(name, note)
+    row.append(box, text)
+    list.append(row)
+  }
+  if (!m.servers.length) {
+    const empty = document.createElement('div')
+    empty.className = 'hint'
+    empty.textContent = m.exists ? 'mcp.json lists no servers yet.' : 'No mcp.json yet: "Edit mcp.json…" makes one with an example to start from.'
+    list.append(empty)
+  }
+  for (const e of m.errors) {
+    const bad = document.createElement('div')
+    bad.className = 'hint'
+    bad.textContent = `⚠ ${e}`
+    list.append(bad)
+  }
+  const ready = m.servers.filter((s) => s.state === 'ready')
+  const tools = ready.reduce((n, s) => n + s.tools.length, 0)
+  const chipEl = $<HTMLSpanElement>('mcp-chip')
+  if (!m.agentCore && m.servers.length) chip(chipEl, 'needs Claude as her brain', 'bad')
+  else if (ready.length) chip(chipEl, `${ready.length} on · ${tools} tools`, 'ok')
+  else chip(chipEl, m.servers.length ? 'none connected' : 'none', m.servers.some((s) => s.state === 'error') ? 'bad' : '')
+}
+
+$<HTMLButtonElement>('mcp-open').addEventListener('click', async (e) => {
+  e.preventDefault()
+  await api.mcpOpenConfig?.()
+  mcpMessage('Save the file, then press Reload.')
+})
+$<HTMLButtonElement>('mcp-reload').addEventListener('click', async (e) => {
+  e.preventDefault()
+  if (!api.mcpReload) return
+  mcpMessage('Reading mcp.json and connecting…')
+  const m = await api.mcpReload()
+  renderMcp(m)
+  mcpMessage(m.errors.length ? 'Loaded, with problems (see above).' : 'Loaded.', m.errors.length ? 'bad' : 'good')
+})
+
 async function refresh(): Promise<void> {
   if (!api.getSetup) return
   const state = await api.getSetup()
   render(state)
   renderRemote(state)
   renderNotices(state.notices)
+  renderMcp(state.mcp)
 }
 
 useOllama.addEventListener('click', async () => {

@@ -43,6 +43,9 @@ export const NEVER_TYPE = /\b(?:\d[ -]?){13,19}\b|password|passcode|cvv|cvc|soci
 /** A key press that sends what is in a message box: Return or Enter, alone or with a modifier. */
 export const SEND_KEY = /^(?:(?:cmd|ctrl|shift|alt)\+)*(?:return|enter)$/
 
+/** Shortcuts that move things to the Trash, empty it, or delete for good (Finder, Mail, Photos and most editors). */
+export const DESTRUCTIVE_KEY = /^(?:(?:cmd|ctrl|shift|alt)\+)*(?:cmd|ctrl)\+(?:(?:shift|alt)\+)*(?:backspace|delete|forwarddelete)$/
+
 /** Text boxes, as the macOS helper names them (the Windows hands report the same names). */
 export const EDITABLE_ROLES = new Set(['AXTextArea', 'AXTextField', 'AXComboBox'])
 

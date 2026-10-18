@@ -26,6 +26,8 @@ export interface SettingsData {
   updateNotified?: string
   /** what she tells you about on her own (Setup → "What she tells you about"); missing fields take the defaults */
   notices?: Partial<NoticePrefs>
+  /** MCP servers from mcp.json switched off in Setup (by name) */
+  mcpDisabled?: string[]
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

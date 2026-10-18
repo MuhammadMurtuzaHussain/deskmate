@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { dueLine, durationMs, listLine, parseReminder, parseWhen, ReminderStore, setLine, timeIn, whenText, type Reminder, type ReminderIntent } from '../src/main/reminders.ts'
+import { dueLine, durationMs, listLine, nextRepeat, parseReminder, parseWhen, ReminderStore, setLine, timeIn, whenText, type Reminder, type ReminderIntent } from '../src/main/reminders.ts'
 
 // Sunday 18 October 2026, 2:00 pm, local time.
 const NOW = new Date(2026, 9, 18, 14, 0, 0)
@@ -162,5 +162,29 @@ test('a reminder fires on time', async () => {
   assert.deepEqual(fired, [])
   await new Promise((r) => setTimeout(r, 200))
   assert.deepEqual(fired, ['soon'])
+  s.stop()
+})
+
+test('repeating reminders: the next time, weekdays skip the weekend, and it comes back after it rings', async () => {
+  // Saturday 17 October 2026, 9:00
+  const fri = new Date(2026, 9, 16, 9, 0).getTime() + 86_400_000
+  assert.equal(new Date(nextRepeat(fri, 'weekdays', fri)).getDay(), 1)
+  assert.equal(new Date(nextRepeat(fri, 'daily', fri)).getDate(), 18)
+  assert.equal(nextRepeat(fri, 'hourly', fri) - fri, 3_600_000)
+  // missed for a few days while she was off: the next one still lands in the future, at the same clock time
+  const next = new Date(nextRepeat(fri, 'daily', fri + 3.5 * 86_400_000))
+  assert.equal(next.getHours(), 9)
+  assert.ok(next.getTime() > fri + 3.5 * 86_400_000)
+  assert.match(setLine({ id: 'x', text: 'stand up', at: fri, createdAt: fri, timer: false, repeat: 'weekdays' }, fri - 3_600_000), /^Okay, I'll remind you every weekday to stand up, starting in 1 hour\.$/)
+  const dir = mkdtempSync(join(tmpdir(), 'deskmate-reminders-'))
+  const fired: string[] = []
+  const s = new ReminderStore(join(dir, 'r.json'), (r) => fired.push(r.text))
+  s.add({ text: 'water', at: Date.now() + 60, timer: false, repeat: 'hourly' })
+  await new Promise((r) => setTimeout(r, 200))
+  assert.deepEqual(fired, ['water'])
+  const again = s.list()
+  assert.equal(again.length, 1)
+  assert.ok(again[0].at > Date.now() + 3_500_000)
+  assert.equal(again[0].repeat, 'hourly')
   s.stop()
 })
