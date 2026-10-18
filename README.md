@@ -75,6 +75,9 @@ not in a prompt a model could talk its way around:
 - **Skills can't skip the rules.** A skill that would press Return in a chat without a confirm and a read-back
   doesn't load. Skills with code from outside the app only load if you turn that on.
 - **Plans wait for a go**, and pause when a step fails.
+- **Text she reads is never an order.** Screens, web pages, messages and tool servers' answers reach her brain as
+  marked data, and once a turn has read any, everything that sends, deletes, buys, runs a job or writes through a
+  tool server waits for your yes, whatever the read-back settings say.
 - **Local first.** With Ollama and Kokoro nothing leaves your machine.
 
 What she never does, and how to report a problem: [SECURITY.md](SECURITY.md).
@@ -152,13 +155,14 @@ ships none. Guide: [docs/CHARACTERS.md](docs/CHARACTERS.md).
 
 | brain | good for | |
 |---|---|---|
-| **Claude** (Anthropic API) | doing things: the agent that works any app, plans, the best judgement on read-backs | your key, paid per use |
+| **Claude** (Anthropic API) | doing things: one tool-use brain over every worker and your MCP servers, the agent that works any app, plans | your key, paid per use |
 | **Ollama** (local) | chatting, plans and the built-in routines, fully offline | free, private |
 | **Gemini** | a capable cloud brain on a free key | your key |
 
 Claude Code jobs use your own `claude` install whichever brain she has. Models and settings:
 [docs/BRAINS.md](docs/BRAINS.md). Voice (Kokoro, ElevenLabs, system) and ears (Whisper): [docs/VOICES.md](docs/VOICES.md).
-Her hands, the agent, Chrome, notices and the phone remote: [docs/AGENT.md](docs/AGENT.md).
+Her hands, the agent core, MCP tool servers, the injection guard, Chrome, notices and the phone remote:
+[docs/AGENT.md](docs/AGENT.md).
 
 ## Privacy
 
@@ -203,7 +207,9 @@ npm run dev
 ## How it works
 
 ```
-Electron main ─ brain (Ollama / Gemini / Claude): text + screenshot ─► {say, emotion, action, tool}
+Electron main ─ shortcuts (regex) ─► one tool call
+  │  Claude: agent core, a tool-use loop over every worker + MCP servers, behind the untrusted-text guard
+  │  Ollama / Gemini: text + screenshot ─► {say, emotion, action, tool}
   │  hands: native/bin/deskmate-hands (Swift, macOS) or PowerShell + UI Automation (Windows, experimental)
   │         ─► app routines (Discord, Slack, Messages, Spotify, Claude app) · skills/ · the Claude agent
   │  plans: planner ─► workers (agent, Chrome, Claude Code, app, skill, find, open, say, ask)

@@ -44,8 +44,11 @@ message box back before pressing Return. If anything doesn't match, she stops an
   iTerm, Warp, Ghostty); real terminal work is a Claude Code job, which you can see and stop
 - type a password, passcode, card number, CVV, IBAN or social security number, or type into a password field
 - buy, pay or delete anything you didn't ask for
-- take orders from a web page, an email, a message or a file she reads (her prompts treat those as content, not as
-  you; this one is a prompt rule, so the read-backs above are the backstop when a model gets it wrong)
+- take orders from a web page, an email, a message, a window or a tool server's answer. Her prompts mark that text as
+  untrusted data, and the code backs it up: once a turn has read any (or came from the phone remote), every tool that
+  sends, deletes, buys, starts a Claude Code job or writes through an MCP server waits for your yes, whatever
+  `DESKMATE_CONFIRM_*` says, and nothing she learns in such a turn goes into her memory. Details:
+  [docs/AGENT.md](docs/AGENT.md#untrusted-text-the-prompt-injection-guard)
 - send anything from the phone remote's chat to anyone but the one Telegram account you paired, confirmed on the Mac
 
 **Skills.** A skill's keys only go to its own app; skills can't target the off-limits apps; secret-looking slot values
@@ -53,6 +56,9 @@ are refused; and in a messaging app, a skill whose Return could send without a `
 doesn't load at all. The same rules hold at run time, for recipe steps and for handler code. A skill handler is code
 with Deskmate's full rights, so handlers in your user skills folder only load with `DESKMATE_SKILL_CODE=1`. Read a
 skill before you install it, as you would any script. Details: [docs/SKILLS.md](docs/SKILLS.md).
+
+**MCP tool servers** are programs you add to `mcp.json` yourself; a local one runs with your rights, like any script
+you install. Each can be switched off in Setup. A tool the server does not mark read-only is guarded like a send.
 
 **Plans** wait for your go, run one step at a time, and pause when a step fails. Each step still goes through the
 read-backs above.

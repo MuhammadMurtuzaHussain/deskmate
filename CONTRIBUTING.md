@@ -20,6 +20,7 @@ npm run dev              # her window, with the renderer hot-reloading
 |---|---|
 | `npm test` | unit tests (Node's test runner straight on the `.ts` files; no Electron needed) |
 | `npm run typecheck` | `tsc --noEmit` over `src/` and `test/` |
+| `npm run eval` | the agent eval: 32 requests against fake hands, replaying recorded answers (`-- --live` calls the API and re-records; needs `ANTHROPIC_API_KEY`) |
 | `npm run build` | the hands helper (macOS) and the app into `out/` |
 | `npm start` | runs the built app |
 | `npm run dist` | installers for your OS into `release/` |
@@ -50,6 +51,9 @@ npx electron . --mute-audio --user-data-dir=/tmp/deskmate-test --remote-debuggin
 Anything that sends a message: test with a chat to yourself (WhatsApp's "Message yourself", Telegram's Saved
 Messages, a Discord server of your own), never with other people.
 
+Changed a tool description, the agent rules or the shortcuts? Run `npm run eval` (and `-- --live` if you have a key)
+and say in the pull request how the score moved.
+
 ## Writing a skill
 
 The quickest way to add something she can do. A skill is a folder with a `skill.json`:
@@ -73,6 +77,11 @@ keep them small; most things fit in steps.
 |---|---|
 | `src/main/index.ts` | the app: windows, tray, routing what you say to tools, plans, notices |
 | `src/main/brain.ts` | the brains (Ollama, Gemini, Claude) and her reply format |
+| `src/main/core.ts` | the agent core: one Claude tool-use loop over every worker, with the injection guard |
+| `src/main/tools.ts` | every worker as a tool (schemas, risk classes) and the `WorkerHost` interface |
+| `src/main/fastpath.ts` | the regex shortcuts that skip the model, mapped onto the same tools |
+| `src/main/untrusted.ts` | wrapping text from screens, pages, messages and MCP as data; the per-turn taint |
+| `src/main/mcp.ts` | the MCP client (`mcp.json`, stdio and streamable HTTP) |
 | `src/main/hands.ts` | the macOS hands helper client, and the `DesktopHands` interface |
 | `src/main/hands-win.ts` | the experimental Windows hands (PowerShell + UI Automation) |
 | `src/main/checks.ts` | the safety lists and checks shared by everything that acts |
@@ -87,7 +96,7 @@ keep them small; most things fit in steps.
 | `src/renderer/` | her window (Live2D / VRM / MMD), the command bar, the plan card, setup |
 | `native/` | the Swift hands helper |
 | `skills/` | bundled skills |
-| `test/` | unit tests |
+| `test/` | unit tests; `test/evals/` the agent eval (tasks, fake hands, recordings) |
 
 Pure logic goes in modules the tests can import without Electron (see `checks.ts`, `skills.ts`, `reminders.ts`).
 Node runs the tests on the `.ts` files directly, so those modules import other modules with the `.ts` extension and

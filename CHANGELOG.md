@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased: she plans it out, she notices things, she makes herself at home, and she learns skills
+## Unreleased: one brain with every tool (the agent core)
+
+**The agent core**
+- With Claude as her brain, one tool-use loop handles everything that is not small talk: every worker is a tool (Discord, Slack and Messages, Spotify, the Claude app, Claude Code jobs, browsing and the page in Chrome, opening and finding files, the agent that works any app, a look at the screen, reminders, plans, the calendar, her day log, recent message notifications, her body, memory, every skill). She chains them ("find my resume and open it") and says what happened.
+- The regex routing is now only zero-latency shortcuts for unambiguous commands, running the same tools through the same checks; anything with a second step, a repeat or a judgment call goes to the agent. Gemini and Ollama keep the older routing, and so does a Claude brain that cannot be reached. `DESKMATE_AGENT_CORE=0` turns it off; `DESKMATE_AGENT_ROUNDS` caps a turn.
+- Repeating reminders: every hour, day, weekday or week.
+
+**MCP tool servers**
+- `<user data>/mcp.json` in Claude Desktop's shape: local servers over stdio, remote ones over streamable HTTP (SSE as a fallback). Their tools reach her as `<server>__<tool>`; each call goes into her day log. Setup → **Tool servers**: state, tool count, a switch per server, Edit and Reload.
+
+**Prompt-injection guard**
+- Text from screens (accessibility and OCR), web pages, messages, notifications and MCP servers is wrapped as untrusted data in every prompt, with tag-like text defused. A turn that read any, or came from the phone remote, cannot send, delete, buy, start a Claude Code job or write through an MCP server without your yes, whatever the read-back settings say; nor can it add to her memory.
+- The computer agent asks before shortcuts that delete (⌘⌫ and its kin).
+
+**Evals**
+- `npm run eval`: 32 realistic requests against fake hands, scored on tool choice, arguments, safety and her reply; replays recorded answers, or `--live` against the API. Claude Haiku 5.5 at effort low: 31/32.
+
+**Under the hood**
+- `src/main/core.ts` (the loop and the guard), `tools.ts` (the registry and the `WorkerHost` interface), `fastpath.ts`, `untrusted.ts`, `mcp.ts`; tests with a scripted model, fake hands and a stdio MCP server.
+
+## Earlier, unreleased: she plans it out, she notices things, she makes herself at home, and she learns skills
 
 **Skills: app routines anyone can add**
 - A skill is a folder with a `skill.json`: the app, trigger phrases with slots (`"(message|text) {to} on whatsapp[:] {text}"`), and steps made of her hands' primitives (launch, key, type, paste, focus the message box, check the window title, find something on screen, a menu item, wait, confirm, read back), plus her line when it's done. An optional handler file can tidy the slots or do the work in code.
