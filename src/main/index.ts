@@ -5100,7 +5100,7 @@ async function setupState(): Promise<SetupState> {
     },
     voice: {
       provider: localVoice ? 'local' : process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs' : 'system',
-      localServer: localVoice ? await sttHealthy().catch(() => false) : false
+      localServer: localVoice ? await localTtsHealthy() : false
     },
     permissions: { microphone: media('microphone'), screen: media('screen'), keys },
     channels: await channelsState(),

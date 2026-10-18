@@ -1294,7 +1294,8 @@ function renderKokoro(o: OnboardState): void {
   use.classList.toggle('hidden', !k.installed || k.installing || (k.choice === 'local' && k.running))
   system.classList.toggle('hidden', k.installing || k.choice === 'system')
   $<HTMLDivElement>('kokoro-progress').classList.toggle('hidden', !k.installing && !(k.step && k.step === k.of && k.choice === 'local' && !k.running))
-  $<HTMLSpanElement>('kokoro-bar').style.width = `${k.of ? Math.round((100 * Math.max(0.5, k.step ?? 0)) / k.of) : 5}%`
+  // halfway through the step it is on: steps 3 and 4 (pip, then the model download) are the long ones
+  $<HTMLSpanElement>('kokoro-bar').style.width = `${k.of ? Math.round((100 * (k.installing ? Math.max(0.5, (k.step ?? 1) - 0.5) : (k.step ?? 0))) / k.of) : 5}%`
   $<HTMLDivElement>('kokoro-line').textContent = k.installing ? `Step ${k.step || 1} of ${k.of ?? 4}: ${k.line ?? ''}` : (k.line ?? '')
   $<HTMLDivElement>('kokoro-restart').classList.toggle('hidden', !(k.restartForEars && k.choice === 'local' && k.installed))
   const msg = $<HTMLDivElement>('kokoro-msg')
