@@ -89,6 +89,9 @@ export interface DesktopHands {
   calendarStatus(): Promise<string>
   calendarEvents(minutes: number, pastMinutes?: number): Promise<CalendarEvent[]>
   requestCalendarAccess(timeoutMs?: number): Promise<{ granted: boolean; status: string; error?: string }>
+  /** macOS: may she send Apple events to this app (granted / denied / notDetermined / notRunning / notInstalled /
+   * timeout); ask shows macOS's question when it was never asked */
+  automation?(bundleId: string, ask?: boolean): Promise<string>
   stop(): void
 }
 
@@ -345,6 +348,14 @@ export class Hands implements DesktopHands {
       return { granted: Boolean(r.granted), status: String(r.status ?? 'unknown'), ...(r.error ? { error: String(r.error) } : {}) }
     } catch (err) {
       return { granted: false, status: 'unknown', error: (err as Error).message }
+    }
+  }
+
+  async automation(bundleId: string, ask = false): Promise<string> {
+    try {
+      return String((await this.call('automation', { bundleId, ask }, ask ? 125_000 : 8000)).status ?? 'unknown')
+    } catch (err) {
+      return `error ${(err as Error).message}`
     }
   }
 

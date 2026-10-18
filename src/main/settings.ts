@@ -36,6 +36,10 @@ export interface SettingsData {
   }
   /** the first-run window was finished or closed once */
   setupDone?: boolean
+  /** her voice, picked in the first-run tour: the local Kokoro voice, or the computer's own (DESKMATE_TTS in .env wins) */
+  voice?: 'local' | 'system'
+  /** the first-run tour was finished (it can be run again from the tray) */
+  onboarded?: boolean
   /** newest release the "update available" status line was already shown for, so it is said once per version */
   updateNotified?: string
   /** what she tells you about on her own (Setup → "What she tells you about"); missing fields take the defaults */

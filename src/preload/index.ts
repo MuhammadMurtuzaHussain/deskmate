@@ -84,7 +84,18 @@ const api: DeskmateApi = {
   onActivity: (cb) => {
     ipcRenderer.on('activity:update', (_event, view: ActivityView) => cb(view))
   },
-  activityUndo: (id) => ipcRenderer.invoke('activity:undo', id)
+  activityUndo: (id) => ipcRenderer.invoke('activity:undo', id),
+  onboard: () => ipcRenderer.invoke('onboard:get'),
+  onboardAllow: (id) => ipcRenderer.invoke('onboard:allow', id),
+  onboardSettings: (id) => ipcRenderer.invoke('onboard:settings', id),
+  installKokoro: () => ipcRenderer.invoke('onboard:kokoro'),
+  chooseVoice: (choice) => ipcRenderer.invoke('onboard:voice', choice),
+  tryRequest: (text) => ipcRenderer.invoke('onboard:try', text),
+  onboardDone: () => ipcRenderer.invoke('onboard:done'),
+  restartApp: () => ipcRenderer.invoke('onboard:restart'),
+  onOnboardChanged: (cb) => {
+    ipcRenderer.on('onboard:changed', () => cb())
+  }
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)

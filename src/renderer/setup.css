@@ -124,3 +124,33 @@ input.wide { flex: none; width: 170px; font: 12px ui-monospace, Menlo, monospace
 .spendrow b { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .spendrow span { color: var(--dim); font-size: 12px; }
 .chip.stop { background: rgba(255, 120, 120, 0.18); color: #ffb0b0; }
+
+/* ---- the first-run tour: one section at a time, with steps on top and Back / Next below */
+.tour-only { display: none; }
+body.tour div.tour-only { display: flex; }
+body.tour button.tour-only { display: inline-block; }
+body.tour footer #done { display: none; }
+body.tour section { display: none; }
+body.tour section.current { display: flex; }
+body.tour section .head h2 { display: none; }
+.steps { gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.steps span { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: var(--dim); }
+.steps span.on { background: var(--accent); color: #1a1030; font-weight: 600; }
+.steps span.done { color: var(--ok); }
+.lead { margin: 0; font-size: 14px; line-height: 1.6; }
+.progress { display: flex; flex-direction: column; gap: 6px; }
+.progress .bar { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.progress .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.4s ease; }
+.perms-list { display: flex; flex-direction: column; gap: 10px; }
+.perm .tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dim); margin-left: 6px; font-weight: 400; }
+.perm { align-items: flex-start; }
+.perm > .chip { margin-top: 2px; }
+.perm .acts { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
+.perm .acts button { padding: 4px 10px; font-size: 12px; }
+.perm .acts button.link { padding: 0; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.examples button { white-space: normal; text-align: left; }
+.replies { display: flex; flex-direction: column; gap: 8px; }
+.replies .you { align-self: flex-end; background: rgba(179, 140, 255, 0.18); padding: 6px 10px; border-radius: 12px 12px 2px 12px; max-width: 85%; }
+.replies .her { align-self: flex-start; background: rgba(255, 255, 255, 0.07); padding: 6px 10px; border-radius: 12px 12px 12px 2px; max-width: 85%; white-space: pre-wrap; }
+.replies .her.wait { color: var(--dim); }

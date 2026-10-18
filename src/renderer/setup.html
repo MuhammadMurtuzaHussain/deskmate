@@ -8,9 +8,17 @@
   </head>
   <body>
     <header>
-      <h1>Set up Deskmate</h1>
-      <p>Three things and she's ready. You can come back any time: menu-bar icon → Setup…</p>
+      <h1 id="title">Set up Deskmate</h1>
+      <p id="subtitle">Three things and she's ready. You can come back any time: menu-bar icon → Setup…</p>
+      <div id="tour-steps" class="steps tour-only"></div>
     </header>
+
+    <section id="welcome" class="tour-only">
+      <div class="head"><h2>Welcome</h2></div>
+      <p class="lead">Deskmate is a companion who lives on your desktop: she talks with you, looks at what you're doing when you ask, works your apps and your browser, remembers what matters to you, and does things on a schedule.</p>
+      <p class="hint">Five short steps: her brain, how she looks, her voice, what macOS lets her do, and a quick try. About five minutes. You can skip anything and come back later from the menu-bar icon → Setup…</p>
+      <div class="row"><button id="tour-skip" class="link">Skip the tour and show every setting</button></div>
+    </section>
 
     <section id="brain">
       <div class="head"><h2>1 · Her brain</h2><span class="chip" id="brain-chip">…</span></div>
@@ -54,14 +62,25 @@
     <section id="voice">
       <div class="head"><h2>2 · Her voice</h2><span class="chip" id="voice-chip">…</span></div>
       <div class="hint" id="voice-text"></div>
+      <div id="kokoro" class="hidden">
+        <div class="option">
+          <div class="label"><b>A natural voice on this Mac</b> (Kokoro), and ears to hear you (Whisper): free and private, nothing you say leaves the computer. About a 1 GB download; needs Python 3.10–3.12 (<code>brew install python@3.12</code>).</div>
+          <div class="row" id="kokoro-actions">
+            <button id="kokoro-install" class="primary">Install the voice</button>
+            <button id="voice-system">Use the system voice</button>
+            <button id="kokoro-use" class="hidden">Use Kokoro</button>
+          </div>
+          <div id="kokoro-progress" class="progress hidden"><div class="bar"><span id="kokoro-bar"></span></div><div class="hint" id="kokoro-line"></div></div>
+          <div class="row hidden" id="kokoro-restart"><span class="hint grow">Restart Deskmate once so she can listen too (hands-free talk).</span><button id="restart-now">Restart now</button></div>
+          <div class="msg" id="kokoro-msg"></div>
+        </div>
+      </div>
     </section>
 
     <section id="perms">
-      <div class="head"><h2>3 · What she may do</h2></div>
-      <div class="perm" data-kind="microphone"><div><b>Microphone</b><span>so she can hear you when you talk to her</span></div><span class="chip"></span><button>Allow</button></div>
-      <div class="perm" data-kind="screen"><div><b>Screen Recording</b><span>so she can see what you're doing</span></div><span class="chip"></span><button>Allow</button></div>
-      <div class="perm" data-kind="keys"><div><b>Accessibility</b><span>so she can work Discord, Slack and the Claude app for you</span></div><span class="chip"></span><button>Allow</button></div>
-      <div class="hint" id="perm-note">After you switch something on in System Settings, come back here; this page checks again by itself.</div>
+      <div class="head"><h2>3 · What she may do</h2><span class="chip" id="perm-chip">…</span></div>
+      <div id="perm-rows" class="perms-list"></div>
+      <div class="hint" id="perm-note">macOS asks once; after a no, only System Settings can change it. Switch it on there and come back: this page checks again by itself every few seconds.</div>
     </section>
 
     <section id="remote" class="hidden">
@@ -178,8 +197,23 @@
       </div>
     </section>
 
+    <section id="tryme" class="tour-only">
+      <div class="head"><h2>Try me</h2><span class="chip" id="try-chip">30 seconds</span></div>
+      <div class="hint" id="try-hint">Pick one, or type your own. She answers here and out loud.</div>
+      <div id="try-examples" class="examples"></div>
+      <form id="try-form" class="row" autocomplete="off">
+        <input id="try-text" placeholder="or ask her anything…" />
+        <button type="submit">Ask</button>
+      </form>
+      <div id="try-replies" class="replies"></div>
+      <div class="hint" id="try-more"></div>
+    </section>
+
     <footer>
       <span class="hint" id="tip"></span>
+      <span class="grow"></span>
+      <button id="tour-back" class="tour-only">Back</button>
+      <button id="tour-next" class="primary tour-only">Next</button>
       <button id="done" class="primary">Done</button>
     </footer>
     <script type="module" src="./setup.ts"></script>

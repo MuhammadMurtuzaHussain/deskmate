@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, ChannelKey, ChannelSetup, ScheduleSetupState, SetupState, SafetySetupState, SpendSetupState, PermLevel, PermOriginId } from '../shared/types'
+import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, OnboardPermRow, OnboardState, ChannelKey, ChannelSetup, ScheduleSetupState, SetupState, SafetySetupState, SpendSetupState, PermLevel, PermOriginId } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -98,7 +98,7 @@ function render(state: SetupState): void {
     chip(voiceChip, v.localServer ? 'local voice ready' : 'local voice starting…', v.localServer ? 'ok' : 'bad')
     voiceText.textContent = v.localServer
       ? 'She speaks and listens on this Mac (Kokoro + Whisper). Nothing you say leaves the computer.'
-      : 'The local voice server is starting or not installed yet. In the project folder run tts-local/setup.sh once.'
+      : 'The local voice is not installed yet (or still starting). Install it below, or pick the system voice.'
   } else if (v.provider === 'elevenlabs') {
     chip(voiceChip, 'ElevenLabs', 'ok')
     voiceText.textContent = 'She speaks with ElevenLabs (your key). For a free local voice and ears, see docs/VOICES.md.'
@@ -107,16 +107,7 @@ function render(state: SetupState): void {
     voiceText.textContent = 'She uses your computer\'s built-in voice for now. For a natural local voice and talking to her, see docs/VOICES.md (one script).'
   }
 
-  const mac = state.platform === 'darwin'
-  $<HTMLElement>('perms').classList.toggle('hidden', !mac)
-  for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {
-    const kind = row.dataset.kind as Exclude<PermissionKind, 'calendars'>
-    const value = kind === 'keys' ? (state.permissions.keys === null ? 'unavailable' : state.permissions.keys ? 'granted' : 'denied') : state.permissions[kind]
-    const ok = value === 'granted'
-    chip(row.querySelector('.chip') as HTMLElement, ok ? 'allowed' : value === 'unavailable' ? 'not built' : 'not yet', ok ? 'ok' : 'bad')
-    const btn = row.querySelector('button') as HTMLButtonElement
-    btn.classList.toggle('hidden', ok || value === 'unavailable')
-  }
+  $<HTMLElement>('perms').classList.toggle('hidden', state.platform !== 'darwin')
 }
 
 // ---- From your phone: one card per chat app, built once and updated in place (so what you type survives a refresh)
@@ -690,6 +681,7 @@ $<HTMLButtonElement>('learn-skills').addEventListener('click', (e) => {
 
 async function refresh(): Promise<void> {
   if (!api.getSetup) return
+  void refreshOnboard()
   const state = await api.getSetup()
   render(state)
   renderRemote(state)
@@ -754,12 +746,6 @@ $<HTMLInputElement>('voice-replies').addEventListener('change', async (e) => {
 // A pairing request comes in from a chat app while this window is open.
 api.onSetupChanged?.(() => void refresh())
 
-for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {
-  row.querySelector('button')?.addEventListener('click', async () => {
-    await api.allow?.(row.dataset.kind as PermissionKind)
-    await refresh()
-  })
-}
 
 // ---- Characters: a card each, the one she is now highlighted; voice, zoom and personality for her; add and remove
 
@@ -1167,3 +1153,236 @@ $<HTMLButtonElement>('budget-save').addEventListener('click', async (e) => {
   spendMsg.textContent = n ? `Budget set: ${money(n)} a month.` : 'No budget.'
   spendMsg.className = 'msg good'
 })
+
+// ---- The first-run tour: one step at a time (welcome, brain, character, voice, permissions, try me), Back / Next.
+// Opened with ?tour=1 (first run, or tray → Welcome tour…); the same sections as the full page, shown one by one.
+
+interface TourStep {
+  id: string
+  /** on the step pills */
+  short: string
+  title: string
+  subtitle: string
+}
+const TOUR: TourStep[] = [
+  { id: 'welcome', short: 'Welcome', title: 'Hi! Let\'s get her ready', subtitle: 'A few short steps. Nothing here is final: the menu-bar icon → Setup… changes any of it.' },
+  { id: 'brain', short: 'Brain', title: 'Her brain', subtitle: 'What she thinks with. Claude works your apps best; Ollama is free and stays on this Mac; Gemini has a free key.' },
+  { id: 'characters', short: 'Character', title: 'Pick her', subtitle: 'Who sits on your desk. Click one; you can add your own VRM, Live2D or MMD model later.' },
+  { id: 'voice', short: 'Voice', title: 'Her voice', subtitle: 'A natural local voice with ears to hear you, or your computer\'s own voice for now.' },
+  { id: 'perms', short: 'Permissions', title: 'What macOS lets her do', subtitle: 'Each one has a reason. The first three make her useful; the rest are for the things that use them.' },
+  { id: 'tryme', short: 'Try me', title: 'Try me', subtitle: 'Thirty seconds: ask her something.' }
+]
+let tourOn = false
+let tourAt = 0
+let steps = TOUR
+let onboard: OnboardState | null = null
+
+function tourSteps(): TourStep[] {
+  return TOUR.filter((t) => t.id !== 'perms' || !onboard || onboard.platform === 'darwin')
+}
+
+function showStep(i: number): void {
+  steps = tourSteps()
+  tourAt = Math.max(0, Math.min(i, steps.length - 1))
+  const step = steps[tourAt]
+  for (const sec of document.querySelectorAll('section')) sec.classList.toggle('current', sec.id === step.id)
+  $<HTMLElement>('title').textContent = step.title
+  $<HTMLElement>('subtitle').textContent = step.subtitle
+  const dots = $<HTMLDivElement>('tour-steps')
+  dots.replaceChildren(
+    ...steps.map((t, n) => {
+      return el('span', n === tourAt ? 'on' : n < tourAt ? 'done' : '', `${n + 1} · ${t.short}`)
+    })
+  )
+  $<HTMLButtonElement>('tour-back').disabled = tourAt === 0
+  $<HTMLButtonElement>('tour-next').textContent = tourAt === steps.length - 1 ? 'Finish' : tourAt === 0 ? "Let's go" : 'Next'
+  if (step.id === 'characters') void renderCharacters()
+  if (step.id === 'tryme') renderTry()
+  void refreshOnboard()
+  window.scrollTo(0, 0)
+}
+
+function startTour(): void {
+  tourOn = true
+  document.body.classList.add('tour')
+  showStep(0)
+}
+function endTour(): void {
+  tourOn = false
+  document.body.classList.remove('tour')
+  for (const sec of document.querySelectorAll('section')) sec.classList.remove('current')
+  $<HTMLElement>('title').textContent = 'Set up Deskmate'
+  $<HTMLElement>('subtitle').textContent = "Everything she can do, in one place. Come back any time: menu-bar icon → Setup…"
+}
+;(window as unknown as { startTour: () => void }).startTour = startTour
+
+$<HTMLButtonElement>('tour-back').addEventListener('click', () => showStep(tourAt - 1))
+$<HTMLButtonElement>('tour-next').addEventListener('click', async () => {
+  if (tourAt < steps.length - 1) return showStep(tourAt + 1)
+  await api.onboardDone?.()
+  await api.finishSetup?.()
+})
+$<HTMLButtonElement>('tour-skip').addEventListener('click', () => endTour())
+
+// ---- permissions, checked again every few seconds while they are on screen (they change in System Settings)
+
+const PERM_TEXT: Record<OnboardPermRow['state'], [string, 'ok' | 'bad' | '']> = {
+  granted: ['allowed', 'ok'],
+  'not-asked': ['not yet', 'bad'],
+  denied: ['off', 'bad'],
+  'not-running': ['app not open', ''],
+  'not-installed': ['not installed', ''],
+  unknown: ['unknown', '']
+}
+
+const permRows = new Map<string, { root: HTMLDivElement; chip: HTMLSpanElement; act: HTMLButtonElement; open: HTMLButtonElement }>()
+
+function renderPerms(rows: OnboardPermRow[]): void {
+  const list = $<HTMLDivElement>('perm-rows')
+  for (const r of rows) {
+    let row = permRows.get(r.id)
+    if (!row) {
+      const root = el('div', 'perm')
+      const text = el('div')
+      const name = el('b', '', r.label)
+      if (!r.needed) name.append(el('span', 'tag', 'optional'))
+      text.append(name, el('span', '', r.why))
+      const chipEl = el('span', 'chip')
+      const acts = el('div', 'acts')
+      const act = el('button', '', 'Allow')
+      const open = el('button', 'link', 'Open System Settings')
+      act.addEventListener('click', async () => {
+        act.disabled = true
+        try {
+          const next = await api.onboardAllow?.(r.id)
+          if (next) applyOnboard(next)
+        } finally {
+          act.disabled = false
+        }
+      })
+      open.addEventListener('click', () => void api.onboardSettings?.(r.id))
+      acts.append(act, open)
+      text.append(acts)
+      root.append(text, chipEl)
+      list.append(root)
+      row = { root, chip: chipEl, act, open }
+      permRows.set(r.id, row)
+    }
+    const [text, kind] = PERM_TEXT[r.state]
+    chip(row.chip, text, kind)
+    row.act.textContent = r.action === 'launch' ? `Open ${r.label.replace('Automation: ', '')} and ask` : 'Allow'
+    row.act.classList.toggle('hidden', r.action !== 'ask' && r.action !== 'launch')
+    row.open.classList.toggle('hidden', r.state === 'granted' || r.state === 'not-installed')
+    ;(row.act.parentElement as HTMLElement).classList.toggle('hidden', r.state === 'granted' || r.state === 'not-installed')
+  }
+  const needed = rows.filter((r) => r.needed)
+  const ok = needed.filter((r) => r.state === 'granted').length
+  chip($<HTMLSpanElement>('perm-chip'), ok === needed.length ? 'all set' : `${ok} of ${needed.length} needed`, ok === needed.length ? 'ok' : 'bad')
+}
+
+// ---- her voice: install Kokoro here (tts-local/setup.sh with a progress bar), or keep the system voice
+
+function renderKokoro(o: OnboardState): void {
+  const k = o.kokoro
+  const box = $<HTMLDivElement>('kokoro')
+  box.classList.toggle('hidden', o.platform === 'win32')
+  const install = $<HTMLButtonElement>('kokoro-install')
+  const use = $<HTMLButtonElement>('kokoro-use')
+  const system = $<HTMLButtonElement>('voice-system')
+  install.classList.toggle('hidden', k.installed || k.installing)
+  install.textContent = k.error ? 'Try again' : 'Install the voice'
+  use.classList.toggle('hidden', !k.installed || k.installing || (k.choice === 'local' && k.running))
+  system.classList.toggle('hidden', k.installing || k.choice === 'system')
+  $<HTMLDivElement>('kokoro-progress').classList.toggle('hidden', !k.installing && !(k.step && k.step === k.of && k.choice === 'local' && !k.running))
+  $<HTMLSpanElement>('kokoro-bar').style.width = `${k.of ? Math.round((100 * Math.max(0.5, k.step ?? 0)) / k.of) : 5}%`
+  $<HTMLDivElement>('kokoro-line').textContent = k.installing ? `Step ${k.step || 1} of ${k.of ?? 4}: ${k.line ?? ''}` : (k.line ?? '')
+  $<HTMLDivElement>('kokoro-restart').classList.toggle('hidden', !(k.restartForEars && k.choice === 'local' && k.installed))
+  const msg = $<HTMLDivElement>('kokoro-msg')
+  if (k.error) note(msg, k.error, 'bad')
+  else if (k.installing) note(msg, 'This takes a few minutes the first time. You can go on with the next steps meanwhile.')
+  else if (k.choice === 'local' && k.running) note(msg, 'She speaks with Kokoro now.', 'good')
+  else if (k.choice === 'local' && k.installed) note(msg, 'Installed. The voice is starting…')
+  else if (k.choice === 'system') note(msg, "She uses your computer's voice. Install Kokoro any time from here.", 'good')
+  else note(msg, '')
+}
+
+$<HTMLButtonElement>('kokoro-install').addEventListener('click', () => void api.installKokoro?.().then(refreshOnboard))
+$<HTMLButtonElement>('kokoro-use').addEventListener('click', async () => applyOnboard((await api.chooseVoice?.('local')) ?? null))
+$<HTMLButtonElement>('voice-system').addEventListener('click', async () => applyOnboard((await api.chooseVoice?.('system')) ?? null))
+$<HTMLButtonElement>('restart-now').addEventListener('click', () => void api.restartApp?.())
+
+// ---- try me: three examples and a box; her answer shows here (and she says it out loud)
+
+let tried = 0
+function renderTry(): void {
+  const box = $<HTMLDivElement>('try-examples')
+  if (!onboard || box.childElementCount) return
+  for (const ex of onboard.examples) {
+    const b = el('button', '', ex)
+    b.addEventListener('click', () => void ask(ex))
+    box.append(b)
+  }
+}
+
+async function ask(text: string): Promise<void> {
+  if (!api.tryRequest || !text.trim()) return
+  const list = $<HTMLDivElement>('try-replies')
+  list.append(el('div', 'you', text))
+  const wait = el('div', 'her wait', '…')
+  list.append(wait)
+  try {
+    const r = await api.tryRequest(text)
+    wait.textContent = r.say || (r.speak ? '…' : '(she looked and kept quiet)')
+    wait.classList.remove('wait')
+  } catch (err) {
+    wait.textContent = `That did not work: ${(err as Error).message}`
+  }
+  tried++
+  $<HTMLDivElement>('try-more').textContent =
+    tried === 1 ? `From anywhere: the command bar (${commandKey || '⌥Space'}), or talk to her once listening is on. Press Finish when you're done.` : ''
+}
+
+$<HTMLFormElement>('try-form').addEventListener('submit', (e) => {
+  e.preventDefault()
+  const input = $<HTMLInputElement>('try-text')
+  const text = input.value
+  input.value = ''
+  void ask(text)
+})
+
+let commandKey = ''
+void api.getConfig().then((config) => {
+  if (config.commandShortcut) commandKey = config.commandShortcut.replace('CommandOrControl', '⌘').replace('Alt', '⌥').replace('Shift', '⇧').replace(/\+/g, '')
+})
+
+function applyOnboard(o: OnboardState | null): void {
+  if (!o) return
+  onboard = o
+  renderPerms(o.permissions)
+  renderKokoro(o)
+  const brainChipText = brainChip.textContent ?? ''
+  $<HTMLDivElement>('try-hint').textContent = /not set up/.test(brainChipText)
+    ? `She has no brain yet, so she can only say a few set lines. Go back to step 2 for real answers.`
+    : `Pick one, or type your own. ${o.name} answers here and out loud.`
+}
+
+let onboardBusy = false
+async function refreshOnboard(): Promise<void> {
+  if (!api.onboard || onboardBusy) return
+  onboardBusy = true
+  try {
+    applyOnboard(await api.onboard())
+  } finally {
+    onboardBusy = false
+  }
+}
+
+api.onOnboardChanged?.(() => void refreshOnboard())
+// Live check: every 3 s while the permission rows (or the install) are on screen.
+setInterval(() => {
+  const permsShown = tourOn ? steps[tourAt]?.id === 'perms' : document.hasFocus()
+  if (permsShown || onboard?.kokoro.installing) void refreshOnboard()
+}, 3000)
+
+if (new URLSearchParams(location.search).get('tour') === '1') startTour()
+else void refreshOnboard()

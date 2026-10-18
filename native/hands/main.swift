@@ -718,6 +718,44 @@ func calendarEvents(minutes: Int, pastMinutes: Int) throws -> Json {
   }]
 }
 
+// MARK: - Automation (Apple events) permission
+
+/// AEDeterminePermissionToAutomateTarget can block for a long time on some targets (Spotify, while running, with the
+/// question never asked) even without asking, so it runs on its own thread and gives up after a while ("timeout"),
+/// leaving the helper free for the next request.
+func automationStatus(_ bundleId: String, ask: Bool) -> String {
+  if NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) == nil { return "notInstalled" }
+  var result = "timeout"
+  let lock = NSLock()
+  let done = DispatchSemaphore(value: 0)
+  Thread.detachNewThread {
+    let r = determineAutomation(bundleId, ask: ask)
+    lock.lock()
+    result = r
+    lock.unlock()
+    done.signal()
+  }
+  _ = done.wait(timeout: .now() + .seconds(ask ? 120 : 3))
+  lock.lock()
+  defer { lock.unlock() }
+  return result
+}
+
+func determineAutomation(_ bundleId: String, ask: Bool) -> String {
+  var target = AEAddressDesc()
+  let bytes = Array(bundleId.utf8)
+  guard AECreateDesc(typeApplicationBundleID, bytes, bytes.count, &target) == noErr else { return "error" }
+  defer { AEDisposeDesc(&target) }
+  let status = AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, ask)
+  switch Int(status) {
+  case Int(noErr): return "granted"
+  case -1743: return "denied" // errAEEventNotPermitted
+  case -1744: return "notDetermined" // errAEEventWouldRequireUserConsent
+  case Int(procNotFound): return "notRunning"
+  default: return "error \(status)"
+  }
+}
+
 // MARK: - Commands
 
 func handle(_ req: Json) throws -> Json {
@@ -733,6 +771,12 @@ func handle(_ req: Json) throws -> Json {
     // keys: may post keyboard events (what her hands need). accessibility: AXIsProcessTrusted for this binary, which
     // can read false for a child process even when the app that started it is allowed.
     return ["keys": CGPreflightPostEventAccess(), "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()]
+  case "automation":
+    // Whether the app that started this helper may send Apple events to `bundleId` (Messages, Spotify): granted |
+    // denied | notDetermined | notRunning | notInstalled | timeout. ask: true shows macOS's question when it has not been asked
+    // (the target has to be running), and waits for the answer.
+    guard let id = str(req, "bundleId") else { throw HandsError("no_bundleId") }
+    return ["status": automationStatus(id, ask: (req["ask"] as? Bool) ?? false)]
   case "promptAccessibility":
     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     return ["accessibility": AXIsProcessTrustedWithOptions(opts)]

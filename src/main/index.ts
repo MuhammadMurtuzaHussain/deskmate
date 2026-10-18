@@ -1,9 +1,9 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, safeStorage, screen, shell, systemPreferences, Tray } from 'electron'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { Agent, type Task } from './agent'
 import { callClaude, ClaudeError, replyText, setClaudeMeter, toClaudeError } from './anthropic'
 import { runAgentTurn, runOneTool, type CallEvent } from './core'
@@ -43,7 +43,8 @@ import { WHATSAPP_REASON } from './channels/whatsapp'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings, type SettingsData } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
-import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
+import { autostartLocalTts, localTtsHealthy, localTtsSelected, localTtsVenv, synthesize } from './tts'
+import { permissionRows, settingsUrl, setupError, setupProgress, tryExamples, type PermProbe } from './onboarding'
 import { CommandBar } from './bar'
 import { characterFile, importCharacter, resolveCharacterAssets } from './characters'
 import { Body } from './body'
@@ -66,7 +67,7 @@ import { newerRelease, updateCheckEnabled } from './updates'
 import { macSignature, updateMode, Updates, type UpdateState } from './updater'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch, type ActivityView, type SafetySetupState, type SpendSetupState } from '../shared/types'
+import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch, type ActivityView, type SafetySetupState, type SpendSetupState, type OnboardPermId, type OnboardState } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -179,6 +180,9 @@ function secretBox(): SecretBox | null {
 }
 const settings = new Settings(join(app.getPath('userData'), 'settings.json'), { box: secretBox() })
 registerSecret(process.env.ANTHROPIC_API_KEY, process.env.GEMINI_API_KEY, process.env.GOOGLE_API_KEY, process.env.DESKMATE_TELEGRAM_TOKEN)
+// The voice picked in the first-run tour, unless .env names one. Kokoro chosen there also turns her ears on.
+const TTS_FROM_ENV = Boolean(process.env.DESKMATE_TTS?.trim())
+if (!TTS_FROM_ENV && settings.get().voice) process.env.DESKMATE_TTS = settings.get().voice === 'system' ? 'say' : 'local'
 let characters = listCharacters()
 if (characters.length === 0) throw new Error('no characters found under character/<id>/character.json')
 const requested = process.env.DESKMATE_CHARACTER?.trim() || settings.get().activeCharacter || 'mika'
@@ -580,6 +584,7 @@ function buildTrayMenu(): Menu {
     },
     { label: 'Characters…', click: () => openSetup('characters') },
     { label: 'Setup…', click: () => openSetup() },
+    { label: 'Welcome tour…', toolTip: 'Brain, character, voice, macOS permissions and a quick try, step by step', click: () => openSetup('tour') },
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open her memory', toolTip: 'USER.md and MEMORY.md: what she knows about you, in plain text you can edit', click: openMemoryFolder },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
@@ -680,9 +685,10 @@ let watchTimer: NodeJS.Timeout | null = null
 let observing = false
 
 /** Loads one of the renderer pages (index, bar, setup): from the dev server in development, from disk when built. */
-function loadPage(target: BrowserWindow, page: string): void {
-  if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(`${process.env.ELECTRON_RENDERER_URL}/${page === 'index' ? '' : `${page}.html`}`)
-  else void target.loadFile(join(__dirname, `../renderer/${page}.html`))
+function loadPage(target: BrowserWindow, page: string, query?: Record<string, string>): void {
+  const search = query ? `?${new URLSearchParams(query)}` : ''
+  if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(`${process.env.ELECTRON_RENDERER_URL}/${page === 'index' ? '' : `${page}.html`}${search}`)
+  else void target.loadFile(join(__dirname, `../renderer/${page}.html`), query ? { query } : undefined)
 }
 const PRELOAD = join(__dirname, '../preload/index.js')
 
@@ -5027,11 +5033,12 @@ async function channelAction(id: ChannelId, action: ChannelAction, data: Record<
 let setupWin: BrowserWindow | null = null
 let setupStartMode: string = brain.mode
 
-function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety'): void {
+function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety' | 'tour'): void {
   if (setupWin && !setupWin.isDestroyed()) {
     setupWin.show()
     setupWin.focus()
-    if (section) void setupWin.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`)
+    if (section === 'tour') void setupWin.webContents.executeJavaScript('window.startTour?.()')
+    else if (section) void setupWin.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`)
     return
   }
   setupStartMode = brain.mode
@@ -5059,8 +5066,8 @@ function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety'): void
     setupWin = null
     finishSetup()
   })
-  loadPage(setupWin, 'setup')
-  if (section) setupWin.webContents.once('did-finish-load', () => void setupWin?.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`))
+  loadPage(setupWin, 'setup', section === 'tour' ? { tour: '1' } : undefined)
+  if (section && section !== 'tour') setupWin.webContents.once('did-finish-load', () => void setupWin?.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`))
 }
 
 /** Closing the window counts as done: it does not come back on its own. Her window reloads if her brain changed. */
@@ -5154,6 +5161,174 @@ ipcMain.handle('setup:claude', async (_event, key: string | null, model: string,
   return result
 })
 ipcMain.handle('setup:allow', (_event, kind: PermissionKind) => allow(kind))
+
+// ---- the first-run tour (onboarding.ts): pick a brain, a character, a voice (Kokoro installed from here), each macOS
+// permission with a live check, then three things to try.
+
+const kokoro: { installing: boolean; step?: number; of?: number; line?: string; error?: string } = { installing: false }
+let kokoroRunning = false
+/** Automation answers, kept a little: the helper's check can take 3 s (Spotify), and the tour asks every few seconds. */
+const automationSeen = new Map<string, { status: string; at: number }>()
+let onboardTimer: NodeJS.Timeout | null = null
+
+/** Tells the setup page the tour's state moved (install progress), at most every 250 ms. */
+function onboardChanged(): void {
+  if (onboardTimer) return
+  onboardTimer = setTimeout(() => {
+    onboardTimer = null
+    if (setupWin && !setupWin.isDestroyed()) setupWin.webContents.send('onboard:changed')
+  }, 250)
+}
+
+async function automationStatus(bundleId: string, fresh = false): Promise<string> {
+  if (!appHands.automation) return 'unknown'
+  const seen = automationSeen.get(bundleId)
+  const maxAge = seen?.status === 'timeout' ? 60_000 : 10_000
+  if (seen && !fresh && Date.now() - seen.at < maxAge) return seen.status
+  const status = await appHands.automation(bundleId)
+  automationSeen.set(bundleId, { status, at: Date.now() })
+  return status
+}
+
+async function probePermissions(): Promise<PermProbe> {
+  const media = (kind: 'microphone' | 'screen'): string => systemPreferences.getMediaAccessStatus(kind)
+  const [accessibility, messages, spotify, calendars] = await Promise.all([
+    appHands.available ? checkAppTrust() : Promise.resolve(null),
+    automationStatus('com.apple.MobileSMS'),
+    automationStatus('com.spotify.client'),
+    refreshCalendarAccess()
+  ])
+  return { accessibility, screen: media('screen'), microphone: media('microphone'), messages, spotify, calendars, fullDisk: chatDbAccess(CHAT_DB_PATH).ok }
+}
+
+async function onboardState(): Promise<OnboardState> {
+  const mac = process.platform === 'darwin'
+  if (!kokoro.installing) kokoroRunning = await localTtsHealthy()
+  // a server that answers counts as installed (started by hand, or by another copy of her)
+  const installed = Boolean(localTtsVenv(RESOURCES, USER_DATA)) || kokoroRunning
+  const choice = settings.get().voice ?? null
+  return {
+    platform: process.platform,
+    permissions: mac ? permissionRows(await probePermissions()) : [],
+    kokoro: { installed, running: kokoroRunning, installing: kokoro.installing, step: kokoro.step, of: kokoro.of, line: kokoro.line, error: kokoro.error, choice, restartForEars: localSttSelected() && !ears },
+    examples: tryExamples(process.platform),
+    name: character.name
+  }
+}
+
+const AUTOMATION_TARGETS: Partial<Record<OnboardPermId, string>> = { 'automation-messages': 'com.apple.MobileSMS', 'automation-spotify': 'com.spotify.client' }
+
+async function onboardAllow(id: OnboardPermId): Promise<void> {
+  if (process.platform !== 'darwin') return
+  if (id === 'accessibility') return allow('keys')
+  if (id === 'screen' || id === 'microphone' || id === 'calendars') return allow(id)
+  const bundleId = AUTOMATION_TARGETS[id]
+  if (!bundleId || !appHands.automation) {
+    await shell.openExternal(settingsUrl(id))
+    return
+  }
+  // macOS only asks about an app that is running: open it (in the background) first.
+  if ((await automationStatus(bundleId, true)) === 'notRunning') await appHands.launch(bundleId).catch(() => undefined)
+  const status = await appHands.automation(bundleId, true)
+  automationSeen.set(bundleId, { status, at: Date.now() })
+  console.log(`[setup] Automation for ${bundleId}: ${status}`)
+  // After a no (or no answer) only System Settings can change it.
+  if (status !== 'granted') await shell.openExternal(settingsUrl(id))
+}
+
+/** Runs tts-local/setup.sh with the venv under the user-data folder (the app's own folder must not change). */
+async function installKokoro(): Promise<void> {
+  if (kokoro.installing) return
+  const script = join(RESOURCES, 'tts-local', 'setup.sh')
+  if (process.platform === 'win32' || !existsSync(script)) {
+    kokoro.error = 'The one-click install is for macOS and Linux; on Windows follow docs/VOICES.md.'
+    onboardChanged()
+    return
+  }
+  const venv = app.isPackaged ? join(USER_DATA, 'tts-local', '.venv') : join(ROOT, 'tts-local', '.venv')
+  mkdirSync(dirname(venv), { recursive: true })
+  Object.assign(kokoro, { installing: true, step: 0, of: 4, line: 'Starting…', error: undefined })
+  onboardChanged()
+  const lines: string[] = []
+  const onData = (d: Buffer): void => {
+    for (const raw of d.toString().split(/\r?\n/)) {
+      const line = redact(raw.trim())
+      if (!line) continue
+      lines.push(line)
+      if (lines.length > 40) lines.shift()
+      const p = setupProgress(line)
+      if (p) Object.assign(kokoro, p)
+      kokoro.line = line.replace(/^setup\.sh:\s*(\[\d+\/\d+\]\s*)?/, '')
+      console.log(`[voice] ${line}`)
+    }
+    onboardChanged()
+  }
+  const code = await new Promise<number | null>((resolve) => {
+    const child = spawn('/bin/bash', [script], { cwd: dirname(script), env: { ...process.env, DESKMATE_TTS_VENV: venv }, stdio: ['ignore', 'pipe', 'pipe'] })
+    child.stdout.on('data', onData)
+    child.stderr.on('data', onData)
+    child.on('error', (err) => {
+      lines.push(err.message)
+      resolve(-1)
+    })
+    child.on('close', resolve)
+  })
+  kokoro.installing = false
+  if (code !== 0) {
+    kokoro.error = setupError(lines)
+    console.warn(`[voice] Kokoro install failed (${code}): ${kokoro.error}`)
+    onboardChanged()
+    return
+  }
+  kokoro.step = kokoro.of
+  kokoro.line = 'Installed.'
+  await chooseVoice('local')
+}
+
+/** Her voice from now on: Kokoro (started now) or the computer's own. */
+async function chooseVoice(choice: 'local' | 'system'): Promise<void> {
+  settings.set({ voice: choice })
+  if (TTS_FROM_ENV) console.log(`[voice] DESKMATE_TTS in .env decides the voice at launch; using ${choice} for now`)
+  process.env.DESKMATE_TTS = choice === 'local' ? 'local' : 'say'
+  if (choice === 'local') {
+    stopLocalTts()
+    stopLocalTts = await autostartLocalTts(RESOURCES, USER_DATA)
+    // the server takes a few seconds to load the voice
+    for (let i = 0; i < 20 && !(kokoroRunning = await localTtsHealthy()); i++) await new Promise((r) => setTimeout(r, 1000))
+  } else {
+    stopLocalTts()
+    stopLocalTts = () => undefined
+    kokoroRunning = false
+  }
+  console.log(`[voice] she speaks with ${choice === 'local' ? `Kokoro${kokoroRunning ? '' : ' (not answering yet)'}` : 'the system voice'}`)
+  onboardChanged()
+}
+
+ipcMain.handle('onboard:get', () => onboardState())
+ipcMain.handle('onboard:allow', async (_event, id: OnboardPermId) => {
+  await onboardAllow(id)
+  return onboardState()
+})
+ipcMain.handle('onboard:settings', async (_event, id: OnboardPermId) => {
+  if (process.platform === 'darwin' && id in { accessibility: 1, screen: 1, microphone: 1, 'automation-messages': 1, 'automation-spotify': 1, calendars: 1, 'full-disk': 1 }) await shell.openExternal(settingsUrl(id))
+})
+ipcMain.handle('onboard:kokoro', () => void installKokoro())
+ipcMain.handle('onboard:voice', async (_event, choice: string) => {
+  if (choice === 'local' || choice === 'system') await chooseVoice(choice)
+  return onboardState()
+})
+ipcMain.handle('onboard:try', async (_event, text: string): Promise<Reply> => {
+  lastActivity = Date.now()
+  return handleChat(String(text).slice(0, 500))
+})
+ipcMain.handle('onboard:done', () => {
+  settings.set({ onboarded: true, setupDone: true })
+  console.log('[setup] tour finished')
+})
+ipcMain.handle('onboard:restart', () => {
+  app.relaunch()
+  app.quit()
+})
 ipcMain.handle('setup:channel', async (_event, rawId: string, action: ChannelAction, data?: Record<string, string>) => {
   const id = CHANNEL_IDS.find((c) => c === rawId)
   if (!id) return { ok: false, error: 'No such chat app.' }
@@ -5331,8 +5506,9 @@ app.whenReady().then(async () => {
     )
     setTimeout(() => void pollCalendar(), 5000).unref()
   })
-  // First run: no brain yet, so the setup window does the asking (it does not come back once closed).
-  if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
+  // First run: the tour (brain, character, voice, permissions, try me). It does not come back once closed; the tray
+  // has "Welcome tour…". A checkout with a brain in .env skips it, as before.
+  if (!settings.get().setupDone && (brain.mode === 'demo' || app.isPackaged)) openSetup('tour')
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
   void startUpdates()

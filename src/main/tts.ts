@@ -100,6 +100,19 @@ async function localKokoro(text: string, voice: CharacterVoice): Promise<Audio> 
   return { bytes, mime: 'audio/wav' }
 }
 
+const PYTHON_BIN = process.platform === 'win32' ? join('Scripts', 'python.exe') : join('bin', 'python')
+
+/** The venv lives next to the scripts in a checkout, or under the user-data folder for the packaged app (whose
+ * Resources must not change: that would break its signature). */
+export function venvCandidates(root: string, userData?: string): string[] {
+  return [join(root, 'tts-local', '.venv'), ...(userData ? [join(userData, 'tts-local', '.venv')] : [])]
+}
+
+/** The Kokoro venv that is set up, or null. */
+export function localTtsVenv(root: string, userData?: string): string | null {
+  return venvCandidates(root, userData).find((v) => existsSync(join(v, PYTHON_BIN))) ?? null
+}
+
 /**
  * Starts tts-local/server.py from its venv when Kokoro is her voice (the default) or her ears are local, unless a server already answers or
  * `DESKMATE_TTS_AUTOSTART=0`. Returns a stop function for app quit (no-op when nothing was started).
@@ -109,15 +122,12 @@ export async function autostartLocalTts(root: string, userData?: string): Promis
   if (!(localTtsSelected() || localSttSelected()) || process.env.DESKMATE_TTS_AUTOSTART === '0') return noop
   if (process.env.DESKMATE_TTS_URL?.trim() && !localTtsUrl().startsWith('http://127.0.0.1')) return noop
   const dir = join(root, 'tts-local')
-  // The venv lives next to the scripts in a checkout, or under the user-data folder for the packaged app.
-  const candidates = [join(dir, '.venv'), ...(userData ? [join(userData, 'tts-local', '.venv')] : [])]
-  const bin = process.platform === 'win32' ? join('Scripts', 'python.exe') : join('bin', 'python')
-  const venv = candidates.find((v) => existsSync(join(v, bin)))
+  const venv = localTtsVenv(root, userData)
   if (!venv) {
-    console.warn(`[tts] the Kokoro voice is not set up (no venv in ${candidates.join(' or ')}); run tts-local/setup.sh. Until then she uses ElevenLabs (with a key) or the system voice`)
+    console.warn(`[tts] the Kokoro voice is not set up (no venv in ${venvCandidates(root, userData).join(' or ')}); Setup → Her voice → Install, or run tts-local/setup.sh. Until then she uses ElevenLabs (with a key) or the system voice`)
     return noop
   }
-  const python = join(venv, bin)
+  const python = join(venv, PYTHON_BIN)
   if (await localTtsHealthy()) {
     // A server left behind by an earlier run can answer /health and still fail every line, so say one word to check.
     const works = await localKokoro('hi', {}).then(
@@ -144,7 +154,7 @@ export async function autostartLocalTts(root: string, userData?: string): Promis
   }
 }
 
-async function localTtsHealthy(): Promise<boolean> {
+export async function localTtsHealthy(): Promise<boolean> {
   try {
     const res = await fetch(new URL('/health', localTtsUrl()), { signal: AbortSignal.timeout(1500) })
     return res.ok

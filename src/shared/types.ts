@@ -469,6 +469,50 @@ export interface NoticeState {
 
 export type PermissionKind = 'microphone' | 'screen' | 'keys' | 'calendars'
 
+/** The first-run tour's permission rows (main/onboarding.ts). */
+export type OnboardPermId = 'accessibility' | 'screen' | 'microphone' | 'automation-messages' | 'automation-spotify' | 'calendars' | 'full-disk'
+export type OnboardPermState = 'granted' | 'not-asked' | 'denied' | 'not-running' | 'not-installed' | 'unknown'
+export interface OnboardPermRow {
+  id: OnboardPermId
+  label: string
+  why: string
+  /** one of the three she needs to be useful (the rest are for the features that use them) */
+  needed: boolean
+  state: OnboardPermState
+  /** ask: macOS can still ask (or the app is launched and asked); launch: open the app first; settings: only System Settings can change it */
+  action: 'ask' | 'launch' | 'settings' | null
+  /** the System Settings pane */
+  pane: string
+}
+
+/** The Kokoro voice from the tour: is it installed, running, being installed (with progress), or chosen against. */
+export interface KokoroSetupState {
+  /** the venv exists (in the checkout or under the user-data folder) */
+  installed: boolean
+  /** the voice server answers */
+  running: boolean
+  installing: boolean
+  /** step n of `of` from tts-local/setup.sh, and its last line */
+  step?: number
+  of?: number
+  line?: string
+  error?: string
+  /** what the user picked in the tour (null: not yet; DESKMATE_TTS in .env still wins) */
+  choice: 'local' | 'system' | null
+  /** a restart turns her ears on (listening needs the server from launch) */
+  restartForEars: boolean
+}
+
+export interface OnboardState {
+  platform: string
+  permissions: OnboardPermRow[]
+  kokoro: KokoroSetupState
+  /** the three example requests for "try me" */
+  examples: string[]
+  /** her name, for the copy */
+  name: string
+}
+
 export interface DeskmateApi {
   /** with an id: that character in place of the active one (for her thumbnail) */
   getConfig(id?: string): Promise<AppConfig>
@@ -528,6 +572,16 @@ export interface DeskmateApi {
   openHeartbeat?(): Promise<void>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
+  /** the first-run tour: permissions with a live check, the Kokoro install, the voice, "try me" */
+  onboard?(): Promise<OnboardState>
+  onboardAllow?(id: OnboardPermId): Promise<OnboardState>
+  onboardSettings?(id: OnboardPermId): Promise<void>
+  installKokoro?(): Promise<void>
+  chooseVoice?(choice: 'local' | 'system'): Promise<OnboardState>
+  tryRequest?(text: string): Promise<Reply>
+  onboardDone?(): Promise<void>
+  restartApp?(): Promise<void>
+  onOnboardChanged?(cb: () => void): void
   /** Setup → Characters */
   listCharacters?(): Promise<CharacterCard[]>
   /** a picture of her as a data: URL, made the first time it is asked for and kept in <user data>/thumbs */
