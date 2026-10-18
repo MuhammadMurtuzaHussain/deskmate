@@ -59,6 +59,8 @@ Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuz
 
 She starts in the bottom-right corner. The first time, a **setup window** walks you through her brain (a local Ollama model it finds on your Mac, or a Gemini key it checks for you), her voice, and the permissions she needs (microphone, screen, Accessibility), with a button for each. Come back to it any time from the menu-bar icon → **Setup…**. The sections below are the same steps by hand.
 
+When a newer release is out, the tray menu shows **Update available: vX.Y.Z**, which opens its download page (she checks GitHub at launch and every 6 hours; `DESKMATE_UPDATE_CHECK=0` in `.env` turns that off). Install it over the old one; your settings, memory and characters stay.
+
 ### Give her a brain (2 minutes)
 
 **Claude (best at doing things):** paste an [Anthropic API key](https://console.anthropic.com/settings/keys) into the setup window and pick a model (Claude Opus 5.5 by default; Sonnet 5.5 and Haiku 5.5 are quicker and cheaper). Billed per use to your Anthropic account. With Claude she also gets a real agent for multi-step jobs on your Mac ("open Spotify and play my liked songs", "in Notes, start a shopping list with milk and eggs"): it works your apps step by step, checks each step, and asks before anything that sends, posts, deletes or pays. [docs/AGENT.md](docs/AGENT.md#claude-brain-and-the-agent-on-your-mac).
@@ -124,7 +126,7 @@ Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each
 
 ## Settings reference
 
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), the phone remote's bot token, watch folder and interval, default character.
+All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), the phone remote's bot token, watch folder and interval, default character, update check.
 
 | folder | macOS | Windows | Linux |
 |---|---|---|---|
@@ -150,7 +152,7 @@ The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, t
 
 ## Privacy
 
-Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them and her selfies pass through Telegram under your own bot. Memory and settings live in your user-data folder and nowhere else.
+Local mode sends nothing anywhere, apart from the update check: one request to GitHub's releases API at launch and every 6 hours, which carries only the app version (`DESKMATE_UPDATE_CHECK=0` turns it off). With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them and her selfies pass through Telegram under your own bot. Memory and settings live in your user-data folder and nowhere else.
 
 ## Roadmap
 

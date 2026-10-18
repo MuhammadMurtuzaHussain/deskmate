@@ -21,6 +21,8 @@ export interface SettingsData {
   remotePaired?: { chatId: number; userId: number; name: string }
   /** the first-run window was finished or closed once */
   setupDone?: boolean
+  /** newest release the "update available" status line was already shown for, so it is said once per version */
+  updateNotified?: string
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

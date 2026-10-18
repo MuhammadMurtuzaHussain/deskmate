@@ -20,6 +20,7 @@ import { CommandBar } from './bar'
 import { Body } from './body'
 import { runComputerTask } from './computer'
 import { Hands, HandsError } from './hands'
+import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
 import { BODY_COMMANDS, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
@@ -249,6 +250,7 @@ function buildTrayMenu(): Menu {
   const loginItem = app.getLoginItemSettings().openAtLogin
   const threeD = character.renderer === 'vrm' || character.renderer === 'mmd'
   const running = agent.running().length
+  const next = update
   return Menu.buildFromTemplate([
     { label: `${character.name} · ${brain.modelName}`, enabled: false },
     { type: 'separator' },
@@ -323,9 +325,25 @@ function buildTrayMenu(): Menu {
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
+    ...(next ? [{ label: `Update available: v${next.version}`, click: () => void shell.openExternal(next.url) }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])
+}
+
+// ---- update check: a tray item and one status line when a newer release is on GitHub (DESKMATE_UPDATE_CHECK=0: off).
+let update: Release | null = null
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
+
+async function checkForUpdate(): Promise<void> {
+  const found = await newerRelease(app.getVersion())
+  if (!found || found.version === update?.version) return
+  update = found
+  console.log(`[update] Deskmate ${found.version} is out (running ${app.getVersion()}): ${found.url}`)
+  refreshTray()
+  if (settings.get().updateNotified === found.version) return
+  settings.set({ updateNotified: found.version })
+  status(`Deskmate ${found.version} is out · tray menu → Update available`)
 }
 
 function refreshTray(): void {
@@ -1946,6 +1964,11 @@ app.whenReady().then(async () => {
   if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
+  if (updateCheckEnabled()) {
+    // after the window has loaded, so the status line has somewhere to go
+    setTimeout(() => void checkForUpdate(), 15_000).unref()
+    setInterval(() => void checkForUpdate(), UPDATE_EVERY_MS).unref()
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else win.show()
