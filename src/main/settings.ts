@@ -6,6 +6,8 @@ export interface SettingsData {
   activeCharacter?: string
   /** folder Claude jobs run in unless the user names another */
   activeProject?: string
+  /** newest release the "update available" status line was already shown for, so it is said once per version */
+  updateNotified?: string
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

@@ -53,6 +53,8 @@ Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuz
 | Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` (installer) or `-portable.exe` | Unsigned: SmartScreen → "More info" → "Run anyway". |
 | Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
 
+When a newer release is out, the tray menu shows **Update available: vX.Y.Z**, which opens its download page (she checks GitHub at launch and every 6 hours; `DESKMATE_UPDATE_CHECK=0` in `.env` turns that off). Install it over the old one; your settings, memory and characters stay.
+
 She starts in the bottom-right corner with a chat box. Without a brain configured she runs on canned lines and shows a field for a Gemini key; for the local brain, read on.
 
 ### Give her a brain (2 minutes)
@@ -114,7 +116,7 @@ Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each
 
 ## Settings reference
 
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character.
+All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character, update check.
 
 | folder | macOS | Windows | Linux |
 |---|---|---|---|
@@ -139,7 +141,7 @@ The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, t
 
 ## Privacy
 
-Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. Memory and settings live in your user-data folder and nowhere else.
+Local mode sends nothing anywhere, apart from the update check: one request to GitHub's releases API at launch and every 6 hours, which carries only the app version (`DESKMATE_UPDATE_CHECK=0` turns it off). With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. Memory and settings live in your user-data folder and nowhere else.
 
 ## Roadmap
 
