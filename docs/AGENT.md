@@ -44,6 +44,23 @@ The rules live in the tools, so the model cannot talk its way past them:
 - Spoken goals are read back before the run starts (`DESKMATE_CONFIRM_JOBS`). "Stop" ends a run at the next step.
 - Every run is logged in `<user data>/tasks/computer-*.log`.
 
+## Her body on the desktop
+
+| you say | she does |
+|---|---|
+| "come here" / "come over" | walks along the bottom of the screen to below your pointer |
+| "go home" / "back to your spot" | walks back to where she lives (wherever you last dragged her) |
+| "sit on this window" / "sit down" | sits on the top edge of the window in front, legs dangling, and rides along when you move it; stands up and goes home when it closes |
+| "stand up" | gets off it |
+| "go to sleep" / "take a nap" · "wake up" | dozes off (eyes shut, "zzZ"); any message or poke wakes her |
+| "walk around" · "stay put" | strolls along the screen now and then, or stops |
+| "where's my resume?" / "find the tax pdf" | Spotlight finds it, Finder shows it, she walks over and points at it with a pulsing ring around it |
+| (drag her by the head) | she dangles and swings while carried |
+
+Her brain can pick these too ("come sit with me", "you look tired, take a nap"), and with Claude as her brain the agent can point at what it finds ("where's the export button?"). She falls asleep after `DESKMATE_SLEEP_AFTER` minutes (10; 0 keeps her awake) with nothing happening; `DESKMATE_WANDER=1` has her walk around from launch. The menu-bar icon has the same under **Her body**.
+
+3D characters (VRM) do all of it with their own limbs: a walk cycle, pointing with the near arm, a real seated pose. Live2D characters have no limbs to move, so she leans and bobs while walking, turns her head and eyes to what she points at (the ring does the rest), and uses the model's own pose toggles where it has them (see `poses` in docs/CHARACTERS.md). A window right under the menu bar has no room above it, so she says so instead of sitting in mid-air.
+
 ## Hands: jobs for Claude Code
 
 You need [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in (`claude` once in a terminal, then `/login`). Deskmate finds it on PATH or in the usual install folders; `DESKMATE_CLAUDE_BIN` points at it otherwise. The tray menu shows **Claude works in: …** when she has found it.

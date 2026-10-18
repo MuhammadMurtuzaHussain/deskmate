@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
@@ -16,11 +16,12 @@ import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
+import { Body } from './body'
 import { runComputerTask } from './computer'
 import { Hands, HandsError } from './hands'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import type { AppConfig, Audio, AvatarCommand, CharacterConfig, Emotion, PermissionKind, Reply, ReplyPayload, SetupState, ToolCall, Touch } from '../shared/types'
+import { BODY_COMMANDS, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -105,6 +106,18 @@ const CONFIRM_SENDS = (process.env.DESKMATE_CONFIRM_SENDS?.trim().toLowerCase() 
 const appHands = new Hands(Hands.locate(RESOURCES, ROOT))
 /** Accessibility granted to the app that runs her (null until checked); without it macOS drops her key presses. */
 let appTrusted: boolean | null = null
+const SELF_IDS = ['com.github.Electron', 'com.murtuza.deskmate']
+
+// Her body on the desktop: walking, pointing, sitting on windows, sleeping, wandering.
+const body = new Body({ win: () => win ?? null, hands: appHands, selfIds: SELF_IDS, log: (line) => console.log(`[body] ${line}`) })
+/** minutes without anything happening before she nods off; 0 keeps her awake (DESKMATE_SLEEP_AFTER) */
+const SLEEP_AFTER_MIN = Number(process.env.DESKMATE_SLEEP_AFTER ?? 10)
+let lastActivity = Date.now()
+/** Something happened (a message, a poke, her ears): wake her if she dozed off. */
+function activity(): void {
+  lastActivity = Date.now()
+  if (body.mode === 'sleep') body.wake()
+}
 
 /** Something she is waiting on an answer for: a job she read back, or a risky browser action. */
 type Pending =
@@ -224,6 +237,16 @@ function buildTrayMenu(): Menu {
     { type: 'separator' },
     { label: win?.isVisible() ? 'Hide her' : 'Show her', click: toggleWindow },
     { label: `Command bar${commandShortcut ? `  ${shortcutText(commandShortcut)}` : ''}`, click: () => bar.show() },
+    {
+      label: 'Her body',
+      submenu: [
+        { label: 'Come here', click: () => void runBodyCommand('come_here') },
+        { label: 'Sit on the front window', enabled: appHands.available, click: () => void runBodyCommand('sit') },
+        { label: 'Back to her spot', click: () => void runBodyCommand('go_home') },
+        { label: body.mode === 'sleep' ? 'Wake her' : 'Let her nap', click: () => void runBodyCommand(body.mode === 'sleep' ? 'wake' : 'sleep') },
+        { label: 'Walk around on her own', type: 'checkbox', checked: body.wandering, click: () => void runBodyCommand(body.wandering ? 'stay' : 'wander') }
+      ]
+    },
     { label: 'Look at my screen now', click: () => void observe(true) },
     { label: watching ? 'Stop watching' : 'Watch my screen', type: 'checkbox', checked: watching, click: () => void setWatching(!watching) },
     {
@@ -346,6 +369,9 @@ function createWindow(): void {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // macOS keeps windows below the menu bar unless told otherwise; sitting on a window near the top needs her
+    // window to reach above it.
+    enableLargerThanScreen: true,
     title: character.name,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -1014,6 +1040,7 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
       runApp: (req) =>
         runApp(req, { hands: appHands, confirm, confirmMessages: CONFIRM_SENDS !== 'never', confirmPrompts: false, onStep: status, log, stopped, portrait }),
       portrait,
+      pointAt: (rect) => body.pointAt(rect),
       openUrl: async (url) => {
         if (chrome.chromeAvailable()) await chrome.open(url)
         else await shell.openExternal(url)
@@ -1038,6 +1065,133 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
   }
 }
 
+/** Body moves: from her brain's "action", or from a phrase. Returns a line to say, or null to stay quiet. */
+async function runBodyCommand(command: BodyCommand): Promise<string | null> {
+  switch (command) {
+    case 'come_here':
+      await body.comeToCursor()
+      return null
+    case 'go_home':
+      await body.goHome()
+      return null
+    case 'sit': {
+      if (!appHands.available) return 'I need my hands helper to find a window to sit on.'
+      const app = await body.sitOnTopWindow()
+      if (app === 'too_high') return "That window's right up at the top of the screen, there's no room for me on it. Move it down a bit?"
+      return app ? null : "There's no window here I can sit on."
+    }
+    case 'stand':
+      body.stand()
+      return null
+    case 'sleep':
+      body.sleep()
+      return null
+    case 'wake':
+      body.wake()
+      return null
+    case 'wander':
+      body.wander(true, () => !acting && !browsing && !herSpeaking)
+      refreshTray()
+      return null
+    case 'stay':
+      body.wander(false, () => false)
+      refreshTray()
+      return null
+  }
+}
+
+/** Phrases for her body that need no model: "come here", "sit on this window", "go to sleep", "walk around". */
+const BODY_PHRASES: [RegExp, BodyCommand][] = [
+  [/^(?:come (?:here|over(?: here)?|to me)|over here)\b/i, 'come_here'],
+  [/^(?:go (?:home|back to your (?:spot|corner|place))|back to your (?:spot|corner|place))\b/i, 'go_home'],
+  [/^(?:sit(?: down)?(?: on (?:this|the|my|that) window| here)?|have a seat|take a seat)[.!]?$/i, 'sit'],
+  [/^(?:stand up|get up|get down)[.!]?$/i, 'stand'],
+  [/^(?:go to sleep|take a nap|nap time|sleep)[.!]?$/i, 'sleep'],
+  [/^(?:wake up)[.!]?$/i, 'wake'],
+  [/^(?:walk around|wander(?: around)?|go explore|explore|roam(?: around)?)[.!]?$/i, 'wander'],
+  [/^(?:stay(?: put| there| here)?|stop (?:walking|wandering)(?: around)?)[.!]?$/i, 'stay']
+]
+const RE_FIND = /^(?:where(?:'s| is| are| did i (?:put|save|leave))|find|show me(?: where)?|locate|look for|can you find)\s+(?:my|the|that|this|a|an)\s+(.+?)(?:\s+(?:is|are|went|file|folder|document))?(?: on (?:my|this) (?:mac|computer|laptop))?[?.!]*$/i
+
+const FILEISH = /\b(?:file|files|folder|pdf|docx?|document|photo|picture|pic|image|screenshot|resume|cv|invoice|receipt|spreadsheet|slides|presentation|zip|video|recording|download(?:s|ed)?|\.\w{2,4})\b/i
+const FIND_STOP = new Set(['my', 'the', 'a', 'an', 'file', 'files', 'document', 'doc', 'folder', 'that', 'this', 'from', 'with', 'of', 'for', 'and', 'on', 'in', 'mac', 'computer'])
+const EXTENSIONS: Record<string, string[]> = {
+  pdf: ['.pdf'],
+  word: ['.doc', '.docx'],
+  docx: ['.docx'],
+  excel: ['.xls', '.xlsx'],
+  spreadsheet: ['.xls', '.xlsx', '.numbers', '.csv'],
+  photo: ['.jpg', '.jpeg', '.png', '.heic'],
+  picture: ['.jpg', '.jpeg', '.png', '.heic'],
+  image: ['.jpg', '.jpeg', '.png', '.heic', '.gif'],
+  screenshot: ['.png'],
+  video: ['.mp4', '.mov'],
+  zip: ['.zip'],
+  slides: ['.key', '.pptx', '.ppt'],
+  presentation: ['.key', '.pptx', '.ppt']
+}
+
+/** Spotlight search for a file or folder by name words, newest first; skips app internals and libraries. */
+function findFiles(query: string): Promise<string[]> {
+  const words = query.toLowerCase().replace(/[^\p{L}\p{N}\s.'-]+/gu, ' ').split(/\s+/).filter((w) => w && !FIND_STOP.has(w))
+  const exts = words.flatMap((w) => EXTENSIONS[w] ?? (w.startsWith('.') ? [w] : []))
+  const names = words.filter((w) => !EXTENSIONS[w] && !w.startsWith('.'))
+  if (!names.length) return Promise.resolve([])
+  const key = [...names].sort((a, b) => b.length - a.length)[0]
+  return new Promise((resolve) => {
+    execFile('mdfind', ['-onlyin', homedir(), '-name', key], { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      if (err && !stdout) return resolve([])
+      const hits = stdout
+        .split('\n')
+        .filter(Boolean)
+        .filter((p) => !/\/Library\/|\/\.|node_modules|\.app\/|\/\.Trash\//.test(p))
+        .filter((p) => {
+          const base = basename(p).toLowerCase()
+          return base.includes(key) && (!exts.length || exts.some((e) => base.endsWith(e)))
+        })
+        .slice(0, 300)
+      const scored = hits.map((p) => {
+        let mtime = 0
+        try {
+          mtime = statSync(p).mtimeMs
+        } catch {
+          // gone since Spotlight indexed it
+        }
+        const stem = basename(p).toLowerCase().replace(/\.[^.]+$/, '')
+        // Every other word they said that is in the name counts for more than any amount of recency.
+        const matched = names.filter((n) => stem.includes(n)).length
+        return { p, score: matched * 1e14 + (stem === names.join(' ') ? 1e13 : 0) + mtime }
+      })
+      resolve(scored.sort((a, b) => b.score - a.score).map((x) => x.p))
+    })
+  })
+}
+
+/** "Where's my resume?": find it, show it in Finder, walk over and point at it. */
+async function findAndShow(query: string): Promise<Reply> {
+  const what = query.trim()
+  if (!what) return sayPlain('Find what?')
+  status(`looking for ${what}…`)
+  const found = await findFiles(what)
+  if (!found.length) return sayPlain(`I couldn't find anything called ${what} on this Mac.`, 'sad')
+  const file = found[0]
+  const name = basename(file)
+  const where = basename(join(file, '..'))
+  console.log(`[find] ${what} → ${file}${found.length > 1 ? ` (+${found.length - 1} more)` : ''}`)
+  // Finder selects it in a window; then she finds that row on screen and points at it.
+  await new Promise<void>((resolve) => execFile('open', ['-R', file], () => resolve()))
+  let rect = null
+  if (appHands.available) {
+    for (let i = 0; i < 6 && !rect; i++) {
+      await new Promise((r) => setTimeout(r, 400))
+      rect = await appHands.locate('com.apple.finder', name).catch(() => null)
+    }
+  }
+  if (rect) void body.pointAt(rect)
+  const more = found.length > 1 ? ` There ${found.length === 2 ? 'is one more' : `are ${found.length - 1} more`} with that name.` : ''
+  return sayPlain(`Here: ${name}, in ${where}.${more}`, 'happy')
+}
+
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
 async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: boolean }): Promise<Reply> {
   switch (call.name) {
@@ -1057,6 +1211,8 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return runAppTool(call.input, opts)
     case 'computer':
       return runComputer(call.input, opts)
+    case 'find':
+      return findAndShow(call.input)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -1088,6 +1244,7 @@ function lastJobProject(): Project | null {
 /** One path for typed chat, the microphone and the debug hook: commands first, then the brain, then any tool she chose. */
 async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Promise<Reply> {
   const text = rawText.slice(0, 2000).trim()
+  activity()
   if (text.toLowerCase() === '/forget') {
     memory.clear()
     const reply: Reply = { say: 'Clean slate. Who are you again, sweetheart?', emotion: 'smug', speak: true, remember: [] }
@@ -1137,6 +1294,19 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   // "stop" while something runs always means stop that.
   if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (acting || browsing || agent.running().length)) return cancelJob()
 
+  // Her body: "come here", "sit on this window", "go to sleep", "walk around", "where's my resume?".
+  const said = stripName(text).replace(/^(?:can you |could you |please )+/i, '').replace(/[.!]+$/, '')
+  const move = BODY_PHRASES.find(([re]) => re.test(said))
+  if (move) {
+    const line = await runBodyCommand(move[1])
+    return line ? sayPlain(line) : QUIET
+  }
+  const lookFor = RE_FIND.exec(said)
+  if (lookFor && !/\b(?:page|tab|website|site|screen|error|bug|flight|price|cheapest|best|weather)\b/i.test(lookFor[1])) {
+    // "where's my …" is about a place on this Mac; "find the …" only when it names a file-like thing.
+    if (/^where/i.test(said) || FILEISH.test(lookFor[1]) || FILEISH.test(said)) return findAndShow(lookFor[1])
+  }
+
   const routed = routeCommand(stripName(text))
   if (routed) return runTool(routed, { voice: opts.voice })
 
@@ -1173,6 +1343,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     }
   }
   await deliver(reply, 'chat')
+  if (reply.action && (BODY_COMMANDS as string[]).includes(reply.action)) void runBodyCommand(reply.action as BodyCommand)
   if (reply.tool) void runTool(reply.tool, { voice: opts.voice, acknowledged: true })
   return reply
 }
@@ -1313,6 +1484,7 @@ async function onUtterance(bytes: Uint8Array, ms: number, bargedIn = false): Pro
       return
     }
     status(`you: ${said}`)
+    activity()
     if (WAKE_GATE) {
       attendUntil = 0 // spent: the next sentence needs her name again
       if (attendTimer) clearTimeout(attendTimer)
@@ -1347,6 +1519,7 @@ ipcMain.handle('watch:look', () => observe(true))
 let lastTouchAt = 0
 let touching = false
 async function react(touch: Touch): Promise<void> {
+  activity()
   const now = Date.now()
   if (touching || now - lastTouchAt < 2500) return
   touching = true
@@ -1371,7 +1544,9 @@ ipcMain.handle('settings:set-key', async (_event, key: string) => {
 ipcMain.on('window:move-by', (_event, dx: number, dy: number) => {
   const [x, y] = win.getPosition()
   win.setPosition(Math.round(x + Number(dx)), Math.round(y + Number(dy)))
+  body.userMoved()
 })
+ipcMain.on('avatar:anchors', (_event, anchors) => body.setAnchors(anchors))
 ipcMain.handle('watch:toggle', () => setWatching(!watching))
 
 ipcMain.on('window:ignore-mouse', (_event, ignore: boolean) => {
@@ -1545,6 +1720,15 @@ app.whenReady().then(async () => {
     console.warn('[bar] shortcut:', (err as Error).message)
   }
   createWindow()
+  body.rememberHome()
+  if (/^(1|true|yes|on)$/i.test(process.env.DESKMATE_WANDER?.trim() || '')) body.wander(true, () => !acting && !browsing && !herSpeaking)
+  if (SLEEP_AFTER_MIN > 0) {
+    setInterval(() => {
+      if (body.mode === 'idle' || body.mode === 'sit') {
+        if (Date.now() - lastActivity > SLEEP_AFTER_MIN * 60_000 && !acting && !browsing && !herSpeaking && !hearing && !agent.running().length) body.sleep()
+      }
+    }, 30_000).unref()
+  }
   createTray()
   // First run: no brain yet, so the setup window does the asking (it does not come back once closed).
   if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
@@ -1562,6 +1746,7 @@ app.on('before-quit', () => {
   actStop = true
   appHands.stop()
   bar.destroy()
+  body.destroy()
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })

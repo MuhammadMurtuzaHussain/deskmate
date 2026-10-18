@@ -1,4 +1,4 @@
-import type { AppConfig, AvatarCommand, Emotion, ReplyPayload, Touch } from '../shared/types'
+import type { AppConfig, AvatarCommand, BodyState, Emotion, ReplyPayload, Touch } from '../shared/types'
 import type { Avatar } from './avatar'
 import { createMic } from './mic'
 
@@ -16,6 +16,7 @@ const micBtn = document.getElementById('mic') as HTMLButtonElement
 const characterSelect = document.getElementById('character') as HTMLSelectElement
 const keyForm = document.getElementById('keyform') as HTMLFormElement
 const keyInput = document.getElementById('key') as HTMLInputElement
+const zzz = document.getElementById('zzz') as HTMLDivElement | null
 
 let config: AppConfig
 let avatar: Avatar | null = null
@@ -286,7 +287,7 @@ function wirePointer(): void {
       api.setIgnoreMouse(ignore)
     }
   }
-  let drag: { lastX: number; lastY: number; moved: number; area: Touch['area']; lastKick: number } | null = null
+  let drag: { lastX: number; lastY: number; moved: number; area: Touch['area']; lastKick: number; lastAt?: number; vx?: number } | null = null
   window.addEventListener('mousemove', (e) => {
     avatar?.pointerMove(e.clientX, e.clientY)
     if (drag) return
@@ -310,6 +311,12 @@ function wirePointer(): void {
     drag.lastX = e.screenX
     drag.lastY = e.screenY
     drag.moved += Math.hypot(dx, dy)
+    // Carried by the cursor: she dangles, swinging against the direction she is moved.
+    const nowMs = performance.now()
+    const vx = (dx / Math.max(8, nowMs - (drag.lastAt ?? nowMs - 16))) * 1000
+    drag.lastAt = nowMs
+    drag.vx = (drag.vx ?? 0) * 0.7 + vx * 0.3
+    if (drag.moved > 6) avatar?.setCarried?.(drag.vx)
     if (drag.moved > 6) {
       if (!document.body.classList.contains('dragging')) {
         document.body.classList.add('dragging')
@@ -328,6 +335,7 @@ function wirePointer(): void {
     const d = drag
     drag = null
     document.body.classList.remove('dragging')
+    avatar?.setCarried?.(null)
     avatar?.kick(1.2)
     if (d.moved > 6) {
       void api.react({ kind: 'drag', area: d.area })
@@ -416,6 +424,28 @@ function wireUi(): void {
   api.onListen(applyListening)
 }
 
+/** Her body on the desktop: the main process walks her window around and tells her what to do with herself. */
+function wireBody(): void {
+  let lastAnchors = ''
+  const report = (): void => {
+    const a = avatar?.anchors?.()
+    if (!a) return
+    const key = JSON.stringify(a)
+    if (key !== lastAnchors) {
+      lastAnchors = key
+      api.reportAnchors?.(a)
+    }
+  }
+  window.setInterval(report, 500)
+  api.onBody?.((state: BodyState) => {
+    avatar?.setBody?.(state)
+    zzz?.classList.toggle('hidden', state.mode !== 'sleep')
+    if (state.mode === 'sleep') setStatus('asleep · talk to me or poke me to wake me')
+    else if (state.mode === 'idle' || state.mode === 'sit') setStatus(idleStatus())
+    window.setTimeout(report, 300)
+  })
+}
+
 function fillCharacterSelect(): void {
   characterSelect.innerHTML = ''
   for (const c of config.characters) {
@@ -463,6 +493,7 @@ async function main(): Promise<void> {
   }
   wirePointer()
   island.start()
+  wireBody()
   watchBtn.classList.toggle('on', config.watching)
   keyForm.classList.toggle('hidden', config.mode !== 'demo')
   if (config.listening) applyListening(true)

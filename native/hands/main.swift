@@ -450,6 +450,57 @@ func ocrWindow(_ pid: pid_t, max: Int) throws -> Json {
   return ["items": sorted.enumerated().map { "[\($0.offset)] \($0.element.0)" }, "window": ["x": bounds.minX, "y": bounds.minY, "w": bounds.width, "h": bounds.height]]
 }
 
+// MARK: - Where things are (for her body)
+
+func rectJson(_ r: CGRect) -> Json { ["x": r.minX, "y": r.minY, "w": r.width, "h": r.height] }
+
+/// The front-most real window on screen that is not one of `exclude` (her own windows), with its id and bounds.
+func topWindow(exclude: Set<String>) -> Json? {
+  guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [Json] else { return nil }
+  for w in list where (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 {
+    guard let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+          let app = NSRunningApplication(processIdentifier: pid),
+          !exclude.contains(app.bundleIdentifier ?? ""),
+          let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+          let b = w[kCGWindowBounds as String] as? NSDictionary,
+          let rect = CGRect(dictionaryRepresentation: b as CFDictionary), rect.width >= 240, rect.height >= 160 else { continue }
+    return ["windowId": Int(id), "bundleId": app.bundleIdentifier ?? "", "app": app.localizedName ?? "", "frame": rectJson(rect)]
+  }
+  return nil
+}
+
+/// A window's current bounds, or nil once it is closed, minimised or on another Space.
+func windowBounds(_ id: CGWindowID) -> CGRect? {
+  guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [Json], let w = list.first,
+        (w[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false,
+        let b = w[kCGWindowBounds as String] as? NSDictionary else { return nil }
+  return CGRect(dictionaryRepresentation: b as CFDictionary)
+}
+
+/// An element in the app's front window whose name or value matches `text` (exact first, then contains), with its bounds.
+func locate(_ pid: pid_t, _ text: String) -> Json? {
+  enableElectronAccessibility(pid)
+  guard let winV = axAttr(axApp(pid), kAXFocusedWindowAttribute) else { return nil }
+  let want = text.lowercased()
+  var best: (Int, AXUIElement)? = nil
+  var visited = 0
+  func walk(_ el: AXUIElement, _ depth: Int) {
+    visited += 1
+    if depth > 60 || visited > 8000 { return }
+    for attr in [kAXTitleAttribute, kAXValueAttribute, kAXDescriptionAttribute, kAXFilenameAttribute] {
+      guard let v = axString(el, attr)?.lowercased() else { continue }
+      let score = v == want ? 3 : v.hasPrefix(want) ? 2 : v.contains(want) ? 1 : 0
+      if score > (best?.0 ?? 0), let f = frame(el), f.width > 2, f.height > 2 { best = (score, el) }
+    }
+    if best?.0 == 3 { return }
+    for child in axChildren(el) { walk(child, depth + 1) }
+  }
+  // swiftlint:disable:next force_cast
+  walk(winV as! AXUIElement, 0)
+  guard let (_, el) = best, let f = frame(el) else { return nil }
+  return ["frame": rectJson(f), "element": describe(el)]
+}
+
 // MARK: - Menus
 
 struct MenuEntry {
@@ -590,6 +641,22 @@ func handle(_ req: Json) throws -> Json {
     let r = ocrRects[n]
     mouseClick(at: CGPoint(x: r.midX, y: r.midY))
     return [:]
+  case "topWindow":
+    let exclude = Set((req["exclude"] as? [String]) ?? [])
+    return topWindow(exclude: exclude) ?? ["windowId": NSNull()]
+  case "windowById":
+    guard let id = int(req, "windowId") else { throw HandsError("no_windowId") }
+    guard let r = windowBounds(CGWindowID(id)) else { return ["frame": NSNull()] }
+    return ["frame": rectJson(r)]
+  case "frame":
+    guard let n = int(req, "index"), n >= 0, n < snapshotElements.count, let f = frame(snapshotElements[n]) else { throw HandsError("no_such_element: take a new snapshot") }
+    return ["frame": rectJson(f)]
+  case "textFrame":
+    guard let n = int(req, "index"), n >= 0, n < ocrRects.count else { throw HandsError("no_such_text: read the screen again") }
+    return ["frame": rectJson(ocrRects[n])]
+  case "locate":
+    guard let id = str(req, "bundleId"), let app = runningApp(id), let text = str(req, "text") else { throw HandsError("not_running") }
+    return locate(app.processIdentifier, text) ?? ["frame": NSNull()]
   case "key":
     guard let combo = str(req, "combo") else { throw HandsError("no_combo") }
     try pressCombo(combo)

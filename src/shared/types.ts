@@ -1,20 +1,23 @@
 export type Emotion = 'neutral' | 'happy' | 'flirty' | 'surprised' | 'annoyed' | 'angry' | 'sad' | 'smug' | 'shy'
 export const EMOTIONS: Emotion[] = ['neutral', 'happy', 'flirty', 'surprised', 'annoyed', 'angry', 'sad', 'smug', 'shy']
 
-export type AvatarCommand = 'dance' | 'dance_slow' | 'spin' | 'stop_dancing' | 'next_outfit'
-export const AVATAR_COMMANDS: AvatarCommand[] = ['dance', 'dance_slow', 'spin', 'stop_dancing', 'next_outfit']
+export type AvatarCommand = 'dance' | 'dance_slow' | 'spin' | 'stop_dancing' | 'next_outfit' | BodyCommand
+/** Moves that take her window somewhere: the main process handles these, the renderer only animates them. */
+export type BodyCommand = 'come_here' | 'go_home' | 'sit' | 'stand' | 'sleep' | 'wake' | 'wander' | 'stay'
+export const BODY_COMMANDS: BodyCommand[] = ['come_here', 'go_home', 'sit', 'stand', 'sleep', 'wake', 'wander', 'stay']
+export const AVATAR_COMMANDS: AvatarCommand[] = ['dance', 'dance_slow', 'spin', 'stop_dancing', 'next_outfit', ...BODY_COMMANDS]
 export type DanceStyle = 'groove' | 'slow' | 'spin'
 
 /**
  * Things she can do on the computer, beyond talking. `claude` hands a job to Claude Code (the coding agent
  * installed on the machine) in a project folder; `claude_resume` continues an earlier session there.
  */
-export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer'
-export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer']
+export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer' | 'find'
+export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer', 'find']
 /** Only a Claude brain may pick `computer` (a multi-step agent run across desktop apps); small models would overreach. */
 export const CLAUDE_ONLY_TOOLS: ToolName[] = ['computer']
 /** The ones her brain may pick. `chrome` (tab and page verbs) only ever comes from the spoken-command router. */
-export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app']
+export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app', 'find']
 export interface ToolCall {
   name: ToolName
   /** the instruction for Claude, the browsing goal, the question about the page, the thing to open, a chrome verb,
@@ -68,6 +71,23 @@ export interface CharacterVoice {
   say?: string
 }
 
+/** What her body is doing on the desktop, beyond idle and dancing. */
+export interface BodyState {
+  mode: 'idle' | 'walk' | 'point' | 'sit' | 'sleep'
+  /** walking direction on screen: -1 left, 1 right */
+  facing?: -1 | 1
+  /** what she points at, in CSS pixels relative to her window (may lie outside it) */
+  target?: { x: number; y: number }
+}
+
+/** Where parts of her are inside her window, in CSS pixels; the main process places the window by them. */
+export interface Anchors {
+  head: { x: number; y: number }
+  shoulder: { x: number; y: number }
+  hips: { x: number; y: number }
+  feet: { x: number; y: number }
+}
+
 export interface CharacterConfig {
   id: string
   name: string
@@ -91,6 +111,8 @@ export interface CharacterConfig {
   morphs?: Partial<Record<Emotion | 'mouth' | 'blink', string>>
   /** shown in the character list and docs */
   license?: string
+  /** Live2D: expressions that are really poses (VTube Studio toggles), layered on top of her emotion */
+  poses?: { sit?: string; point?: string; sleep?: string; dance?: string[] }
 }
 
 export type BrainMode = 'gemini' | 'ollama' | 'anthropic' | 'demo'
@@ -196,6 +218,9 @@ export interface DeskmateApi {
   allow?(kind: PermissionKind): Promise<void>
   finishSetup?(): Promise<void>
   openSetup?(): void
+  /** her body on the desktop: walking, pointing, sitting, sleeping */
+  onBody?(cb: (state: BodyState) => void): void
+  reportAnchors?(anchors: Anchors): void
 }
 
 declare global {

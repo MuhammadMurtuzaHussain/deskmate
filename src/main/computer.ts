@@ -24,6 +24,8 @@ export interface ComputerDeps {
   runApp(req: AppRequest): Promise<RoutineResult>
   /** a picture of the companion as a PNG file, also put on the clipboard */
   portrait(): Promise<string>
+  /** the companion walks over and points at a spot on screen (with a ring around it) */
+  pointAt?(rect: { x: number; y: number; w: number; h: number }): Promise<void>
   openUrl(url: string): Promise<void>
   readWebPage(): Promise<string>
   onStep(text: string): void
@@ -81,6 +83,7 @@ How to work:
 - When they want a photo or picture of the companion ("of yourself", "of you") in another app, use paste_my_picture where the attachment should go (a message box), then send as usual.
 - If look shows few or no elements for what you can see (canvas apps, games, some web apps), use read_text_on_screen and click_text. If even that is not enough, take a screenshot.
 - Never enter passwords, card numbers or personal data; never buy, pay, or delete anything the user did not ask for. When a step needs their decision or a detail you don't have, ask_user (yes/no questions only).
+- When they ask where something is on screen, find it, then point_at it (or point_at_text) so they can see it.
 - If the same approach failed twice, try another way; if you are stuck, stop and say where.
 
 Your final reply is spoken out loud by the user's desk companion: one to three short, plain sentences, saying what you did and what you found, with names and numbers exact. No markdown, no lists.`
@@ -118,6 +121,8 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
     photo: { type: 'boolean' }
   }),
   tool('paste_my_picture', 'Paste a picture of the companion (you, the character on screen) where the caret is in the front app, e.g. a message box.', {}),
+  tool('point_at', 'Show the user where something is: the companion walks over and points at element n from the latest look, with a ring around it. Use when they ask where something is.', { element: { type: 'integer' } }),
+  tool('point_at_text', 'Like point_at, for text item n from the latest read_text_on_screen.', { item: { type: 'integer' } }),
   tool('read_text_on_screen', "Read the front window's text with OCR, as numbered items with positions: for apps whose look shows little.", {}),
   tool('click_text', 'Click the middle of text item n from the latest read_text_on_screen.', { item: { type: 'integer' } }),
   tool('ask_claude_app', 'Type a prompt into a new chat in the Claude desktop app and send it.', { prompt: { type: 'string' } }),
@@ -273,6 +278,13 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         await hands.clickText(n, target as string)
         await new Promise((res) => setTimeout(res, 500))
         return `Clicked ${line}. Look or read the screen again to check.`
+      }
+      case 'point_at':
+      case 'point_at_text': {
+        if (!deps.pointAt) return 'Pointing is not available.'
+        const rect = name === 'point_at' ? await hands.elementFrame(Number(input.element)) : await hands.textFrame(Number(input.item))
+        void deps.pointAt(rect)
+        return 'Pointing at it now, with a ring around it.'
       }
       case 'ask_claude_app': {
         const result = await deps.runApp({ app: 'claude', action: 'prompt', to: '', text: String(input.prompt) })

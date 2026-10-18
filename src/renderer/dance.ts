@@ -26,6 +26,23 @@ export interface Pose {
   elbowR: number
   /** whole-body turn around the vertical axis */
   turn: number
+  /** legs, for walking and sitting (absent = standing straight): thigh forward (negative) / back, knee bend */
+  legL?: Leg
+  legR?: Leg
+}
+
+export interface Leg {
+  thigh: number
+  knee: number
+  /** sideways spread */
+  out: number
+}
+
+const STRAIGHT: Leg = { thigh: 0, knee: 0, out: 0 }
+const lerpLeg = (a: Leg | undefined, b: Leg | undefined, t: number): Leg => {
+  const x = a ?? STRAIGHT
+  const y = b ?? STRAIGHT
+  return { thigh: x.thigh + (y.thigh - x.thigh) * t, knee: x.knee + (y.knee - x.knee) * t, out: x.out + (y.out - x.out) * t }
 }
 
 const v = (x = 0, y = 0, z = 0): V3 => ({ x, y, z })
@@ -44,7 +61,9 @@ export function blendPose(a: Pose, b: Pose, t: number): Pose {
     armR: { swing: lerp(a.armR.swing, b.armR.swing, t), out: lerp(a.armR.out, b.armR.out, t), raise: lerp(a.armR.raise, b.armR.raise, t) },
     elbowL: lerp(a.elbowL, b.elbowL, t),
     elbowR: lerp(a.elbowR, b.elbowR, t),
-    turn: lerp(a.turn, b.turn, t)
+    turn: lerp(a.turn, b.turn, t),
+    legL: a.legL || b.legL ? lerpLeg(a.legL, b.legL, t) : undefined,
+    legR: a.legR || b.legR ? lerpLeg(a.legR, b.legR, t) : undefined
   }
 }
 

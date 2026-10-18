@@ -1,4 +1,4 @@
-import type { DanceStyle, Emotion } from '../shared/types'
+import type { Anchors, BodyState, DanceStyle, Emotion } from '../shared/types'
 
 /** Screen-space rectangle of the character, in CSS pixels. */
 export interface Bounds {
@@ -31,6 +31,12 @@ export interface Avatar {
   pointerMove(x: number, y: number): void
   dance(on: boolean, style?: DanceStyle): void
   isDancing(): boolean
+  /** Walking, pointing, sitting, sleeping (optional: a renderer without it just stays idle). */
+  setBody?(state: BodyState): void
+  /** Being carried by the cursor: horizontal drag velocity in px/s, or null when let go. */
+  setCarried?(velocity: number | null): void
+  /** Head, shoulder, hips and feet in CSS pixels, for placing her window against things on screen. */
+  anchors?(): Anchors | null
   /** Switches to the next outfit; resolves with its name, or null when the character has none. */
   nextOutfit(): Promise<string | null>
   destroy(): void

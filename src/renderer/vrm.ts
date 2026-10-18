@@ -2,8 +2,9 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm'
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip, type VRMAnimation } from '@pixiv/three-vrm-animation'
-import type { CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
+import type { Anchors, BodyState, CharacterConfig, DanceStyle, Emotion, Outfit } from '../shared/types'
 import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
+import { danglePose, pointPose, sitPose, sleepPose, walkPose } from './body'
 import { loadMixamoAnimation } from './mixamo'
 import { resolveAsset } from './assets'
 import type { Avatar, Bounds } from './avatar'
@@ -208,29 +209,65 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   /** Applies a neutral Pose to the normalized humanoid. Arms hang at ∓armDown from the T-pose. */
   function applyPose(p: Pose): void {
     const armDown = character.idle?.armsDown ?? 1.18
+    // VRM 0.x models face -Z and are turned around (rotateVRM0), which mirrors their bones' X and Z axes: without
+    // this, "arms down" put Victoria's arms straight up, and every lean went the wrong way.
+    const f = vrm?.meta.metaVersion === '0' ? -1 : 1
+    const set = (node: THREE.Object3D | null, x: number, y: number, z: number): void => {
+      node?.rotation.set(f * x, y, f * z)
+    }
     const hips = bone('hips')
-    const spine = bone('spine')
-    const chest = bone('chest') ?? bone('upperChest')
-    const neck = bone('neck')
-    const head = bone('head')
-    const L = bone('leftUpperArm')
-    const R = bone('rightUpperArm')
-    const LL = bone('leftLowerArm')
-    const RL = bone('rightLowerArm')
     if (hips) {
       hips.position.y = hipsRestY + p.hipsY * modelHeight
-      hips.rotation.set(p.hips.x, p.hips.y, p.hips.z)
+      set(hips, p.hips.x, p.hips.y, p.hips.z)
     }
-    if (spine) spine.rotation.set(p.spine.x, p.spine.y, p.spine.z)
-    if (chest) chest.rotation.set(p.chest.x, p.chest.y, p.chest.z)
-    if (neck) neck.rotation.set(p.neck.x, p.neck.y, p.neck.z)
-    if (head) head.rotation.set(p.head.x, p.head.y, p.head.z)
-    if (L) L.rotation.set(p.armL.swing, p.armL.out, -(armDown - p.armL.raise))
-    if (R) R.rotation.set(p.armR.swing, -p.armR.out, armDown - p.armR.raise)
-    if (LL) LL.rotation.set(0, -p.elbowL, -0.2)
-    if (RL) RL.rotation.set(0, p.elbowR, 0.2)
+    set(bone('spine'), p.spine.x, p.spine.y, p.spine.z)
+    set(bone('chest') ?? bone('upperChest'), p.chest.x, p.chest.y, p.chest.z)
+    set(bone('neck'), p.neck.x, p.neck.y, p.neck.z)
+    set(bone('head'), p.head.x, p.head.y, p.head.z)
+    set(bone('leftUpperArm'), p.armL.swing, p.armL.out, -(armDown - p.armL.raise))
+    set(bone('rightUpperArm'), p.armR.swing, -p.armR.out, armDown - p.armR.raise)
+    set(bone('leftLowerArm'), 0, -p.elbowL, -0.2)
+    set(bone('rightLowerArm'), 0, p.elbowR, 0.2)
+    // Legs only when a pose asks for them; idle and dances leave them straight.
+    const legs: [string, string, Pose['legL'], number][] = [
+      ['leftUpperLeg', 'leftLowerLeg', p.legL, 1],
+      ['rightUpperLeg', 'rightLowerLeg', p.legR, -1]
+    ]
+    for (const [upper, lower, leg, side] of legs) {
+      set(bone(upper), leg?.thigh ?? 0, 0, side * (leg?.out ?? 0))
+      set(bone(lower), leg?.knee ?? 0, 0, 0)
+    }
     if (vrm) vrm.scene.rotation.y = baseRotY + p.turn
   }
+
+  // body on the desktop: a target state, blended in over idle
+  let body: BodyState = { mode: 'idle' }
+  let bodyWeight = 0
+  let bodyPose: Pose | null = null
+  let carried: number | null = null
+  let carrySway = 0
+  let carryWeight = 0
+
+  function bodyFrame(t: number): Pose | null {
+    const armDown = character.idle?.armsDown ?? 1.18
+    switch (body.mode) {
+      case 'walk':
+        return walkPose(t, body.facing ?? 1)
+      case 'point': {
+        const a = avatar.anchors?.()
+        const from = a?.shoulder ?? { x: window.innerWidth / 2, y: window.innerHeight * 0.3 }
+        const to = body.target ?? { x: from.x + 100, y: from.y }
+        return pointPose(t, to.x - from.x, from.y - to.y, armDown)
+      }
+      case 'sit':
+        return sitPose(t)
+      case 'sleep':
+        return sleepPose(sleepOnSit ? sitPose(t) : idlePose(t, 0.3, 0), t)
+      default:
+        return null
+    }
+  }
+  let sleepOnSit = false
 
   /** Idle, dance, or a blend of the two while a dance starts or stops. */
   function poseFrame(t: number, dt: number): void {
@@ -244,12 +281,33 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     if (danceWeight < 0.002) danceWeight = 0
     const idle = idlePose(t, physics.sway, k)
     if (danceWeight === 0) {
+      lastPose = idle
       applyPose(idle)
       return
     }
     danceT += dt
     const dance = dancePose(danceStyle, danceT, character.dance?.bpm ?? defaultBpm(danceStyle))
-    applyPose(blendPose(idle, dance, danceWeight))
+    lastPose = blendPose(idle, dance, danceWeight)
+    applyPose(lastPose)
+  }
+  let lastPose: Pose | null = null
+
+  /** The body layer over whatever poseFrame produced: walking, pointing, sitting, sleeping, being carried. */
+  function bodyLayer(t: number, dt: number, base: Pose): Pose {
+    const want = body.mode === 'idle' ? null : bodyFrame(t)
+    if (want) bodyPose = want
+    bodyWeight += ((want ? 1 : 0) - bodyWeight) * Math.min(1, dt * 4)
+    if (bodyWeight < 0.002) {
+      bodyWeight = 0
+      bodyPose = null
+    }
+    let out = bodyPose && bodyWeight > 0 ? blendPose(base, bodyPose, bodyWeight) : base
+    // Carried: a damped pendulum driven by how fast the cursor moves her.
+    const goal = carried === null ? 0 : Math.max(-0.6, Math.min(0.6, -carried / 1800))
+    carrySway += (goal - carrySway) * Math.min(1, dt * 5)
+    carryWeight += ((carried === null ? 0 : 1) - carryWeight) * Math.min(1, dt * 6)
+    if (carryWeight > 0.002) out = blendPose(out, danglePose(t, carrySway), carryWeight)
+    return out
   }
 
   // VRM 0.x models name presets differently ("Surprised" as a custom group, "fun" for relaxed); resolve once per model.
@@ -281,7 +339,11 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       blinkT = 0
       blinkAt = 2.5 + Math.random() * 4
     }
-    if (blinkT >= 0) {
+    if (body.mode === 'sleep') {
+      const blink = expressionName('blink')
+      if (blink) em.setValue(blink, 1)
+      blinkT = -1
+    } else if (blinkT >= 0) {
       blinkT += dt
       const v = blinkT < 0.08 ? blinkT / 0.08 : Math.max(0, 1 - (blinkT - 0.08) / 0.1)
       const blink = expressionName('blink')
@@ -305,6 +367,10 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
         mixer.update(dt)
       } else {
         poseFrame(t, dt)
+      }
+      if (!activeAction && (body.mode !== 'idle' || bodyWeight > 0 || carried !== null || carryWeight > 0.002)) {
+        // poseFrame applied idle/dance; redo the frame with the body layer on top (cheap: a few bone writes).
+        applyPose(bodyLayer(t, dt, lastPose ?? idlePose(t, physics.sway, 0)))
       }
       updateFace(dt)
       vrm.update(dt)
@@ -387,6 +453,38 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     kick(strength: number) {
       physics.impulse = Math.min(1.5, strength * physics.bounce)
       physics.impulseAt = performance.now()
+    },
+
+    setBody(state: BodyState) {
+      sleepOnSit = state.mode === 'sleep' && (body.mode === 'sit' || (body.mode === 'sleep' && sleepOnSit))
+      body = state
+      if (state.mode === 'point' && state.target) avatar.pointerMove(state.target.x, state.target.y)
+      // Walking, sitting, sleeping or pointing ends a dance.
+      if (state.mode !== 'idle' && dancing) avatar.dance(false)
+    },
+
+    setCarried(velocity: number | null) {
+      carried = velocity
+    },
+
+    anchors(): Anchors | null {
+      if (!vrm) return null
+      const w = window.innerWidth
+      const h = window.innerHeight
+      const at = (name: string, fallbackY: number): { x: number; y: number } => {
+        const node = bone(name)
+        const p = new THREE.Vector3()
+        if (node) node.getWorldPosition(p)
+        else p.set(modelCenter.x, fallbackY, modelCenter.z)
+        p.project(camera)
+        return { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h }
+      }
+      return {
+        head: at('head', modelHeight * 0.9),
+        shoulder: at(body.mode === 'point' && (body.target?.x ?? 0) < w / 2 ? 'rightUpperArm' : 'leftUpperArm', modelHeight * 0.8),
+        hips: at('hips', modelHeight * 0.5),
+        feet: at('leftFoot', 0)
+      }
     },
 
     pointerMove(x: number, y: number) {

@@ -22,6 +22,14 @@ export interface FocusedElement {
   value?: string
 }
 
+/** Screen rectangle in points, top-left origin (the same space as Electron's screen coordinates on macOS). */
+export interface Rect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface Snapshot {
   app: string
   bundleId: string
@@ -200,6 +208,33 @@ export class Hands {
   /** Clicks the middle of text item n from the last ocr(); with `expect`, only while that app is in front. */
   async clickText(index: number, expect?: string): Promise<void> {
     await this.call('clickText', { index, expect })
+  }
+
+  /** The front-most real window that is not one of `exclude` (her own app), for sitting on. */
+  async topWindow(exclude: string[]): Promise<{ windowId: number; bundleId: string; app: string; frame: Rect } | null> {
+    const r = await this.call('topWindow', { exclude })
+    return r.windowId === null || r.windowId === undefined ? null : { windowId: Number(r.windowId), bundleId: String(r.bundleId), app: String(r.app), frame: r.frame as Rect }
+  }
+
+  /** A window's bounds now; null once it is closed, minimised or on another Space. */
+  async windowById(windowId: number): Promise<Rect | null> {
+    const r = await this.call('windowById', { windowId })
+    return (r.frame as Rect | null) ?? null
+  }
+
+  /** Bounds of element n from the last snapshot, or text item n from the last OCR. */
+  async elementFrame(index: number): Promise<Rect> {
+    return (await this.call('frame', { index })).frame as Rect
+  }
+
+  async textFrame(index: number): Promise<Rect> {
+    return (await this.call('textFrame', { index })).frame as Rect
+  }
+
+  /** An element in the app's front window whose name or value matches the text (a file in Finder, a button). */
+  async locate(bundleId: string, text: string): Promise<Rect | null> {
+    const r = await this.call('locate', { bundleId, text }, 20_000)
+    return (r.frame as Rect | null) ?? null
   }
 
   stop(): void {

@@ -1,7 +1,7 @@
 import * as PIXI from 'pixi.js'
 import '@pixi/unsafe-eval'
 import { Cubism4ModelSettings, Live2DModel, MotionPriority } from 'pixi-live2d-display-lipsyncpatch/cubism4'
-import type { CharacterConfig, Emotion } from '../shared/types'
+import type { Anchors, BodyState, CharacterConfig, Emotion } from '../shared/types'
 import type { Avatar, Bounds } from './avatar'
 import { resolveAsset } from './assets'
 
@@ -58,6 +58,106 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     return { x: idleX + k * 8, y: idleY + k * 12, z: idleZ + k * 6 }
   }
 
+  // ---- her body on the desktop, in 2D: no limbs to move, so it is lean, bob, gaze, and the model's own pose toggles
+  let body: BodyState = { mode: 'idle' }
+  let carried: number | null = null
+  let carrySway = 0
+  let dancing = false
+  let danceStart = 0
+  let baseY = 0
+  let lastNow = 0
+  /** pose toggles (VTube Studio expressions such as "sitting") as parameter lists, layered over her emotion */
+  const poseParams = new Map<string, { id: string; value: number; blend: string }[]>()
+  const poseWeight = new Map<string, number>()
+  let savedBlink: unknown = undefined
+  let sleptSitting = false
+
+  async function loadPoses(): Promise<void> {
+    if (!model || !character.poses) return
+    const settings = model.internalModel.settings as unknown as { url: string; expressions?: { Name: string; File: string }[] }
+    const wanted = new Set([character.poses.sit, character.poses.point, character.poses.sleep, ...(character.poses.dance ?? [])].filter(Boolean) as string[])
+    for (const e of settings.expressions ?? []) {
+      if (!wanted.has(e.Name)) continue
+      try {
+        const res = await fetch(new URL(e.File, new URL(settings.url, location.href)).href)
+        const json = (await res.json()) as { Parameters?: { Id: string; Value: number; Blend?: string }[] }
+        poseParams.set(e.Name, (json.Parameters ?? []).map((p) => ({ id: p.Id, value: p.Value, blend: p.Blend ?? 'Add' })))
+      } catch (err) {
+        console.warn('[pose]', e.Name, err)
+      }
+    }
+  }
+
+  /** Which pose toggle is on right now, if any. */
+  function activePose(beats: number): string | null {
+    const p = character.poses ?? {}
+    if (body.mode === 'sit' || (body.mode === 'sleep' && sleptSitting)) return p.sit ?? null
+    if (body.mode === 'point') return p.point ?? null
+    if (body.mode === 'sleep') return p.sleep ?? null
+    if (dancing && p.dance?.length) return p.dance[Math.floor(beats / 4) % p.dance.length]
+    return null
+  }
+
+  /** Runs inside the model's update, before physics, so lean and bob also swing hair and skirt. */
+  function bodyFrame(core: Core, now: number): void {
+    if (!model) return
+    const dt = Math.min(0.05, lastNow ? (now - lastNow) / 1000 : 0.016)
+    lastNow = now
+    const t = now / 1000
+    const bpm = character.dance?.bpm ?? 118
+    const beats = dancing ? ((now - danceStart) / 1000) * (bpm / 60) : 0
+    let offsetY = 0
+    const facing = body.facing ?? 1
+    if (body.mode === 'walk') {
+      const step = Math.sin(t * Math.PI * 2 * 1.6)
+      offsetY = -Math.abs(step) * 8
+      core.addParameterValueById('ParamBodyAngleZ', -facing * 6 + step * 2)
+      core.addParameterValueById('ParamAngleX', facing * 18)
+      core.addParameterValueById('ParamBodyAngleX', facing * 8)
+    } else if (body.mode === 'point' && body.target) {
+      const a = avatar.anchors?.()
+      const from = a?.head ?? { x: app.screen.width / 2, y: app.screen.height * 0.2 }
+      const nx = Math.max(-1, Math.min(1, (body.target.x - from.x) / 250))
+      const ny = Math.max(-1, Math.min(1, (from.y - body.target.y) / 250))
+      model.internalModel.focusController.focus(nx, ny)
+      core.addParameterValueById('ParamBodyAngleX', nx * 10)
+    } else if (body.mode === 'sleep') {
+      core.addParameterValueById('ParamAngleY', -22)
+      core.addParameterValueById('ParamAngleZ', 10)
+      core.addParameterValueById('ParamBodyAngleY', -6 + Math.sin(t * 0.8) * 2)
+      core.setParameterValueById('ParamEyeLOpen', 0)
+      core.setParameterValueById('ParamEyeROpen', 0)
+    } else if (body.mode === 'sit') {
+      core.addParameterValueById('ParamAngleZ', Math.sin(t * 0.6) * 4)
+    }
+    if (dancing) {
+      const b = beats * Math.PI
+      offsetY += -Math.abs(Math.sin(b)) * 12
+      core.addParameterValueById('ParamBodyAngleX', Math.sin(b) * 9)
+      core.addParameterValueById('ParamBodyAngleZ', Math.sin(b / 2) * 8)
+      core.addParameterValueById('ParamAngleZ', Math.sin(b / 2 + 0.6) * 9)
+      core.addParameterValueById('ParamAngleX', Math.sin(b / 4) * 12)
+    }
+    // Pose toggles fade in and out instead of popping.
+    const pose = activePose(beats)
+    for (const name of poseParams.keys()) {
+      const prev = poseWeight.get(name) ?? 0
+      const w = prev + ((name === pose ? 1 : 0) - prev) * Math.min(1, dt * 6)
+      poseWeight.set(name, w)
+      if (w < 0.01) continue
+      for (const p of poseParams.get(name) ?? []) {
+        if (p.blend === 'Overwrite') {
+          if (w > 0.5) core.setParameterValueById(p.id, p.value)
+        } else if (p.blend === 'Add') core.addParameterValueById(p.id, p.value * w)
+      }
+    }
+    // Carried: she swings from the top of her head (the model's anchor), as if held there.
+    const goal = carried === null ? 0 : Math.max(-0.5, Math.min(0.5, -carried / 2500))
+    carrySway += (goal - carrySway) * Math.min(1, dt * 6)
+    model.rotation = carrySway
+    model.y = baseY + offsetY
+  }
+
   function hasMotions(group: string): boolean {
     if (!model) return false
     const defs = (model.internalModel.motionManager as unknown as { definitions: Record<string, unknown[] | undefined> }).definitions
@@ -66,17 +166,19 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
 
   const avatar: Avatar = {
     kind: 'live2d',
-    capabilities: { dance: false, outfits: false },
+    capabilities: { dance: true, outfits: false },
 
     async load() {
       model = await Live2DModel.from(resolveAsset(character.model), { autoHitTest: false, autoFocus: true })
       app.stage.addChild(model)
       avatar.layout()
+      void loadPoses()
       const manager = model.internalModel.motionManager as unknown as { update: (core: Core, now: number) => boolean }
       const original = manager.update.bind(manager)
       manager.update = (core, now) => {
         const r = original(core, now)
         // Runs before physics evaluate, so these offsets excite the model's physics rig.
+        bodyFrame(core, now)
         const o = swayOffsets(now)
         core.addParameterValueById('ParamBodyAngleX', o.x)
         core.addParameterValueById('ParamBodyAngleY', o.y)
@@ -102,6 +204,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       const scale = Math.min(availH / oh, (app.screen.width - 20) / ow) * zoom
       model.scale.set(scale)
       model.anchor.set(0.5, 0)
+      baseY = TOP
       model.x = app.screen.width / 2
       model.y = TOP
     },
@@ -180,11 +283,38 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       // pixi-live2d-display's autoFocus already follows the pointer.
     },
 
-    dance() {
-      // Live2D rigs have no body animation of their own; a reaction motion is the closest thing.
-      if (model && hasMotions(character.motions.react)) model.motion(character.motions.react, undefined, MotionPriority.NORMAL)
+    dance(on: boolean) {
+      // No limbs to dance with: a beat-driven sway and bounce, cycling her pose toggles (character.json → poses.dance).
+      if (on && !dancing) danceStart = performance.now()
+      dancing = on
     },
-    isDancing: () => false,
+    isDancing: () => dancing,
+
+    setBody(state: BodyState) {
+      sleptSitting = state.mode === 'sleep' && (body.mode === 'sit' || (body.mode === 'sleep' && sleptSitting))
+      // Eyes stay shut while asleep: the blink controller would open them every frame.
+      const internal = model?.internalModel as unknown as { eyeBlink?: unknown } | undefined
+      if (internal) {
+        if (state.mode === 'sleep' && body.mode !== 'sleep') {
+          savedBlink = internal.eyeBlink
+          internal.eyeBlink = undefined
+        } else if (state.mode !== 'sleep' && body.mode === 'sleep') internal.eyeBlink = savedBlink
+      }
+      // Walking, sitting, sleeping or pointing ends a dance.
+      if (state.mode !== 'idle') dancing = false
+      body = state
+    },
+
+    setCarried(velocity: number | null) {
+      carried = velocity
+    },
+
+    anchors(): Anchors | null {
+      if (!model) return null
+      const b = model.getBounds()
+      const at = (f: number): { x: number; y: number } => ({ x: b.x + b.width / 2, y: b.y + b.height * f })
+      return { head: at(0.1), shoulder: at(0.2), hips: at(0.5), feet: at(1) }
+    },
     nextOutfit: async () => null,
 
     destroy() {

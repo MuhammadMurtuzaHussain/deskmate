@@ -53,3 +53,11 @@ body.tucked.peek #statusrow { margin-bottom: 0; }
 
 /* a picture of her (for "send a photo of yourself"): only her, for one frame */
 body.portrait #panel, body.portrait #bubble, body.portrait #grip { visibility: hidden !important; }
+
+/* asleep */
+#zzz { position: absolute; top: 70px; right: 90px; font: 700 26px/1 -apple-system, system-ui, sans-serif; color: #fff; text-shadow: 0 2px 8px rgba(80, 40, 140, 0.8); pointer-events: none; }
+#zzz span { display: inline-block; animation: zfloat 2.4s ease-in-out infinite; }
+#zzz span:nth-child(1) { animation-delay: 0.4s; font-size: 32px; }
+#zzz span:nth-child(2) { animation-delay: 0.8s; font-size: 40px; }
+#zzz.hidden { display: none; }
+@keyframes zfloat { 0%, 100% { transform: translateY(0); opacity: 0.5; } 50% { transform: translateY(-10px); opacity: 1; } }
