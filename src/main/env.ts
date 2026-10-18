@@ -27,3 +27,14 @@ export function loadDotEnv(...dirs: string[]): void {
     loadFile(join(dir, '.env'))
   }
 }
+
+/**
+ * Apps opened from Finder, the Dock or at login start with PATH=/usr/bin:/bin:/usr/sbin:/sbin, so Homebrew's tools
+ * (ollama, python3.12, espeak-ng, signal-cli, gh) and ~/.local/bin (claude) are missing from the packaged app though they
+ * work in `npm run dev`. Adds the usual places after what is already there.
+ */
+export function guiPath(path: string | undefined, home: string): string {
+  const have = (path ?? '').split(':').filter(Boolean)
+  const extra = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', `${home}/.local/bin`, `${home}/.cargo/bin`, '/usr/bin', '/bin', '/usr/sbin', '/sbin']
+  return [...have, ...extra.filter((p) => !have.includes(p))].join(':')
+}
