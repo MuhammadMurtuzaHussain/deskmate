@@ -995,7 +995,9 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
     return runComputer(input, opts)
   }
   if (!req) return sayPlain('On my own I can message people on Discord and Slack, and ask the Claude app things. Pick Claude as my brain in Setup for other apps.')
-  if (!(await checkAppTrust())) {
+  // Messages and Spotify go through their AppleScript dictionaries (macOS asks for Automation itself); no keys pressed.
+  const scripted = req.app === 'messages' || req.app === 'spotify'
+  if (!scripted && !(await checkAppTrust())) {
     askForAccessibility()
     const who = app.isPackaged ? 'Deskmate' : 'the app you started me from (Electron, or your terminal)'
     return sayPlain(`I need Accessibility to press keys for you. Turn it on for ${who} in the window I just opened, then ask me again.`, 'sad')
