@@ -11,6 +11,7 @@ import * as chrome from './chrome'
 import { routeCommand } from './commands'
 import { loadDotEnv } from './env'
 import { Memory } from './memory'
+import { checkToken, outsidePhone, PhoneRemote, TelegramApi, type PairRequest } from './remote'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
@@ -19,6 +20,7 @@ import { CommandBar } from './bar'
 import { Body } from './body'
 import { runComputerTask } from './computer'
 import { Hands, HandsError } from './hands'
+import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
 import { BODY_COMMANDS, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
@@ -109,7 +111,13 @@ let appTrusted: boolean | null = null
 const SELF_IDS = ['com.github.Electron', 'com.murtuza.deskmate']
 
 // Her body on the desktop: walking, pointing, sitting on windows, sleeping, wandering.
-const body = new Body({ win: () => win ?? null, hands: appHands, selfIds: SELF_IDS, log: (line) => console.log(`[body] ${line}`) })
+const body = new Body({
+  win: () => win ?? null,
+  hands: appHands,
+  selfIds: SELF_IDS,
+  log: (line) => console.log(`[body] ${line}`),
+  busy: () => acting || browsing || herSpeaking || hearing
+})
 /** minutes without anything happening before she nods off; 0 keeps her awake (DESKMATE_SLEEP_AFTER) */
 const SLEEP_AFTER_MIN = Number(process.env.DESKMATE_SLEEP_AFTER ?? 10)
 let lastActivity = Date.now()
@@ -124,6 +132,16 @@ type Pending =
   | { kind: 'job'; call: ToolCall; project: Project; at: number }
   | { kind: 'confirm'; at: number; resolve: (yes: boolean) => void }
 let pending: Pending | null = null
+
+// Her phone remote (a Telegram bot), when it is set up and on; see the "phone remote" section below.
+let remote: PhoneRemote | null = null
+/** the bot's @name once getMe answered; the error when the token stopped working */
+let remoteBot: string | null = null
+let remoteError: string | null = null
+/** answers the open pairing question (her read-back on the Mac, or Allow / Refuse in Setup) */
+let pairAnswer: ((yes: boolean) => void) | null = null
+/** Claude Code jobs started from the phone: their end is reported there too */
+const phoneJobs = new Set<string>()
 
 function switchCharacter(id: string): void {
   if (!characters.some((c) => c.id === id)) return
@@ -232,6 +250,7 @@ function buildTrayMenu(): Menu {
   const loginItem = app.getLoginItemSettings().openAtLogin
   const threeD = character.renderer === 'vrm' || character.renderer === 'mmd'
   const running = agent.running().length
+  const next = update
   return Menu.buildFromTemplate([
     { label: `${character.name} · ${brain.modelName}`, enabled: false },
     { type: 'separator' },
@@ -282,6 +301,7 @@ function buildTrayMenu(): Menu {
     ...(appHands.available && appTrusted === false
       ? [{ label: 'Let her use your apps (Accessibility)…', toolTip: 'Discord, Slack and Claude app control need Accessibility', click: askForAccessibility }]
       : []),
+    remoteMenuItem(),
     {
       label: 'Character',
       submenu: characters.map((c) => ({
@@ -305,9 +325,25 @@ function buildTrayMenu(): Menu {
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
+    ...(next ? [{ label: `Update available: v${next.version}`, click: () => void shell.openExternal(next.url) }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])
+}
+
+// ---- update check: a tray item and one status line when a newer release is on GitHub (DESKMATE_UPDATE_CHECK=0: off).
+let update: Release | null = null
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
+
+async function checkForUpdate(): Promise<void> {
+  const found = await newerRelease(app.getVersion())
+  if (!found || found.version === update?.version) return
+  update = found
+  console.log(`[update] Deskmate ${found.version} is out (running ${app.getVersion()}): ${found.url}`)
+  refreshTray()
+  if (settings.get().updateNotified === found.version) return
+  settings.set({ updateNotified: found.version })
+  status(`Deskmate ${found.version} is out · tray menu → Update available`)
 }
 
 function refreshTray(): void {
@@ -463,9 +499,13 @@ function createWindow(): void {
   }
 }
 
+/** Lines in the status row that are not steps of the work, so the phone does not get them. */
+const IDLE_STATUS = /^(?:idle|…|not listening|listening ·)/
+
 function status(text: string): void {
   win?.webContents.send('status', text)
   bar.status(text)
+  if (!IDLE_STATUS.test(text)) remote?.status(text)
 }
 
 /**
@@ -593,6 +633,8 @@ async function deliver(reply: Reply, source: ReplyPayload['source'], ready?: Aud
   if (!reply.speak || !reply.say) return
   console.log(`[say:${source}] ${reply.say.slice(0, 90)}`)
   bar.line(reply.say)
+  // Work that came from the phone gets her lines there; while she waits on a yes, with Yes / No buttons.
+  if (source !== 'observe' && source !== 'touch') remote?.say(reply.say, { ask: Boolean(pending) })
   const audio = ready !== undefined ? ready : await synthesize(reply.say, character.voice)
   const payload: ReplyPayload = { reply, audio, source }
   win.webContents.send('reply', payload)
@@ -633,7 +675,8 @@ async function setWatching(on: boolean): Promise<boolean> {
   }
   if (on) {
     watcher?.start()
-    watchTimer = setInterval(() => void observe(), watchIntervalSec * 1000)
+    // A timer started from a phone message would otherwise send every look to the phone.
+    watchTimer = outsidePhone(() => setInterval(() => void observe(), watchIntervalSec * 1000))
     status(`watching${watchDir ? ` ${watchDir}` : ''} · every ${watchIntervalSec}s`)
     void observe()
   } else {
@@ -754,6 +797,7 @@ async function startJob(call: ToolCall, project: Project, acknowledged: boolean)
     return sayPlain(`I couldn't start Claude: ${(err as Error).message}`, 'sad')
   }
   console.log(`[hands] job ${task.id} in ${project.path}: ${task.title}`)
+  if (remote?.active) phoneJobs.add(task.id)
   status(`Claude · ${task.title} · starting…`)
   refreshTray()
   if (acknowledged) return QUIET
@@ -951,7 +995,9 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
     return runComputer(input, opts)
   }
   if (!req) return sayPlain('On my own I can message people on Discord and Slack, and ask the Claude app things. Pick Claude as my brain in Setup for other apps.')
-  if (!(await checkAppTrust())) {
+  // Messages and Spotify go through their AppleScript dictionaries (macOS asks for Automation itself); no keys pressed.
+  const scripted = req.app === 'messages' || req.app === 'spotify'
+  if (!scripted && !(await checkAppTrust())) {
     askForAccessibility()
     const who = app.isPackaged ? 'Deskmate' : 'the app you started me from (Electron, or your terminal)'
     return sayPlain(`I need Accessibility to press keys for you. Turn it on for ${who} in the window I just opened, then ask me again.`, 'sad')
@@ -1253,6 +1299,23 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   }
   if (/^(?:\/(?:selfie|portrait)|(?:take|send|give me|show me) (?:a |an )?(?:selfie|photo of you(?:rself)?|picture of you(?:rself)?|pic of you(?:rself)?))[.!]?$/i.test(stripName(text))) {
     try {
+      if (remote?.active) {
+        // From the phone: the picture goes there. If she is hidden, she shows herself for the moment it takes.
+        const hidden = !win.isVisible()
+        if (hidden) {
+          win.showInactive()
+          await new Promise((r) => setTimeout(r, 700))
+        }
+        let file: string
+        try {
+          file = await portrait()
+        } finally {
+          if (hidden) win.hide()
+        }
+        console.log(`[portrait] ${file} (to the phone)`)
+        await remote.photo(readFileSync(file))
+        return sayPlain('There you go.', 'happy')
+      }
       const file = await portrait()
       return sayPlain(`Copied a picture of me, paste it anywhere. It's also in Pictures, Deskmate folder.`, 'happy').then((r) => {
         console.log(`[portrait] ${file}`)
@@ -1361,8 +1424,13 @@ agent.on('end', (task: Task) => {
   const folder = basename(task.cwd)
   const secs = Math.round(((task.endedAt ?? Date.now()) - task.startedAt) / 1000)
   console.log(`[hands] job ${task.id} ${task.status} after ${secs}s${task.costUsd ? ` ($${task.costUsd.toFixed(2)})` : ''}: ${task.error ?? (task.result ?? '').slice(0, 120)}`)
-  if (task.status === 'done') void report({ phase: 'done', title: task.title, folder, detail: (task.result || task.lastText || '').slice(0, 1500) })
-  else if (task.status === 'failed') void report({ phase: 'failed', title: task.title, folder, detail: task.error })
+  const tell = async (): Promise<void> => {
+    if (task.status === 'done') await report({ phase: 'done', title: task.title, folder, detail: (task.result || task.lastText || '').slice(0, 1500) })
+    else if (task.status === 'failed') await report({ phase: 'failed', title: task.title, folder, detail: task.error })
+  }
+  // A job started from the phone reports there as well, however long it took.
+  if (phoneJobs.delete(task.id) && remote) void remote.run(tell)
+  else void tell()
 })
 
 // ---- ears: hands-free listening
@@ -1556,6 +1624,136 @@ ipcMain.on('window:ignore-mouse', (_event, ignore: boolean) => {
 
 ipcMain.on('bar:hide', () => bar.hide())
 
+// ---- phone remote: a Telegram bot brings the paired phone's messages into her chat path
+
+/** Setup's token wins over DESKMATE_TELEGRAM_TOKEN in .env, like her brain. */
+function telegramToken(): string {
+  return settings.get().telegramToken?.trim() || process.env.DESKMATE_TELEGRAM_TOKEN?.trim() || ''
+}
+
+/** Only for testing against a fake Bot API; the real one is the default. */
+const TELEGRAM_API_URL = process.env.DESKMATE_TELEGRAM_API_URL?.trim() || undefined
+
+function setupChanged(): void {
+  if (setupWin && !setupWin.isDestroyed()) setupWin.webContents.send('setup:changed')
+}
+
+function remoteMenuItem(): Electron.MenuItemConstructorOptions {
+  if (!telegramToken()) return { label: 'Phone remote: set up…', toolTip: 'Send her messages from your phone, through a Telegram bot', click: openSetup }
+  const paired = settings.get().remotePaired
+  return {
+    label: `Phone remote: ${remote ? 'on' : 'off'}`,
+    type: 'checkbox',
+    checked: Boolean(remote),
+    toolTip: remoteError ?? (paired ? `Paired with ${paired.name}` : `Send /start to ${remoteBot ? `@${remoteBot}` : 'your bot'} in Telegram to pair your phone`),
+    click: () => setRemote(!remote)
+  }
+}
+
+function remoteStatusLine(): string {
+  const paired = settings.get().remotePaired
+  if (paired) return `phone remote on · ${paired.name}`
+  return `phone remote on · send /start to ${remoteBot ? `@${remoteBot}` : 'your bot'} in Telegram`
+}
+
+function setRemote(on: boolean): void {
+  settings.set({ remoteEnabled: on })
+  if (on) startRemote()
+  else stopRemote()
+  status(on ? remoteStatusLine() : 'phone remote off')
+}
+
+function stopRemote(): void {
+  remote?.stop()
+  remote = null
+  pairAnswer?.(false)
+  refreshTray()
+  setupChanged()
+}
+
+function startRemote(): void {
+  remote?.stop()
+  remote = null
+  pairAnswer?.(false)
+  remoteError = null
+  const token = telegramToken()
+  if (token && settings.get().remoteEnabled !== false) {
+    const api = new TelegramApi(token, { base: TELEGRAM_API_URL })
+    const r = new PhoneRemote({
+      api,
+      paired: settings.get().remotePaired ?? null,
+      askToPair,
+      onPaired: (paired) => {
+        settings.set({ remotePaired: paired ?? undefined })
+        console.log(paired ? `[remote] paired with ${paired.name}` : '[remote] unpaired')
+        status(paired ? `phone paired · ${paired.name}` : 'phone unpaired')
+        refreshTray()
+        setupChanged()
+      },
+      onMessage: phoneMessage,
+      onFatal: (message) => {
+        if (remote === r) remote = null
+        remoteError = message
+        status(message)
+        refreshTray()
+        setupChanged()
+      },
+      log: (line) => console.log(`[remote] ${line}`)
+    })
+    remote = r
+    r.start()
+    void api.getMe().then(
+      (me) => {
+        remoteBot = me.username ?? null
+        const paired = settings.get().remotePaired
+        console.log(`[remote] polling @${remoteBot ?? '?'}; ${paired ? `paired with ${paired.name}` : 'not paired yet: the first /start asks here'}`)
+        refreshTray()
+        setupChanged()
+      },
+      (err) => console.warn(`[remote] getMe: ${(err as Error).message}`)
+    )
+  }
+  refreshTray()
+  setupChanged()
+}
+
+/** A /start while no phone is paired: she reads it back on the Mac, and Setup shows Allow / Refuse. Either answers. */
+function askToPair(req: PairRequest): Promise<boolean> {
+  pairAnswer?.(false)
+  return new Promise((resolve) => {
+    let mine: Pending | null = null
+    const finish = (yes: boolean): void => {
+      if (pairAnswer !== finish) return
+      pairAnswer = null
+      // Answered in Setup: her read-back is no longer waiting.
+      if (mine && pending === mine) {
+        pending = null
+        mine.kind === 'confirm' && mine.resolve(yes)
+      }
+      setupChanged()
+      refreshTray()
+      resolve(yes)
+    }
+    pairAnswer = finish
+    console.log(`[remote] ${req.name} (chat ${req.chatId}) asks to pair; code ${req.code}`)
+    const spoken = req.code.split('').join(' ')
+    void confirm(`Someone on Telegram, ${req.name}, wants to control me from their phone. The code is ${spoken}. Is that you?`).then(finish)
+    mine = pending
+    status(`📱 pairing request · ${req.name} · code ${req.code} · say yes, or Allow in Setup`)
+    setupChanged()
+  })
+}
+
+/** One message from the paired phone. It runs as phone work, so every line and step of hers goes back to the phone. */
+async function phoneMessage(text: string): Promise<void> {
+  console.log(`[remote] from the phone: ${text.slice(0, 80)}`)
+  // On the Mac only: the phone knows what it sent.
+  const line = `📱 ${text.slice(0, 70)}`
+  win?.webContents.send('status', line)
+  bar.status(line)
+  await handleChat(text)
+}
+
 // ---- first-run window: her brain, her voice, and what macOS lets her do
 
 let setupWin: BrowserWindow | null = null
@@ -1627,7 +1825,16 @@ async function setupState(): Promise<SetupState> {
       provider: localVoice ? 'local' : process.env.ELEVENLABS_API_KEY?.trim() ? 'elevenlabs' : 'system',
       localServer: localVoice ? await sttHealthy().catch(() => false) : false
     },
-    permissions: { microphone: media('microphone'), screen: media('screen'), keys }
+    permissions: { microphone: media('microphone'), screen: media('screen'), keys },
+    remote: {
+      token: Boolean(telegramToken()),
+      fromEnv: !settings.get().telegramToken?.trim() && Boolean(process.env.DESKMATE_TELEGRAM_TOKEN?.trim()),
+      bot: remoteBot,
+      on: Boolean(remote),
+      paired: settings.get().remotePaired?.name ?? null,
+      request: remote?.pairing && pairAnswer ? { name: remote.pairing.name, code: remote.pairing.code } : null,
+      error: remoteError
+    }
   }
 }
 
@@ -1672,6 +1879,29 @@ ipcMain.handle('setup:claude', async (_event, key: string | null, model: string,
   return result
 })
 ipcMain.handle('setup:allow', (_event, kind: PermissionKind) => allow(kind))
+ipcMain.handle('setup:telegram', async (_event, raw: string) => {
+  const token = String(raw ?? '').trim()
+  const result = await checkToken(token, { base: TELEGRAM_API_URL })
+  if (result.ok) {
+    // Another bot is another chat: the old pairing does not carry over.
+    const changed = token !== telegramToken()
+    settings.set({ telegramToken: token, remoteEnabled: true, ...(changed ? { remotePaired: undefined } : {}) })
+    remoteBot = result.bot ?? null
+    startRemote()
+    status(remoteStatusLine())
+  }
+  return result
+})
+ipcMain.handle('setup:remote', (_event, action: string) => {
+  if (action === 'allow' || action === 'refuse') pairAnswer?.(action === 'allow')
+  else if (action === 'forget') {
+    if (remote?.paired) remote.unpair()
+    else settings.set({ remotePaired: undefined })
+    status('phone unpaired')
+  } else if (action === 'on' || action === 'off') setRemote(action === 'on')
+  refreshTray()
+  setupChanged()
+})
 ipcMain.handle('setup:finish', () => {
   setupWin?.close()
 })
@@ -1722,6 +1952,7 @@ app.whenReady().then(async () => {
   createWindow()
   body.rememberHome()
   if (/^(1|true|yes|on)$/i.test(process.env.DESKMATE_WANDER?.trim() || '')) body.wander(true, () => !acting && !browsing && !herSpeaking)
+  if (!/^(0|false|no|off)$/i.test(process.env.DESKMATE_IDLE_TOUCHES?.trim() || '')) body.idleTouches(true)
   if (SLEEP_AFTER_MIN > 0) {
     setInterval(() => {
       if (body.mode === 'idle' || body.mode === 'sit') {
@@ -1730,10 +1961,16 @@ app.whenReady().then(async () => {
     }, 30_000).unref()
   }
   createTray()
+  startRemote()
   // First run: no brain yet, so the setup window does the asking (it does not come back once closed).
   if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
   if (ears && WAKE_MODE === 'word') void setListening(true)
   if (ears && WAKE_GATE) setTimeout(() => void warmAcknowledgements(), 12_000).unref()
+  if (updateCheckEnabled()) {
+    // after the window has loaded, so the status line has somewhere to go
+    setTimeout(() => void checkForUpdate(), 15_000).unref()
+    setInterval(() => void checkForUpdate(), UPDATE_EVERY_MS).unref()
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else win.show()
@@ -1745,6 +1982,7 @@ app.on('before-quit', () => {
   browseStop = true
   actStop = true
   appHands.stop()
+  remote?.stop()
   bar.destroy()
   body.destroy()
   for (const t of agent.running()) agent.cancel(t.id)

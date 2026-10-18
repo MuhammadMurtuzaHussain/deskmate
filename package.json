@@ -1,6 +1,6 @@
 {
   "name": "deskmate",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "A Live2D or 3D (VRM / MMD) AI desk companion that lives on your screen and talks back: speech to speech with a local Whisper + Kokoro voice, sees what you do, drives your Chrome, hands real work to Claude Code, dances when you ask, remembers you. Runs fully local with Ollama, or on Gemini.",
   "main": "./out/main/index.js",
@@ -10,6 +10,7 @@
     "build": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite build",
     "start": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/*.test.ts",
     "build:hands": "node scripts/build-hands.cjs",
     "dist": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder",
     "dist:mac": "node scripts/ensure-electron.cjs && node scripts/build-hands.cjs --universal && electron-vite build && electron-builder --mac",
@@ -157,7 +158,7 @@
         "LSUIElement": true,
         "NSScreenCaptureDescription": "Deskmate looks at your screen so your companion can react to what you are doing.",
         "NSMicrophoneUsageDescription": "Deskmate listens while hands-free mode is on, so you can talk to your companion.",
-        "NSAppleEventsUsageDescription": "Deskmate drives Google Chrome for you when you ask her to open, read or browse something."
+        "NSAppleEventsUsageDescription": "Deskmate controls the apps you ask her to use: Chrome to browse, Spotify to play music, Messages to send texts (always after your yes)."
       }
     },
     "dmg": {

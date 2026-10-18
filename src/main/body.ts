@@ -1,12 +1,13 @@
 import { BrowserWindow, screen } from 'electron'
 import type { Hands, Rect } from './hands'
-import type { Anchors, BodyState } from '../shared/types'
+import type { Anchors, BodyState, Gesture } from '../shared/types'
 
 /**
  * Her body on the desktop: she walks (her window glides along the bottom of the screen while the renderer animates
  * the steps), points at things (standing beside them, with a ring around the spot), sits on the top edge of a window
- * and rides along when it moves, sleeps, and wanders when she is bored. The renderer does the poses; this decides where
- * her window goes and what she is doing.
+ * and rides along when it moves (and gets up again after a few minutes), sleeps, wanders when she is bored, and now
+ * and then stretches, yawns or glances at the pointer. The renderer does the poses; this decides where her window goes
+ * and what she is doing.
  */
 
 export interface BodyDeps {
@@ -15,24 +16,49 @@ export interface BodyDeps {
   /** bundle ids of her own app, so she never sits on herself */
   selfIds: string[]
   log(line: string): void
+  /** true while she is doing something for the user (talking, listening, working): no getting up or fidgeting then */
+  busy?(): boolean
 }
 
 const SPEED = 520 // px per second
 const SIT_POLL_MS = 250
+/** how long each gesture plays in the renderer */
+const GESTURE_MS: Record<Gesture['kind'], number> = { stretch: 2600, yawn: 2800, glance: 1800 }
+
+/** Minutes she stays on a window before getting up: DESKMATE_SIT_MINUTES, or 3 to 6 at random; null = until told. */
+function sitMinutes(): number | null {
+  const raw = process.env.DESKMATE_SIT_MINUTES?.trim()
+  if (raw) {
+    const n = Number(raw)
+    if (Number.isFinite(n) && n >= 0) return n === 0 ? null : n
+  }
+  return 3 + Math.random() * 3
+}
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms).unref())
 
 export class Body {
   private state: BodyState = { mode: 'idle' }
   private anchors: Anchors | null = null
   private home: { x: number; y: number } | null = null
   private walking: { cancel: () => void } | null = null
-  private sitting: { windowId: number; dx: number; lastX: number; lastY: number; timer: NodeJS.Timeout } | null = null
+  private sitting: { windowId: number; dx: number; lastX: number; lastY: number; timer: NodeJS.Timeout; getUpAt: number } | null = null
   private wanderTimer: NodeJS.Timeout | null = null
+  private touchTimer: NodeJS.Timeout | null = null
+  /** bumped by anything that takes over her body, so a getting-up sequence in progress stops where it is */
+  private epoch = 0
+  /** the epoch of a getting-up sequence in progress; it counts only while nothing has taken over since */
+  private downEpoch = -1
   private highlights = new Set<BrowserWindow>()
 
   constructor(private readonly deps: BodyDeps) {}
 
   get mode(): BodyState['mode'] {
     return this.state.mode
+  }
+
+  private get gettingUp(): boolean {
+    return this.downEpoch === this.epoch
   }
 
   get wandering(): boolean {
@@ -90,13 +116,18 @@ export class Body {
     })
   }
 
-  /** Back to standing, wherever she is. */
+  /** Back to standing: off the window she sits on (down to the bottom of the screen), else where she is. */
   stand(): void {
-    this.stopSitting()
+    if (this.sitting) {
+      void this.getDown({ stretch: false, home: false })
+      return
+    }
+    this.epoch++
     this.send({ mode: 'idle' })
   }
 
   async goHome(): Promise<void> {
+    this.epoch++
     this.stopSitting()
     if (this.home) await this.walkTo(this.home.x, this.home.y)
     this.send({ mode: 'idle' })
@@ -106,6 +137,7 @@ export class Body {
   async comeToCursor(): Promise<void> {
     const win = this.deps.win()
     if (!win) return
+    this.epoch++
     this.stopSitting()
     const p = screen.getCursorScreenPoint()
     const { workArea } = screen.getDisplayNearestPoint(p)
@@ -123,6 +155,7 @@ export class Body {
   async pointAt(rect: Rect, opts: { ms?: number } = {}): Promise<void> {
     const win = this.deps.win()
     if (!win) return
+    this.epoch++
     this.stopSitting()
     const cx = rect.x + rect.w / 2
     const cy = rect.y + rect.h / 2
@@ -194,6 +227,7 @@ export class Body {
   private async sitOn(windowId: number, frame: Rect): Promise<void> {
     const win = this.deps.win()
     if (!win) return
+    this.epoch++
     this.stopSitting()
     const [w] = win.getSize()
     const hipsY = this.anchors?.hips.y ?? win.getSize()[1] * 0.5
@@ -209,11 +243,16 @@ export class Body {
     await this.walkTo(x, y)
     this.send({ mode: 'sit' })
     const timer = setInterval(() => void this.followSeat(), SIT_POLL_MS)
-    this.sitting = { windowId, dx: x - frame.x, lastX: frame.x, lastY: frame.y, timer }
-    this.deps.log(`sitting on window ${windowId}`)
+    const minutes = sitMinutes()
+    const getUpAt = minutes === null ? Infinity : Date.now() + minutes * 60_000
+    this.sitting = { windowId, dx: x - frame.x, lastX: frame.x, lastY: frame.y, timer, getUpAt }
+    this.deps.log(`sitting on window ${windowId}${minutes === null ? '' : ` for ${minutes.toFixed(1)} min`}`)
   }
 
-  /** Rides along with the window she sits on; when it closes, minimises or leaves the Space, she goes home. */
+  /**
+   * Rides along with the window she sits on; when it closes, minimises or leaves the Space, she climbs down and goes
+   * home. When her time is up (and she is awake and not busy) she stretches, hops down and walks home.
+   */
   private async followSeat(): Promise<void> {
     const seat = this.sitting
     const win = this.deps.win()
@@ -222,7 +261,12 @@ export class Body {
     if (this.sitting !== seat) return
     if (!frame) {
       this.deps.log('the window she sat on is gone; going home')
-      void this.goHome()
+      void this.getDown({ stretch: false, home: true })
+      return
+    }
+    if (Date.now() >= seat.getUpAt && this.state.mode === 'sit' && !this.deps.busy?.()) {
+      this.deps.log('had enough of sitting; getting up')
+      void this.getDown({ stretch: true, home: true })
       return
     }
     if (frame.x !== seat.lastX || frame.y !== seat.lastY) {
@@ -239,8 +283,50 @@ export class Body {
     this.sitting = null
   }
 
+  /**
+   * Off the window: optionally a stretch first, then a hop down to the bottom of the screen and, with `home`, a walk
+   * back to her spot. Anything else that moves her (a drag, another command) stops it where it is.
+   */
+  private async getDown(opts: { stretch: boolean; home: boolean }): Promise<void> {
+    const win = this.deps.win()
+    this.stopSitting()
+    const epoch = ++this.epoch
+    const stale = (): boolean => epoch !== this.epoch || !win || win.isDestroyed()
+    this.downEpoch = epoch
+    try {
+      if (!win) return
+      if (opts.stretch) {
+        this.gesture({ kind: 'stretch' })
+        await delay(GESTURE_MS.stretch)
+        if (stale()) return
+      }
+      this.send({ mode: 'idle' })
+      const [x0, y] = win.getPosition()
+      const [w, h] = win.getSize()
+      const { workArea } = screen.getDisplayNearestPoint({ x: Math.round(x0 + w / 2), y: Math.round(y + h / 2) })
+      // A window that left with a Space switch slid off the screen first, and she rode along: land back on it.
+      const x = clamp(x0, workArea.x - w * 0.25, workArea.x + workArea.width - w * 0.75)
+      const floor = workArea.y + workArea.height - h + 8
+      await this.walkTo(x, floor)
+      if (stale() || !opts.home || !this.home) return
+      await this.walkTo(this.home.x, floor)
+      if (stale()) return
+      await this.walkTo(this.home.x, this.home.y)
+      if (stale()) return
+      this.send({ mode: 'idle' })
+    } finally {
+      if (this.downEpoch === epoch) this.downEpoch = -1
+    }
+  }
+
+  /** A one-off movement played over what she is doing (see GESTURE_MS for how long each lasts). */
+  gesture(g: Gesture): void {
+    this.deps.win()?.webContents.send('avatar:gesture', g)
+  }
+
   sleep(): void {
     if (this.state.mode === 'sleep') return
+    this.epoch++
     this.walking?.cancel()
     this.send({ mode: 'sleep' })
   }
@@ -248,15 +334,56 @@ export class Body {
   /** Awake again: back on her seat if she fell asleep sitting, else standing. */
   wake(): void {
     if (this.state.mode !== 'sleep') return
+    // Just woken on her seat: not straight off it, even if her time is up.
+    if (this.sitting) this.sitting.getUpAt = Math.max(this.sitting.getUpAt, Date.now() + 20_000)
     this.send({ mode: this.sitting ? 'sit' : 'idle' })
   }
 
   /** The user dragged her somewhere: that is her new place, and she is no longer sitting on anything. */
   userMoved(): void {
+    this.epoch++
     this.walking?.cancel()
-    if (this.sitting) this.stand()
+    // (still 'sit' while she stretches before getting down)
+    if (this.sitting || this.state.mode === 'sit') {
+      this.stopSitting()
+      this.send({ mode: 'idle' })
+    }
     if (this.state.mode === 'sleep') this.send({ mode: 'idle' })
     this.rememberHome()
+  }
+
+  /**
+   * Small signs of life while she stands or sits around: once every minute or two, a glance at the pointer, now and
+   * then a yawn, rarely a stretch. Never while she is busy, walking, or asleep.
+   */
+  idleTouches(on: boolean): void {
+    if (this.touchTimer) clearTimeout(this.touchTimer)
+    this.touchTimer = null
+    if (!on) return
+    const next = (): void => {
+      this.touchTimer = setTimeout(
+        () => {
+          this.idleTouch()
+          if (this.touchTimer) next()
+        },
+        50_000 + Math.random() * 70_000
+      )
+      this.touchTimer.unref()
+    }
+    next()
+  }
+
+  private idleTouch(): void {
+    const win = this.deps.win()
+    if (!win || !win.isVisible() || this.walking || this.gettingUp || this.deps.busy?.()) return
+    if (this.state.mode !== 'idle' && this.state.mode !== 'sit') return
+    const r = Math.random()
+    if (r < 0.55) {
+      const p = screen.getCursorScreenPoint()
+      const [x, y] = win.getPosition()
+      this.gesture({ kind: 'glance', target: { x: p.x - x, y: p.y - y } })
+    } else if (r < 0.85) this.gesture({ kind: 'yawn' })
+    else this.gesture({ kind: 'stretch' })
   }
 
   /** Every so often, stroll a little way along the bottom of the screen and back toward home. */
@@ -268,7 +395,7 @@ export class Body {
       this.wanderTimer = setTimeout(
         async () => {
           const win = this.deps.win()
-          if (win && canMove() && this.state.mode === 'idle' && !this.sitting) {
+          if (win && canMove() && this.state.mode === 'idle' && !this.sitting && !this.gettingUp) {
             const [x, y] = win.getPosition()
             const [w] = win.getSize()
             const { workArea } = screen.getDisplayNearestPoint({ x: x + w / 2, y })
@@ -292,6 +419,7 @@ export class Body {
     this.walking?.cancel()
     this.stopSitting()
     if (this.wanderTimer) clearTimeout(this.wanderTimer)
+    if (this.touchTimer) clearTimeout(this.touchTimer)
     for (const h of this.highlights) if (!h.isDestroyed()) h.destroy()
   }
 }

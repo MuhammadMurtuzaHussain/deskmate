@@ -1,4 +1,4 @@
-import type { AppConfig, AvatarCommand, BodyState, Emotion, ReplyPayload, Touch } from '../shared/types'
+import type { AppConfig, AvatarCommand, BodyState, Emotion, Gesture, ReplyPayload, Touch } from '../shared/types'
 import type { Avatar } from './avatar'
 import { createMic } from './mic'
 
@@ -444,6 +444,7 @@ function wireBody(): void {
     else if (state.mode === 'idle' || state.mode === 'sit') setStatus(idleStatus())
     window.setTimeout(report, 300)
   })
+  api.onGesture?.((g: Gesture) => avatar?.gesture?.(g))
 }
 
 function fillCharacterSelect(): void {

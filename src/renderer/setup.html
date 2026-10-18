@@ -64,6 +64,29 @@
       <div class="hint" id="perm-note">After you switch something on in System Settings, come back here; this page checks again by itself.</div>
     </section>
 
+    <section id="remote" class="hidden">
+      <div class="head"><h2>4 · From your phone <span class="dim">(optional)</span></h2><span class="chip" id="remote-chip">…</span></div>
+      <div class="hint">Send her messages from anywhere through a Telegram bot of your own: in Telegram, message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code>, and paste the token it gives you here.</div>
+      <form id="telegram" class="row" autocomplete="off">
+        <input id="telegram-token" type="password" placeholder="paste your bot token (123456:ABC…)" />
+        <button type="submit">Check and use</button>
+      </form>
+      <div id="remote-request" class="pair hidden">
+        <div><b id="remote-request-name"></b><span>wants to control her from their phone. Code on the phone: <b id="remote-request-code"></b></span></div>
+        <button id="remote-allow" class="primary">Allow</button>
+        <button id="remote-refuse">Refuse</button>
+      </div>
+      <div id="remote-paired" class="pair hidden">
+        <div><b id="remote-paired-name"></b><span>can send her messages from their phone.</span></div>
+        <button id="remote-forget">Forget this phone</button>
+      </div>
+      <div class="row hint" id="remote-row">
+        <span id="remote-text" class="grow"></span>
+        <button id="remote-toggle" class="link"></button>
+      </div>
+      <div class="msg" id="remote-msg"></div>
+    </section>
+
     <footer>
       <span class="hint" id="tip"></span>
       <button id="done" class="primary">Done</button>

@@ -50,14 +50,14 @@ The rules live in the tools, so the model cannot talk its way past them:
 |---|---|
 | "come here" / "come over" | walks along the bottom of the screen to below your pointer |
 | "go home" / "back to your spot" | walks back to where she lives (wherever you last dragged her) |
-| "sit on this window" / "sit down" | sits on the top edge of the window in front, legs dangling, and rides along when you move it; stands up and goes home when it closes |
-| "stand up" | gets off it |
+| "sit on this window" / "sit down" | sits on the top edge of the window in front, legs dangling, and rides along when you move it; after a few minutes she stretches, hops down and walks home (also when the window closes) |
+| "stand up" / "get down" | hops off it right away |
 | "go to sleep" / "take a nap" · "wake up" | dozes off (eyes shut, "zzZ"); any message or poke wakes her |
 | "walk around" · "stay put" | strolls along the screen now and then, or stops |
 | "where's my resume?" / "find the tax pdf" | Spotlight finds it, Finder shows it, she walks over and points at it with a pulsing ring around it |
 | (drag her by the head) | she dangles and swings while carried |
 
-Her brain can pick these too ("come sit with me", "you look tired, take a nap"), and with Claude as her brain the agent can point at what it finds ("where's the export button?"). She falls asleep after `DESKMATE_SLEEP_AFTER` minutes (10; 0 keeps her awake) with nothing happening; `DESKMATE_WANDER=1` has her walk around from launch. The menu-bar icon has the same under **Her body**.
+Her brain can pick these too ("come sit with me", "you look tired, take a nap"), and with Claude as her brain the agent can point at what it finds ("where's the export button?"). She falls asleep after `DESKMATE_SLEEP_AFTER` minutes (10; 0 keeps her awake) with nothing happening; `DESKMATE_WANDER=1` has her walk around from launch. She stays on a window 3 to 6 minutes (`DESKMATE_SIT_MINUTES` sets it; 0 keeps her there until told). Standing or sitting around, she now and then glances at your pointer, yawns, or stretches (`DESKMATE_IDLE_TOUCHES=0` turns that off). The menu-bar icon has the same under **Her body**.
 
 3D characters (VRM) do all of it with their own limbs: a walk cycle, pointing with the near arm, a real seated pose. Live2D characters have no limbs to move, so she leans and bobs while walking, turns her head and eyes to what she points at (the ring does the rest), and uses the model's own pose toggles where it has them (see `poses` in docs/CHARACTERS.md). A window right under the menu bar has no room above it, so she says so instead of sitting in mid-air.
 
@@ -176,6 +176,33 @@ For the Claude app she switches to its chat side (Go › Claude) before New Chat
 
 Not yet: reading replies back to you, WhatsApp / Telegram / other apps, Windows and Linux.
 
+## From your phone (Telegram)
+
+When you are away from the laptop, text her from your phone. Deskmate reads a Telegram bot of your own (long polling: no server, no open port on your Mac), runs each message through the same path as typed chat, and sends back every line she says while she works on it, including the steps in between ("… working out who and what", edited in place as she goes) and the read-back questions.
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name, and copy the token it gives you (`123456:ABC…`).
+2. Menu-bar icon → **Setup…** → **4 · From your phone**: paste the token, **Check and use**. Or put `DESKMATE_TELEGRAM_TOKEN=…` in `.env` (a token pasted in Setup wins over it).
+3. On your phone, open your bot and send `/start`. Your phone shows a four-digit code; on the Mac she asks "Someone on Telegram, *you*, wants to control me from their phone. The code is … Is that you?". Check the code, then say or type yes, or press **Allow** in Setup.
+
+After that, anything you would type in her command bar works from the phone: "message sam on Discord saying I'm late", "what's on my screen?", "ask Claude to fix the failing tests in deskmate", "how's Claude doing". When she reads something back before sending it, the phone shows **Yes** / **No** buttons (typing yes or no works too). A Claude Code job started from the phone reports to the phone when it ends, however long it takes.
+
+| on the phone | she does |
+|---|---|
+| anything | the same as typing it in her command bar |
+| `/selfie` (or "send me a selfie") | sends a picture of her as she is on screen (she shows herself for a moment if she was hidden) |
+| `/stop` | stops what she is doing in an app, in Chrome, or the running Claude job |
+| `/help` | what you can send |
+| `/unpair` | forgets this phone; pairing again takes a `/start` and a yes on the Mac |
+
+The tray menu has **Phone remote: on/off**; off stops reading the bot (messages wait in Telegram). The status row shows `📱 …` when a phone message comes in.
+
+What keeps it safe:
+
+- **One account.** Only the Telegram account you paired can control her, and only from its private chat with the bot; the chat id and the sender are both checked. Everyone else, groups and other bots are ignored and logged (`[remote] ignored …`), never relayed and never answered. Someone else's `/start` is not even answered while a phone is paired.
+- **Pairing needs the Mac.** The first `/start` is read back on the Mac with the code, and only a yes there (or **Allow** in Setup) pairs it; the phone cannot answer that question. After a no, further `/start`s are ignored for a minute, and an account refused twice is ignored until the remote is switched off and on. To pair a different phone, **Forget this phone** in Setup (or `/unpair` from the old one) first. A new bot token clears the pairing.
+- **Same rules as at the keyboard.** Phone messages count as typed, so every confirmation that applies to typed requests applies (`DESKMATE_CONFIRM_SENDS`, default always, reads messages back; `DESKMATE_CONFIRM_JOBS=always` reads jobs and agent runs back too). A question nobody answers within a minute is a no.
+- **Nothing stale.** A message that reached her more than two minutes late (the Mac was asleep or Deskmate was closed) is not acted on; she tells you, and you send it again if you still want it.
+
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would.
+Speech recognition and her brain (with Ollama) stay on your machine. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted); nothing else she sees or hears is sent there.

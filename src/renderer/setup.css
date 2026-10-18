@@ -42,3 +42,8 @@ button.primary { background: var(--accent); color: #1a1030; border-color: transp
 .perm > div { flex: 1; display: flex; flex-direction: column; }
 .perm > div span { color: var(--dim); font-size: 12px; }
 footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pair { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(179, 140, 255, 0.1); }
+.pair > div { flex: 1; display: flex; flex-direction: column; }
+.pair > div span { color: var(--dim); font-size: 12px; }
+.grow { flex: 1; }
+h2 .dim { color: var(--dim); font-weight: 400; }

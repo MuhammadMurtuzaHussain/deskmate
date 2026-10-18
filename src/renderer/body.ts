@@ -118,3 +118,60 @@ export function danglePose(t: number, sway: number): Pose {
     legR: { thigh: 0.1 - kick, knee: 0.45, out: 0.05 }
   }
 }
+
+/**
+ * How much of a gesture shows at progress k (0..1): eases in over the first quarter, holds, eases out over the last
+ * third, so a stretch or a glance never pops.
+ */
+export function gestureWeight(k: number): number {
+  const smooth = (x: number): number => x * x * (3 - 2 * x)
+  if (k <= 0 || k >= 1) return 0
+  if (k < 0.25) return smooth(k / 0.25)
+  if (k > 0.67) return smooth((1 - k) / 0.33)
+  return 1
+}
+
+/**
+ * A stretch: arms up over the head, a lean back with a slow side-to-side reach, eyes to the ceiling. Legs stay as
+ * they are in `base`, so it works standing or sitting; standing, she also rises a little onto her toes.
+ */
+export function stretchPose(base: Pose, k: number): Pose {
+  const side = Math.sin(k * Math.PI * 2) * 0.1
+  return {
+    ...base,
+    hipsY: base.legL ? base.hipsY : base.hipsY + 0.008,
+    spine: v(-0.1, 0, side),
+    chest: v(-0.08, 0, side * 0.6),
+    neck: v(-0.12, 0, 0),
+    head: v(-0.18, 0, -side * 0.5),
+    armL: { swing: -0.15, out: 0.05, raise: 2.85 },
+    armR: { swing: -0.15, out: 0.05, raise: 2.85 },
+    elbowL: 0.35,
+    elbowR: 0.35,
+    turn: base.turn * 0.5
+  }
+}
+
+/** A yawn: the head tips back a little and one hand comes up toward the mouth (the renderer opens the mouth). */
+export function yawnPose(base: Pose, k: number): Pose {
+  const tip = Math.sin(Math.min(1, k * 1.4) * Math.PI) * 0.5 + 0.5
+  return {
+    ...base,
+    spine: v(base.spine.x - 0.04, base.spine.y, base.spine.z),
+    neck: v(-0.08 * tip, base.neck.y, 0.04),
+    head: v(-0.16 * tip, base.head.y, 0.08),
+    armR: { swing: -0.8, out: 0, raise: -0.3 },
+    elbowR: 2.3
+  }
+}
+
+/** A glance: neck and head turn toward a spot (dx, dy from her head in screen terms, x right, y up); the body stays. */
+export function glancePose(base: Pose, dx: number, dy: number): Pose {
+  const nx = clamp(dx / 400, -1, 1)
+  const ny = clamp(dy / 400, -1, 1)
+  return {
+    ...base,
+    neck: v(base.neck.x - ny * 0.08, base.neck.y + nx * 0.22, base.neck.z),
+    head: v(base.head.x - ny * 0.12, base.head.y + nx * 0.25, base.head.z - nx * 0.04)
+  }
+}
