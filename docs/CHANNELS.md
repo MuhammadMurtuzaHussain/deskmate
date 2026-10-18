@@ -167,8 +167,9 @@ iMessage from your phone instead.
   settings, `.env`, `.pem`/`.key` files, `id_rsa` and kin), and nothing over 25 MB.
 - **Nothing stale.** A message that reached her more than two minutes late (the Mac was asleep, Deskmate was closed) is
   not acted on; she tells you, and you send it again if you still want it.
-- **Tokens stay in her settings file** (`<user data>/settings.json`, readable only by you) and are never logged; log
-  lines that could echo a URL with a token in it are scrubbed.
+- **Tokens are kept encrypted** with a key in your Keychain (`<user data>/settings.secrets`; `settings.json` on a
+  system without a keyring, readable only by you) and are never logged: anything token-shaped is blanked out of logs
+  and of every reply she sends ([SAFETY.md](SAFETY.md#secrets)).
 
 ## Privacy
 

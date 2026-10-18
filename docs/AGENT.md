@@ -142,6 +142,12 @@ She reads a lot of text that someone else wrote: windows on your screen (accessi
 
 The rules are in the code between the model and the tools (`src/main/core.ts`, `src/main/untrusted.ts`), so a model that is talked into something still cannot do it without you.
 
+## Trust: what she may do, what she did, what it costs
+
+Each tool has a level (allow, ask or never), per tool and per place a request comes from; every call is in an activity log with undo where it is honest ("undo that", "what did you just do?", tray → What she did today…); a spending meter counts every Claude and Gemini call against an optional monthly budget; Control-Option-Escape or "stop everything" stops it all until "resume"; keys live in the Keychain and are blanked out of everything she writes; terminal commands are off until you turn them on, and pass a deny-list. All of it is in [SAFETY.md](SAFETY.md).
+
+New tools: `move_file`, `trash_file` (both undoable), `recent_actions`, `undo`, and `run_command` when terminal commands are on.
+
 ## Evals
 
 `npm run eval` scores the agent core on 57 realistic requests (messages on four apps, skills, files, reminders and repeats, Claude Code jobs, browsing, calendar, two-step requests, plans, a missing detail, small talk, three prompt-injection attempts through a page, a message and the screen, twelve about memory and skills, and thirteen about scheduling: setting up jobs from the usual and from odd phrasing, a monthly job, a reminder that must stay a reminder, listing, pausing, deleting and moving jobs, and three scheduled runs: one whose send is refused at the guard, one where nobody is there so the send waits, and one that only reads) against fake hands that record every call and press nothing. Each task checks the tools chosen, their arguments, what must never happen, her reply, and for memory tasks what her notes say afterwards.
@@ -212,7 +218,7 @@ Typed commands work too: `/claude <job>`, `/resume [folder]`, `/tasks`, `/cancel
 
 ### Before a job starts
 
-A sentence she misheard must never start a job. For spoken requests she reads the job back ("Send this to Claude in China Vlog: trim the intro to ten seconds?") and waits for a yes. Typed requests run at once. `DESKMATE_CONFIRM_JOBS=always|voice|never` changes that.
+A sentence she misheard must never start a job, nor a page that talked her into one. She reads the job back ("Send this to Claude in China Vlog: trim the intro to ten seconds?") and waits for a yes: the `claude_code` tool's level is ask (Setup → Permissions and safety, [SAFETY.md](SAFETY.md)). Set it to allow there to start typed jobs at once; `DESKMATE_CONFIRM_JOBS=always|voice|never` still sets the default when you give it.
 
 ### What Claude may do
 

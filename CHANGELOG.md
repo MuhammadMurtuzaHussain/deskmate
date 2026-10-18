@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased: trust her near your Mac ([docs/SAFETY.md](docs/SAFETY.md))
+
+**Permission levels**
+- Every tool (built-in, skill, MCP) has a level: allow, ask or never. Reading is allow; sending messages, deleting, buying, running commands, Claude Code jobs and files leaving the Mac ask; DENY_APPS stay never. `DESKMATE_CONFIRM_SENDS` / `_JOBS` still set the base.
+- Per-tool levels everywhere or only from one origin (voice at the desk, the command bar, chat apps, scheduled jobs, the heartbeat), and a floor per origin for every risky tool ("always ask" or "never" from chat apps or schedules). A tool set to never is left out of her list.
+- "Yes, always" to one of her questions makes that tool allow from where it was asked. The injection guard still asks after untrusted text whatever the level.
+- Setup → **9 · Permissions and safety**.
+
+**Activity and undo**
+- Every tool call in `<user data>/activity/` (time, origin, tool, redacted arguments, result, who said yes, why), searchable with search_past. Tray → **What she did today…** opens the Activity window, with Undo where it is honest.
+- "Undo that" and "what did you just do?" by voice; agent tools `undo` and `recent_actions`. Undo puts trashed files back, moves files back, quits apps and closes tabs she opened, restores the clipboard, removes or restores reminders, deletes a job she set up. Sent messages, Claude Code edits and commands say "can't undo".
+- New tools `move_file` and `trash_file` (her own Trash folder move, so it can be put back; never overwrites; not the system, hidden folders or a whole top-level folder).
+
+**Spending meter**
+- Tokens per Anthropic and Gemini call (uncached, cache reads, cache writes, output) priced per model, by origin (chat, chat apps, scheduled jobs, heartbeat, looking and learning), in `<user data>/spend/`. Today and this month in the tray and Setup → **10 · Spending**.
+- A monthly budget (Setup or `DESKMATE_BUDGET`): a heads-up at 80%; at 100% she asks before the next call at the desk or in the chat app, and scheduled jobs and the heartbeat stop.
+
+**Secrets**
+- API keys and chat-app tokens move from `settings.json` to an encrypted file keyed by the Keychain (Electron safeStorage), once. Anything key-shaped is redacted from the console, task logs, the day log, the chat archive, the activity log and channel replies; her memory refuses facts with a key in them.
+
+**Kill switch**
+- Control-Option-Escape (configurable), tray → **Stop everything**, or "stop everything": stops her turn, browsing, plans, scheduled runs, the heartbeat, the brief and chat apps, then asks about Claude Code jobs. "Resume" turns them back on.
+
+**Shell safety**
+- `run_command` (off until Setup turns it on; asks each time) and skill-script arguments go through a deny-list (sudo, recursive deletes of home or system folders, credentials, `curl | sh`, disk wipes, shutdown), run in a scratch or project folder with an environment without her keys. How Claude Code jobs are permissioned is documented.
+
+**Tests and evals**
+- `test/safety.test.ts`: permission resolution and the gate in the agent core, redaction, the settings migration with a fake keychain, the activity log, undo of a trash and a move, the price table and budget decisions, the deny-list. 13 new eval tasks (permissions, a phone floor, undo, activity, a refused and an allowed command, the kill switch mid-turn, a key she must not remember).
+
 ## Unreleased: reach her from the chat apps you already use
 
 **Chat apps** ([docs/CHANNELS.md](docs/CHANNELS.md))
