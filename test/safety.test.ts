@@ -19,6 +19,8 @@ import { buildTools } from '../src/main/tools.ts'
 import { moveFile, protectedPath, trashFile, undoFile, undoLabel } from '../src/main/undo.ts'
 import { FakeHost } from './evals/fake.ts'
 
+// NOTE: every key and token in this file is made up, not real. They are built from parts so no real-looking secret sits in the repo.
+
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'deskmate-safety-'))
 
 // ---- permissions
@@ -134,7 +136,7 @@ test('gate: a no to an ask level stops the call', async () => {
 
 test('redaction: provider keys, tokens, private keys and the app\'s own secrets', () => {
   const ant = `sk-ant-api03-${'a1B2'.repeat(10)}`
-  const text = `key ${ant} and AIza${'x'.repeat(35)} and xoxb-1234567890-abcdefghij and 123456789:AA${'b'.repeat(33)} password: hunter2hunter2`
+  const text = `key ${ant} and AIza${'x'.repeat(35)} and ${['xoxb', '1234567890', 'abcdefghij'].join('-')} and 123456789:AA${'b'.repeat(33)} password: hunter2hunter2`
   const out = redact(text)
   assert.ok(!out.includes(ant))
   assert.match(out, /\[redacted anthropic-key\]/)
@@ -164,7 +166,7 @@ test('settings: secrets move out of settings.json once, into the encrypted file,
   try {
     const path = join(dir, 'settings.json')
     const key = `sk-ant-api03-${'k'.repeat(40)}`
-    writeFileSync(path, JSON.stringify({ brain: 'anthropic', anthropicApiKey: key, channels: { discord: { token: 'disc.tok.en-value-123456', on: true }, slack: { botToken: 'xoxb-1-2-3-abcdefghijk', appToken: 'xapp-1-abcdefghijkl' } } }))
+    writeFileSync(path, JSON.stringify({ brain: 'anthropic', anthropicApiKey: key, channels: { discord: { token: 'disc.tok.en-value-123456', on: true }, slack: { botToken: ['xoxb', '1', '2', '3', 'abcdefghijk'].join('-'), appToken: ['xapp', '1', 'abcdefghijkl'].join('-') } } }))
     const s = new Settings(path, { box: fakeBox() })
     assert.equal(s.store, 'keychain')
     assert.equal(s.migrated, 4)
@@ -173,7 +175,7 @@ test('settings: secrets move out of settings.json once, into the encrypted file,
     assert.equal(JSON.parse(onDisk).channels.discord.on, true)
     assert.ok(!readFileSync(join(dir, 'settings.secrets')).toString().includes(key))
     assert.equal(s.get().anthropicApiKey, key)
-    assert.equal(s.get().channels?.slack?.appToken, 'xapp-1-abcdefghijkl')
+    assert.equal(s.get().channels?.slack?.appToken, ['xapp', '1', 'abcdefghijkl'].join('-'))
     // a new key goes to the vault, never to the JSON
     s.set({ geminiApiKey: `AIza${'g'.repeat(35)}` })
     assert.ok(!readFileSync(path, 'utf8').includes('AIza'))

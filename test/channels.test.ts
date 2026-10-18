@@ -5,6 +5,8 @@ import { afterEach, test } from 'node:test'
 import { chunks, scrub, type Channel, type ChannelEvents, type ChannelId, type Inbound, type OutFile, type PairingKind } from '../src/main/channels/channel.ts'
 import { ChannelHub, outsideChannels, sameHandle, type HubOptions, type Owner, type PairRequest } from '../src/main/channels/hub.ts'
 
+// NOTE: every key and token in this file is made up, not real. They are built from parts so no real-looking secret sits in the repo.
+
 interface Sent {
   kind: 'text' | 'edit' | 'image' | 'file' | 'typing'
   chat: string
@@ -384,7 +386,7 @@ test('a channel that fails for good is stopped and says why', async () => {
 
 test('chunks and scrub', () => {
   assert.deepEqual(chunks('aaa bbb ccc', 8), ['aaa bbb', 'ccc'])
-  const line = scrub('POST https://api.telegram.org/bot123456:AAbbCCddEEffGGhhIIjjKKllMMnn/sendMessage failed with xoxb-123-456-abcdefghij', [])
+  const line = scrub(`POST https://api.telegram.org/bot123456:${'AA' + 'bbCCddEEffGGhhIIjjKKllMMnn'}/sendMessage failed with ${['xoxb', '123', '456', 'abcdefghij'].join('-')}`, [])
   assert.ok(!line.includes('AAbbCC') && !line.includes('abcdefghij'), line)
   assert.equal(scrub('the token is s3cr3t-value-123 ok', ['s3cr3t-value-123']), 'the token is ‹token› ok')
 })

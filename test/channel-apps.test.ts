@@ -9,6 +9,8 @@ import { checkDiscordToken, DiscordApi, DiscordChannel, type Socket } from '../s
 import { findSignalCli, SignalChannel, type SignalProcess } from '../src/main/channels/signal.ts'
 import { checkSlackTokens, SlackApi, SlackChannel } from '../src/main/channels/slack.ts'
 
+// NOTE: every key and token in this file is made up, not real. They are built from parts so no real-looking secret sits in the repo.
+
 async function until(check: () => boolean, what: string): Promise<void> {
   const end = Date.now() + 1000
   while (!check()) {
@@ -142,8 +144,8 @@ test('Discord: checkDiscordToken', async () => {
   assert.equal((await checkDiscordToken('nope')).ok, false)
 })
 
-const BOT = 'xoxb-1111-2222-abcdefghijkl'
-const APP = 'xapp-1-A111-2222-abcdefghijkl'
+const BOT = ['xoxb', '1111', '2222', 'abcdefghijkl'].join('-')
+const APP = ['xapp', '1', 'A111', '2222', 'abcdefghijkl'].join('-')
 
 test('Slack: Socket Mode envelopes are acked once, DMs come in, channel posts and bots do not', async () => {
   const seen: Req[] = []
