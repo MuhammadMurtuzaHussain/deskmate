@@ -5226,6 +5226,13 @@ app.whenReady().then(async () => {
   }
   registerStopShortcut()
   if (stopShortcut) console.log(`[safety] ${stopShortcut} stops everything`)
+  // safeStorage only answers once the app is ready (on macOS isEncryptionAvailable() is false before that), so when the
+  // settings were first read the Keychain looked unavailable; the move into it happens now.
+  if (settings.store === 'file') {
+    const box = secretBox()
+    if (box && settings.useBox(box)) brain.loadSettings()
+  }
+  console.log(`[brain] thinking with ${brain.mode} (secrets in the ${settings.store === 'keychain' ? 'Keychain' : 'settings file'})`)
   if (settings.migrated) console.log(`[safety] secrets kept in the ${settings.store === 'keychain' ? 'Keychain' : 'settings file'}`)
   createWindow()
   body.rememberHome()

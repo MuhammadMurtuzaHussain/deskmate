@@ -157,14 +157,14 @@ const TOUCH_PROMPTS: Record<Touch['area'], string> = {
  */
 export class Brain {
   private key: string | null = null
-  ollamaModel: string
+  ollamaModel!: string
   private ollamaReady = false
-  private preferOllama: boolean
+  private preferOllama!: boolean
   /** Claude (Anthropic API): key, chosen model, and a client made from the key */
   private claudeKey: string | null = null
-  claudeModel: string
+  claudeModel!: string
   /** how hard Claude thinks, for chat, planning and the agent alike (ANTHROPIC_EFFORT / setup window; default low) */
-  claudeEffort: ClaudeEffort
+  claudeEffort!: ClaudeEffort
   private claude: Anthropic | null = null
   private claudeModels: { at: number; list: ClaudeModelInfo[] } | null = null
   readonly model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
@@ -178,13 +178,21 @@ export class Brain {
     private persona: string,
     private readonly settings: Settings
   ) {
+    this.loadSettings(true)
+  }
+
+  /**
+   * Reads the brain choice and keys from the settings (and .env). Run again once the app is ready: on macOS the saved
+   * keys live in the Keychain, which only opens then, so at construction the key can look missing.
+   */
+  loadSettings(first = false): void {
     // .env wins; otherwise what was picked in the first-run window.
-    const saved = settings.get()
+    const saved = this.settings.get()
     // What was picked in the setup window wins; .env is the starting point until something is picked there. (The other
     // way round, a DESKMATE_BRAIN=ollama line in .env quietly undid a Claude choice on every launch.)
     const envBrain = process.env.DESKMATE_BRAIN?.trim().toLowerCase()
     const brainPref = saved.brain ?? (envBrain === 'claude' ? 'anthropic' : envBrain)
-    if (saved.brain && envBrain && envBrain !== saved.brain) console.log(`[brain] using ${saved.brain} as picked in Setup (DESKMATE_BRAIN=${envBrain} in .env is ignored)`)
+    if (first && saved.brain && envBrain && envBrain !== saved.brain) console.log(`[brain] using ${saved.brain} as picked in Setup (DESKMATE_BRAIN=${envBrain} in .env is ignored)`)
     this.ollamaModel = saved.ollamaModel || process.env.OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL
     this.preferOllama = brainPref === 'ollama'
     this.claudeModel = saved.anthropicModel || process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_CLAUDE_MODEL
