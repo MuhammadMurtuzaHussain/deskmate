@@ -127,6 +127,13 @@ export function budgetState(spent: number, budget: number): BudgetState {
   return 'ok'
 }
 
+/** Before a call: go, ask the user (at 100% from the desk or a chat app), or stop (at 100% with nobody asking:
+ * a schedule, the heartbeat, a background look). Once the user says go on, the rest of that month goes. */
+export function budgetDecision(a: { spent: number; budget: number; month: string; overMonth?: string; origin: SpendOrigin }): 'go' | 'ask' | 'stop' {
+  if (budgetState(a.spent, a.budget) !== 'over' || a.overMonth === a.month) return 'go'
+  return a.origin === 'chat' || a.origin === 'channel' ? 'ask' : 'stop'
+}
+
 export function dollars(n: number): string {
   if (n === 0) return '$0'
   if (n < 0.01) return '<$0.01'

@@ -134,14 +134,14 @@ export function undoFile(u: Undo): { ok: boolean; text: string } {
     if (existsSync(u.from)) return { ok: false, text: `Something called ${basename(u.from)} is back in ${dirname(u.from)} already; I left the Trash as it is.` }
     mkdirSync(dirname(u.from), { recursive: true })
     renameSync(u.trashed, u.from)
-    return { ok: true, text: `Put ${basename(u.from)} back in ${dirname(u.from)}.` }
+    return { ok: true, text: `Put ${basename(u.from)} back in ${basename(dirname(u.from))}.` }
   }
   if (u.kind === 'move') {
     if (!existsSync(u.to)) return { ok: false, text: `${basename(u.to)} is not at ${dirname(u.to)} any more.` }
     if (existsSync(u.from)) return { ok: false, text: `Something called ${basename(u.from)} is at the old place now; I did not overwrite it.` }
     if (!existsSync(dirname(u.from))) return { ok: false, text: `The old folder ${dirname(u.from)} is gone.` }
     renameSync(u.to, u.from)
-    return { ok: true, text: `Moved ${basename(u.to)} back to ${u.from}.` }
+    return { ok: true, text: `Moved ${basename(u.to)} back to ${basename(u.from)} in ${basename(dirname(u.from))}.` }
   }
   return { ok: false, text: 'Not a file change.' }
 }

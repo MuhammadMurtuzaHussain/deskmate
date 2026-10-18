@@ -13,7 +13,7 @@ import { cleanPrefs, defaultLevel, makeGate, resolve, withFloor, withLevel, type
 import { looksSecret, redact, redactDeep, registerSecret, type SecretBox } from '../src/main/secrets.ts'
 import { Settings } from '../src/main/settings.ts'
 import { checkArgs, checkCommand, safeEnv } from '../src/main/shellsafe.ts'
-import { budgetState, costOf, geminiUsage, priceFor, SpendMeter, withSpendOrigin, spendOrigin, anthropicUsage } from '../src/main/spend.ts'
+import { budgetDecision, budgetState, costOf, geminiUsage, priceFor, SpendMeter, withSpendOrigin, spendOrigin, anthropicUsage } from '../src/main/spend.ts'
 import { buildTools } from '../src/main/tools.ts'
 import { moveFile, protectedPath, trashFile, undoFile, undoLabel } from '../src/main/undo.ts'
 import { FakeHost } from './evals/fake.ts'
@@ -307,6 +307,16 @@ test('spend: prices per model, cached and uncached, by origin, budget warn and s
     assert.equal(budgetState(t.month, 10), 'ok')
     assert.equal(budgetState(t.month, 1.45), 'warn')
     assert.equal(budgetState(t.month, 1.2), 'over')
+    // at 100%: the desk and chat apps are asked, jobs on their own stop; a yes lets the rest of the month go
+    const at = { spent: 20.5, budget: 20, month: '2026-10' }
+    assert.equal(budgetDecision({ ...at, spent: 19, origin: 'heartbeat' }), 'go')
+    assert.equal(budgetDecision({ ...at, origin: 'chat' }), 'ask')
+    assert.equal(budgetDecision({ ...at, origin: 'channel' }), 'ask')
+    assert.equal(budgetDecision({ ...at, origin: 'schedule' }), 'stop')
+    assert.equal(budgetDecision({ ...at, origin: 'heartbeat' }), 'stop')
+    assert.equal(budgetDecision({ ...at, origin: 'schedule', overMonth: '2026-10' }), 'go')
+    assert.equal(budgetDecision({ ...at, origin: 'chat', overMonth: '2026-09' }), 'ask')
+    assert.equal(budgetDecision({ ...at, budget: 0, origin: 'schedule' }), 'go')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

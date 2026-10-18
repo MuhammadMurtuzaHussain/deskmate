@@ -8,12 +8,12 @@ import { Agent, type Task } from './agent'
 import { callClaude, ClaudeError, replyText, setClaudeMeter, toClaudeError } from './anthropic'
 import { runAgentTurn, runOneTool, type CallEvent } from './core'
 import { setGeminiMeter } from './gemini'
-import { ActivityLog, approvalText, describeRecent, LOOKING, type ActivityEntry } from './activity'
+import { ActivityLog, approvalText, describeRecent, LOOKING, mainDetail, type ActivityEntry } from './activity'
 import { ActivityWindow } from './activitywin'
 import { cleanPrefs, makeGate, ORIGIN_LABELS, PERM_ORIGINS, resolve as resolvePermission, withFloor, withLevel, type Level, type PermOrigin } from './permissions'
 import { redact, registerSecret, splitSecrets, type SecretBox } from './secrets'
 import { checkArgs, checkCommand, safeEnv } from './shellsafe'
-import { anthropicUsage, budgetState, dollars, geminiUsage, SPEND_LABELS, SPEND_ORIGINS, SpendMeter, spendOrigin, withSpendOrigin, type Price, type SpendOrigin } from './spend'
+import { anthropicUsage, budgetDecision, budgetState, dollars, geminiUsage, SPEND_LABELS, SPEND_ORIGINS, SpendMeter, spendOrigin, withSpendOrigin, type Price, type SpendOrigin } from './spend'
 import { canUndo, moveFile, protectedPath, trashFile, undoFile, undoLabel, type Undo } from './undo'
 import { DENY_APPS } from './checks'
 import { fastRoute, FILEISH, RE_FIND } from './fastpath'
@@ -3553,13 +3553,13 @@ function activityView(): ActivityView {
     .read(0)
     .reverse()
     .map((e) => {
-      const main = Object.values(e.args).find((v) => typeof v === 'string' && v.trim()) as string | undefined
+      const main = mainDetail(e.tool, e.args, homedir()).replace(/\s+/g, ' ')
       return {
         id: e.id,
         at: e.at,
         origin: e.origin === 'heartbeat' ? 'heartbeat' : ORIGIN_LABELS[e.origin as PermOrigin] ?? e.origin,
         tool: e.tool,
-        detail: (main ?? '').slice(0, 120),
+        detail: main.slice(0, 140),
         ok: e.ok,
         result: e.result,
         approval: approvalText(e.approval),
@@ -3614,9 +3614,10 @@ async function budgetGate(): Promise<void> {
   if (!b) return
   const month = spend.monthKey()
   const t = spend.totals()
-  if (budgetState(t.month, b) !== 'over' || settings.get().spend?.overMonth === month) return
   const origin = spendOrigin()
-  if (origin !== 'chat' && origin !== 'channel') {
+  const decision = budgetDecision({ spent: t.month, budget: b, month, overMonth: settings.get().spend?.overMonth, origin })
+  if (decision === 'go') return
+  if (decision === 'stop') {
     console.log(`[spend] ${origin} call not made: the ${dollars(b)} budget is used up`)
     throw new ClaudeError(`the monthly budget of ${dollars(b)} is used up (Setup → Spending)`, 'budget')
   }
@@ -3812,7 +3813,7 @@ function safetyState(): SafetySetupState {
     stopShortcutTaken,
     halted,
     shell: Boolean(settings.get().shell),
-    secrets: { store: settings.store, name: settings.store === 'keychain' ? (secretBox()?.name ?? 'Keychain') : 'settings.json (mode 0600)', count: Object.keys(splitSecrets(settings.get() as Record<string, unknown>).secrets).length }
+    secrets: { store: settings.store, name: settings.store === 'keychain' ? (secretBox()?.name ?? 'Keychain') : `settings.json (mode 0600${secretBox() ? '' : ', DESKMATE_SECRETS=file'})`, count: Object.keys(splitSecrets(settings.get() as Record<string, unknown>).secrets).length }
   }
 }
 

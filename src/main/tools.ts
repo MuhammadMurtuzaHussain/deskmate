@@ -5,6 +5,7 @@ import { isMessagingApp, skillTool, type Skill } from './skills.ts'
 import type { Risk, Taint, UntrustedSource } from './untrusted.ts'
 import type { Undo } from './undo.ts'
 import { looksSecret } from './secrets.ts'
+import { checkCommand } from './shellsafe.ts'
 
 /**
  * Everything her hands can do, as tools for one brain. Each worker that used to sit behind its own regex (app
@@ -162,6 +163,8 @@ export interface ToolSpec {
   describe?(input: Input): string
   /** takes a while (an agent run, a browse, a job): her first line is spoken before it starts */
   slow?: boolean
+  /** a reason this call must never run (the shell deny-list), checked before anyone is asked */
+  refuse?(input: Input): string | null
   run(input: Input, ctx: ToolCtx): Promise<ToolOutcome>
 }
 
@@ -328,6 +331,10 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
       input_schema: schema({ command: str, folder: nullable(str) }),
       risk: 'shell',
       slow: true,
+      refuse: (i) => {
+        const v = checkCommand(s(i.command))
+        return v.ok ? null : `Refused, not run: ${v.why}. This is never allowed; do not try another way, tell the user.`
+      },
       describe: (i) => `run \`${s(i.command).slice(0, 120)}\`${i.folder ? ` in ${s(i.folder)}` : ''}`,
       run: (i, ctx) => host.runCommand({ command: s(i.command), folder: i.folder ? s(i.folder) : null }, ctx)
     })

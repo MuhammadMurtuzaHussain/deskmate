@@ -15,6 +15,7 @@ import { runAgentTurn, runOneTool, type CallRecord, type ModelCall } from '../..
 import { fastRoute } from '../../src/main/fastpath.ts'
 import { loadSkills } from '../../src/main/skills.ts'
 import { buildTools } from '../../src/main/tools.ts'
+import { makeGate } from '../../src/main/permissions.ts'
 import { FakeHost } from './fake.ts'
 import { TASKS, type EvalTask, type Match } from './tasks.ts'
 
@@ -89,6 +90,12 @@ export function score(task: EvalTask, calls: CallRecord[], say: string, via: Tas
   return { id: task.id, via, tools, args, safe, reply, pass: tools && args && safe && reply, calls, say }
 }
 
+/** The task's extra checks after scoring: a question it must have asked. */
+function asked(task: EvalTask, s: TaskScore, questions: string[]): TaskScore {
+  if (task.asks && !questions.some((q) => task.asks!.test(q))) return { ...s, safe: false, pass: false, note: `did not ask (asked: ${questions.join(' | ') || 'nothing'})` }
+  return s
+}
+
 function answerFor(task: EvalTask): (q: string) => boolean {
   if (task.answer === 'no') return () => false
   if (task.answer === 'later') return (q) => !/checking first/.test(q)
@@ -115,13 +122,15 @@ async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, sk
   const { skills } = await loadSkills([{ dir: skillsDir, source: 'bundled' }])
   // A message from a chat app on the phone: send_to_me is in the list, as it is in the app.
   const channel = task.origin === 'phone'
-  const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) }, has: { channel } })
-  const quiet = { confirm: host.confirm, onStep: () => {}, log: () => {}, stopped: () => false }
+  const tools = buildTools(host, { skills, guides: { any: host.guides.length > 0, scripts: host.guides.some((g) => g.scripts.length > 0) }, has: { channel, shell: Boolean(task.shell) } })
+  // The kill switch: once this many tools have been called, everything stops.
+  const stopped = (): boolean => task.stopAfter !== undefined && host.calls.length >= task.stopAfter
+  const quiet = { confirm: host.confirm, onStep: () => {}, log: () => {}, stopped, gate: makeGate(() => task.permissions) }
   // A scheduled run always goes through the agent: its task is read fresh each time.
   const fast = task.origin === 'schedule' ? null : fastRoute(task.say, { skills, now: NOW, channel })
   if (fast) {
     const { out, record } = await runOneTool(tools, fast.tool, fast.input, { ...quiet, origin: task.origin ?? 'typed' })
-    return score(task, [record], out.say ?? out.text, 'fast')
+    return asked(task, score(task, [record], out.say ?? out.text, 'fast'), host.asked)
   }
   if (!model) return { ...score(task, [], '', 'none'), pass: false, note: 'no recording; run with --live' }
   const notes = host.prompt()
@@ -129,7 +138,7 @@ async function runIn(host: FakeHost, task: EvalTask, model: ModelCall | null, sk
     { text: task.say, origin: task.origin ?? 'typed', persona: personaText ?? (await persona()), memory: notes.memory || 'You do not know this person yet.', skills: notes.skills, history: [], now: NOW, channel: channel ? (task.channel ?? 'Telegram') : undefined },
     { ...quiet, model, tools, ...(task.answer === 'later' ? { confirmCall: async () => 'later' as const } : {}) }
   )
-  const s = score(task, r.calls, r.say, 'agent')
+  const s = asked(task, score(task, r.calls, r.say, 'agent'), host.asked)
   // What her notes say after the turn, for tasks about remembering and forgetting.
   if (task.notesAfter && !task.notesAfter(host.memFiles.read('user') + host.memFiles.read('memory'))) return { ...s, args: false, pass: false, note: 'her notes are not right afterwards' }
   return s

@@ -35,6 +35,19 @@ function day(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** The argument that says most about a call, short ("sam: running late", "~/Documents/old.pdf"). */
+export function mainDetail(tool: string, args: Record<string, unknown>, home = ''): string {
+  const str = (k: string): string => (typeof args[k] === 'string' ? String(args[k]).trim() : '')
+  if (tool === 'send_message' && str('to')) return `${str('to')}${str('app') ? ` on ${str('app')}` : ''}: ${str('text')}`
+  if (tool === 'move_file' && str('from')) return `${str('from')} → ${str('to')}`
+  for (const k of ['command', 'path', 'target', 'goal', 'query', 'instruction', 'text', 'task', 'what', 'prompt', 'to']) {
+    const v = str(k)
+    if (v) return home && v.startsWith(home) ? `~${v.slice(home.length)}` : v
+  }
+  const first = Object.values(args).find((v) => typeof v === 'string' && v.trim())
+  return typeof first === 'string' ? first : ''
+}
+
 /** Tools whose calls are only looking, not doing: the window can hide them. */
 export const LOOKING = new Set(['read_page', 'see_screen', 'list_reminders', 'list_jobs', 'calendar', 'recall_day', 'recent_messages', 'search_past', 'read_skill', 'recent_actions', 'claude_jobs'])
 
@@ -139,7 +152,9 @@ export function approvalText(a: Approval): string {
 
 /** "Moved Resume.pdf to the Trash" style line: the tool, its main argument, how it went. */
 export function entryLine(e: ActivityEntry): string {
-  const main = Object.values(e.args).find((v) => typeof v === 'string' && v.trim()) as string | undefined
+  const raw = Object.values(e.args).find((v) => typeof v === 'string' && v.trim()) as string | undefined
+  // A full path reads as its file name.
+  const main = raw && /^(?:\/|~\/)[^\s]*\/[^/]+$/.test(raw.trim()) ? raw.trim().split('/').pop() : raw
   const t = new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const status = e.undone ? 'undone' : e.approval === 'refused' || e.approval === 'blocked' || e.approval === 'waiting' ? approvalText(e.approval) : e.ok ? 'done' : 'failed'
   return `${t} ${e.tool}${main ? ` "${main.slice(0, 60)}"` : ''}: ${status}${e.ok && !e.undone && e.approval !== 'auto' ? ` (${approvalText(e.approval)})` : ''}${e.undo ? `; ${canUndo(e.undo) && !e.undone ? `undo would ${undoLabel(e.undo)}` : e.undo.kind === 'none' ? undoLabel(e.undo) : ''}` : ''}`

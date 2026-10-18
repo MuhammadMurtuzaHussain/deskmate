@@ -1016,7 +1016,7 @@ function renderSafety(s: SafetySetupState | undefined): void {
   $<HTMLDivElement>('secrets-note').textContent =
     s.secrets.store === 'keychain'
       ? `Your ${s.secrets.count} key${s.secrets.count === 1 ? '' : 's'} and token${s.secrets.count === 1 ? '' : 's'} are encrypted with a key kept in the ${s.secrets.name}, not in settings.json; anything key-shaped is blanked out of her logs, notes, activity and chat replies.`
-      : `Your keys and tokens are in ${s.secrets.name}: this computer has no keyring she can use. Anything key-shaped is still blanked out of her logs, notes, activity and chat replies.`
+      : `Your keys and tokens are in ${s.secrets.name}${s.secrets.name.includes('DESKMATE_SECRETS') ? '' : ': this computer has no keyring she can use'}. Anything key-shaped is still blanked out of her logs, notes, activity and chat replies.`
 
   const origins = $<HTMLDivElement>('origin-list')
   origins.replaceChildren()

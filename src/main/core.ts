@@ -187,6 +187,11 @@ async function execute(
   confirmCall?: TurnDeps['confirmCall'],
   gate?: Gate
 ): Promise<{ out: ToolOutcome; guarded: boolean; refused: boolean; deferred?: boolean; what?: string; approval: Approval }> {
+  const refusal = spec.refuse?.(input)
+  if (refusal) {
+    ctx.log(`refused: ${spec.name}: ${refusal}`)
+    return { out: { ok: false, text: refusal }, guarded: false, refused: true, approval: 'blocked' }
+  }
   const decision = gate?.(spec, input, ctx.origin)
   if (decision?.level === 'never') {
     ctx.log(`permission: ${spec.name} is never (${decision.why})`)
