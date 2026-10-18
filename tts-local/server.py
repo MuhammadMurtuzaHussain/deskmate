@@ -17,6 +17,7 @@ Run `python server.py --warmup` to download the models once and exit.
 from __future__ import annotations
 
 import argparse
+import builtins
 import io
 import json
 import os
@@ -25,6 +26,15 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+def print(*args, **kwargs) -> None:  # noqa: A001 - every log line in here goes through this
+    """Log lines go to the app that started us. Once that app is gone its pipe is closed, and a failed write must not
+    take the request down with it (it did: /health kept answering while every /speech died on its log line)."""
+    try:
+        builtins.print(*args, **kwargs)
+    except (OSError, ValueError):
+        sys.stdout = sys.stderr = open(os.devnull, "w")  # noqa: SIM115 - lives as long as the process
+
 
 DEFAULT_VOICE = os.environ.get("DESKMATE_TTS_VOICE", "").strip() or "af_heart"
 PORT = int(os.environ.get("DESKMATE_TTS_PORT") or 8880)
@@ -263,12 +273,12 @@ def main() -> int:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     if args.parent_pid:
         # The app that started us may be killed without a chance to stop us; do not outlive it.
+        # Watched by our own parent id, not by signalling that pid: a dead app's pid can be reused by another process,
+        # which kept an orphaned server alive for a day. When the app dies we are re-parented (to launchd / init).
         def watch_parent() -> None:
             while True:
                 time.sleep(2)
-                try:
-                    os.kill(args.parent_pid, 0)
-                except OSError:
+                if os.getppid() != args.parent_pid:
                     print("[tts-local] parent gone, exiting", flush=True)
                     os._exit(0)
 

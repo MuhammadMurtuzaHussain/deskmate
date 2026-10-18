@@ -8,7 +8,7 @@ Her lines are synthesized to audio and the Live2D mouth is driven by the audio's
 | ElevenLabs | free tier, then paid | best | API key |
 | System voice (macOS `say`, else the browser voice) | free | robotic | none |
 
-Order: `DESKMATE_TTS=local` → ElevenLabs if a key exists → system voice. Each falls through to the next on failure.
+Order: the local Kokoro voice (the default) → ElevenLabs if a key exists → system voice. Each falls through to the next on failure. `DESKMATE_TTS=elevenlabs` puts ElevenLabs first; `DESKMATE_TTS=say` uses only the system voice.
 
 ## Kokoro (local, open source, Apache 2.0)
 
@@ -16,7 +16,7 @@ Order: `DESKMATE_TTS=local` → ElevenLabs if a key exists → system voice. Eac
 brew install espeak-ng          # macOS; apt install espeak-ng on Linux
 tts-local/setup.sh              # creates tts-local/.venv and downloads the model
 ```
-then in `.env`:
+That's all: Kokoro is the default voice. To pick a preset (and turn on her ears too), in `.env`:
 ```
 DESKMATE_TTS=local
 DESKMATE_TTS_VOICE=af_heart     # af_bella, af_nicole, af_sarah, bf_emma, … see tts-local/server.py

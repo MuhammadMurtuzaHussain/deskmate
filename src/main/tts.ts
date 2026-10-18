@@ -16,26 +16,38 @@ export interface Audio {
 const LOCAL_URL_DEFAULT = 'http://127.0.0.1:8880/v1/audio/speech'
 let warnedLocalDown = false
 
-/** True when `DESKMATE_TTS=local` asks for the Kokoro server in tts-local/. */
-export function localTtsSelected(): boolean {
-  return (process.env.DESKMATE_TTS || '').trim().toLowerCase() === 'local'
+type TtsProvider = 'local' | 'elevenlabs' | 'say'
+
+/** `DESKMATE_TTS`: local (Kokoro, the default) | elevenlabs | say. */
+function ttsProvider(): TtsProvider {
+  const v = (process.env.DESKMATE_TTS || '').trim().toLowerCase()
+  return v === 'elevenlabs' || v === 'say' ? v : 'local'
 }
 
-/** True when she should hear: `DESKMATE_STT=local`, or the local voice is on and DESKMATE_STT is unset. */
+/** True when the Kokoro server in tts-local/ is her voice: unless `DESKMATE_TTS` picks ElevenLabs or `say`. */
+export function localTtsSelected(): boolean {
+  return ttsProvider() === 'local'
+}
+
+/**
+ * True when she should hear: `DESKMATE_STT=local`, or `DESKMATE_TTS=local` is set and DESKMATE_STT is unset. The local
+ * voice being the default does not turn her ears on by itself; that stays an explicit choice.
+ */
 export function localSttSelected(): boolean {
   const v = (process.env.DESKMATE_STT || '').trim().toLowerCase()
   if (v === 'off' || v === '0' || v === 'false' || v === 'no') return false
   if (v === 'local') return true
-  return localTtsSelected()
+  return (process.env.DESKMATE_TTS || '').trim().toLowerCase() === 'local'
 }
 
 /**
- * Voice. Local Kokoro server if `DESKMATE_TTS=local`, else ElevenLabs if a key is set (what Kyndred is backed by),
- * else macOS `say`. Each provider falls through to the next when it fails.
+ * Voice. The local Kokoro server first (unless `DESKMATE_TTS=elevenlabs` or `say`), then ElevenLabs if a key is set,
+ * then macOS `say`. Each provider falls through to the next when it fails.
  * Returns null when no synthesizer is available; the renderer then falls back to the browser voice.
  */
 export async function synthesize(text: string, voice: CharacterVoice): Promise<Audio | null> {
-  if (localTtsSelected()) {
+  const provider = ttsProvider()
+  if (provider === 'local') {
     try {
       const audio = await localKokoro(text, voice)
       warnedLocalDown = false
@@ -43,12 +55,12 @@ export async function synthesize(text: string, voice: CharacterVoice): Promise<A
     } catch (err) {
       if (!warnedLocalDown) {
         warnedLocalDown = true
-        console.warn(`[tts] local server (${localTtsUrl()}) failed, falling back: ${(err as Error).message}. Run tts-local/run.sh or set DESKMATE_TTS_AUTOSTART=1.`)
+        console.warn(`[tts] local server (${localTtsUrl()}) failed, falling back: ${(err as Error).message}. Run tts-local/setup.sh once, then restart (or tts-local/run.sh with DESKMATE_TTS_AUTOSTART=0).`)
       }
     }
   }
   const key = process.env.ELEVENLABS_API_KEY
-  if (key) {
+  if (key && provider !== 'say') {
     try {
       return await elevenLabs(text, key, voice.elevenlabs || process.env.ELEVENLABS_VOICE_ID || 'pFZP5JQG7iQjIQuC4Bku')
     } catch (err) {
@@ -89,7 +101,7 @@ async function localKokoro(text: string, voice: CharacterVoice): Promise<Audio> 
 }
 
 /**
- * Starts tts-local/server.py from its venv when `DESKMATE_TTS=local`, unless a server already answers or
+ * Starts tts-local/server.py from its venv when Kokoro is her voice (the default) or her ears are local, unless a server already answers or
  * `DESKMATE_TTS_AUTOSTART=0`. Returns a stop function for app quit (no-op when nothing was started).
  */
 export async function autostartLocalTts(root: string, userData?: string): Promise<() => void> {
@@ -102,12 +114,18 @@ export async function autostartLocalTts(root: string, userData?: string): Promis
   const bin = process.platform === 'win32' ? join('Scripts', 'python.exe') : join('bin', 'python')
   const venv = candidates.find((v) => existsSync(join(v, bin)))
   if (!venv) {
-    console.warn(`[tts] local voice requested but no venv found (${candidates.join(' or ')}); run tts-local/setup.sh`)
+    console.warn(`[tts] the Kokoro voice is not set up (no venv in ${candidates.join(' or ')}); run tts-local/setup.sh. Until then she uses ElevenLabs (with a key) or the system voice`)
     return noop
   }
   const python = join(venv, bin)
   if (await localTtsHealthy()) {
-    console.log('[tts] local server already running at', localTtsUrl())
+    // A server left behind by an earlier run can answer /health and still fail every line, so say one word to check.
+    const works = await localKokoro('hi', {}).then(
+      () => true,
+      () => false
+    )
+    if (works) console.log('[tts] local server already running at', localTtsUrl())
+    else console.warn(`[tts] a server at ${localTtsUrl()} answers but cannot speak (left over from an earlier run?); quit it (lsof -iTCP:${new URL(localTtsUrl()).port || 8880}) and restart`)
     return noop
   }
   const port = String(new URL(localTtsUrl()).port || 8880)
