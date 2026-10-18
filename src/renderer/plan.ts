@@ -27,9 +27,10 @@ function button(label: string, action: PlanAction, primary = false): HTMLButtonE
 
 function render(plan: Plan | null): void {
   if (!plan) return
+  const skill = plan.kind === 'skill'
   $('title').textContent = plan.title
   const state = $('state')
-  state.textContent = STATE_LABEL[plan.status]
+  state.textContent = skill ? 'waiting for your yes' : STATE_LABEL[plan.status]
   state.className = `chip ${plan.status}`
   const list = $('steps')
   list.innerHTML = ''
@@ -42,10 +43,12 @@ function render(plan: Plan | null): void {
     const text = document.createElement('span')
     text.className = 'text'
     text.textContent = s.text
-    const worker = document.createElement('span')
-    worker.className = 'worker'
-    worker.textContent = `· ${WORKER_LABEL[s.worker]}`
-    text.appendChild(worker)
+    if (!skill) {
+      const worker = document.createElement('span')
+      worker.className = 'worker'
+      worker.textContent = `· ${WORKER_LABEL[s.worker]}`
+      text.appendChild(worker)
+    }
     li.append(icon, text)
     if (s.result && (s.status === 'done' || s.status === 'failed')) {
       const r = document.createElement('span')
@@ -55,15 +58,18 @@ function render(plan: Plan | null): void {
     }
     list.appendChild(li)
   })
-  $('note').textContent = plan.status === 'paused' || plan.status === 'stopped' ? (plan.note ?? '') : ''
+  $('note').textContent = skill || plan.status === 'paused' || plan.status === 'stopped' ? (plan.note ?? '') : ''
   const buttons = $('buttons')
   buttons.innerHTML = ''
-  if (plan.status === 'draft') buttons.append(button('Go', 'go', true), button('Cancel', 'stop'))
+  // A skill she wrote: it is only used after a yes.
+  if (skill) buttons.append(button(plan.title.startsWith('Better') ? 'Update it' : 'Keep it', 'go', true), button('Throw away', 'stop'), button('Later', 'dismiss'))
+  else if (plan.status === 'draft') buttons.append(button('Go', 'go', true), button('Cancel', 'stop'))
   else if (plan.status === 'running') buttons.append(button('Pause', 'pause'), button('Stop', 'stop'))
   else if (plan.status === 'paused') buttons.append(button('Resume', 'resume', true), button('Retry step', 'retry'), button('Stop', 'stop'))
   else buttons.append(button('Close', 'dismiss'))
-  $('hint').textContent =
-    plan.status === 'draft' ? 'Say "go", "skip step 2" or "change step 3 to …"' : plan.status === 'running' ? 'Say "pause" or "stop the plan"' : ''
+  $('hint').textContent = skill
+    ? 'Say "yes" to keep it. Later: tray → Skills'
+    : plan.status === 'draft' ? 'Say "go", "skip step 2" or "change step 3 to …"' : plan.status === 'running' ? 'Say "pause" or "stop the plan"' : ''
   // The window fits the card.
   requestAnimationFrame(() => api.planHeight?.(document.getElementById('card')!.getBoundingClientRect().height + 14))
 }

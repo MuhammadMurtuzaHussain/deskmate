@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, DraftAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -333,6 +333,83 @@ $<HTMLButtonElement>('mcp-reload').addEventListener('click', async (e) => {
   mcpMessage(m.errors.length ? 'Loaded, with problems (see above).' : 'Loaded.', m.errors.length ? 'bad' : 'good')
 })
 
+// ---- What she remembers and knows
+
+const learnMsg = $<HTMLDivElement>('learn-msg')
+
+function renderLearn(l: LearnSetupState | undefined): void {
+  $<HTMLElement>('learn').classList.toggle('hidden', !l || !api.openMemory)
+  if (!l) return
+  const files = $<HTMLDivElement>('learn-files')
+  files.replaceChildren()
+  for (const f of l.files) {
+    const row = document.createElement('div')
+    row.className = 'hint'
+    row.textContent = `${f.name}: ${f.entries} note${f.entries === 1 ? '' : 's'}, ${Math.round((100 * f.used) / f.cap)}% full`
+    files.append(row)
+  }
+  const search = document.createElement('div')
+  search.className = 'hint'
+  search.textContent = l.searchable === null ? 'Search of the past is not working on this Mac.' : `${l.searchable} things from before she can search (chats, her day logs, plans).`
+  files.append(search)
+
+  const draftsEl = $<HTMLDivElement>('learn-drafts')
+  draftsEl.replaceChildren()
+  for (const d of l.drafts) {
+    const row = document.createElement('div')
+    row.className = 'pair'
+    const text = document.createElement('div')
+    const name = document.createElement('b')
+    name.textContent = d.kind === 'update' ? `Better ${d.updates?.replace(/-/g, ' ')}` : `New skill: ${d.name.replace(/-/g, ' ')}`
+    const note = document.createElement('span')
+    note.textContent = d.why ?? d.description
+    note.title = d.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')
+    text.append(name, note)
+    const act = (label: string, action: DraftAction, primary = false): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.textContent = label
+      if (primary) b.className = 'primary'
+      b.addEventListener('click', async () => {
+        if (!api.draftAction) return
+        const next = await api.draftAction(d.name, action)
+        renderLearn(next)
+        if (action !== 'show') {
+          learnMsg.textContent = action === 'keep' ? `${d.name} is a skill now.` : 'Thrown away.'
+          learnMsg.className = 'msg good'
+        }
+      })
+      return b
+    }
+    row.append(text, act(d.kind === 'update' ? 'Update it' : 'Keep it', 'keep', true), act('Show', 'show'), act('Throw away', 'discard'))
+    draftsEl.append(row)
+  }
+
+  const list = $<HTMLDivElement>('learn-list')
+  list.replaceChildren()
+  for (const s of l.skills) {
+    const row = document.createElement('div')
+    row.className = 'hint'
+    row.textContent = `${s.kind === 'routine' ? '⚙' : '📄'} ${s.name}${s.source === 'user' ? ' (yours)' : ''}: ${s.description}`
+    list.append(row)
+  }
+  if (!l.skillCode) {
+    const row = document.createElement('div')
+    row.className = 'hint dim'
+    row.textContent = "Scripts in your own skills don't run unless she was started with DESKMATE_SKILL_CODE=1 (each skill's scripts also need your yes)."
+    list.append(row)
+  }
+  chip($<HTMLSpanElement>('learn-chip'), l.drafts.length ? `${l.drafts.length} skill${l.drafts.length === 1 ? '' : 's'} to look at` : `${l.skills.length} skills`, l.drafts.length ? 'bad' : 'ok')
+}
+
+$<HTMLButtonElement>('learn-memory').addEventListener('click', (e) => {
+  e.preventDefault()
+  void api.openMemory?.()
+})
+$<HTMLButtonElement>('learn-skills').addEventListener('click', (e) => {
+  e.preventDefault()
+  void api.openSkills?.()
+})
+
 async function refresh(): Promise<void> {
   if (!api.getSetup) return
   const state = await api.getSetup()
@@ -340,6 +417,7 @@ async function refresh(): Promise<void> {
   renderRemote(state)
   renderNotices(state.notices)
   renderMcp(state.mcp)
+  renderLearn(state.learn)
 }
 
 useOllama.addEventListener('click', async () => {

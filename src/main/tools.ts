@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { AVATAR_COMMANDS, type AvatarCommand } from '../shared/types.ts'
+import { SECTIONS, type MemorySection } from './memfiles.ts'
 import { isMessagingApp, skillTool, type Skill } from './skills.ts'
 import type { Risk, Taint, UntrustedSource } from './untrusted.ts'
 
@@ -70,9 +71,19 @@ export interface WorkerHost {
   /** the notifications she saw lately (messages, mail), newest last */
   recentMessages(ctx: ToolCtx): Promise<ToolOutcome>
   move(a: { action: AvatarCommand }, ctx: ToolCtx): Promise<ToolOutcome>
-  remember(a: { fact: string; importance: number }, ctx: ToolCtx): Promise<ToolOutcome>
+  remember(a: { fact: string; importance: number; section: MemorySection }, ctx: ToolCtx): Promise<ToolOutcome>
+  updateMemory(a: { old: string; new: string }, ctx: ToolCtx): Promise<ToolOutcome>
+  forget(a: { what: string }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** the chat archive, the day logs and the plans, searched (past.ts) */
+  searchPast(a: { query: string; days_back: number | null; kind: PastKind }, ctx: ToolCtx): Promise<ToolOutcome>
   runSkill(skill: Skill, slots: Record<string, string>, ctx: ToolCtx): Promise<ToolOutcome>
+  /** a SKILL.md's instructions, or one of the files beside it */
+  readSkill(a: { name: string; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** one of a skill's scripts (only with DESKMATE_SKILL_CODE=1 and the user's yes for that skill) */
+  runSkillScript(a: { name: string; script: string; args: string[] }, ctx: ToolCtx): Promise<ToolOutcome>
 }
+
+export type PastKind = 'any' | 'chat' | 'did' | 'plans'
 
 /** A tool from a connected MCP server, as mcp.ts lists it. */
 export interface ExternalTool {
@@ -117,6 +128,8 @@ const s = (v: unknown): string => String(v ?? '').trim()
 
 export interface ToolsOptions {
   skills?: Skill[]
+  /** instruction skills (SKILL.md) are loaded: read_skill is in the list; `scripts` adds run_skill_script */
+  guides?: { any: boolean; scripts: boolean }
   external?: ExternalTool[]
   /** workers this computer can use right now; a missing one is left out of the list */
   has?: Partial<Record<'computer' | 'chrome' | 'claudeCode' | 'apps', boolean>>
@@ -306,16 +319,63 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
     input_schema: schema({ action: { type: 'string', enum: [...AVATAR_COMMANDS] } }),
     run: (i, ctx) => host.move({ action: i.action as AvatarCommand }, ctx)
   })
+  // Memory writes come only from the user: a fact picked up while reading someone else's text could be planted there.
+  const fromUser = (ctx: ToolCtx): ToolOutcome | null =>
+    ctx.taint.tainted ? { ok: false, text: 'Not changed: this turn read untrusted text, and your memory only takes what the user tells you.' } : null
   add({
     name: 'remember',
-    description: 'Keep a fact about the user, their work or your relationship for later conversations. importance: 1 small talk, 3 useful detail, 5 defining fact. Only for things worth keeping.',
-    input_schema: schema({ fact: str, importance: { type: 'integer', enum: [1, 2, 3, 4, 5] } }),
-    run: async (i, ctx) => {
-      // A fact picked up while reading someone else's text could be planted there: not kept.
-      if (ctx.taint.tainted) return { ok: false, text: 'Not kept: this turn read untrusted text, and memories only come from the user.' }
-      return host.remember({ fact: s(i.fact), importance: Number(i.importance) || 2 }, ctx)
-    }
+    description:
+      'Keep something about the user for later conversations. importance: 1–2 small talk (fades in days), 3 useful, 4 important, 5 defining; 3 and up go into your notes (USER.md / MEMORY.md, shown to you every turn). section: who (about them), preferences (likes, habits, how they want things done), people (who they message and who those people are), projects (what they work on, where), facts (other things that stay true), lessons (what worked or failed when you did something for them, app quirks). One short fact in plain words. Only for things worth keeping.',
+    input_schema: schema({ fact: str, importance: { type: 'integer', enum: [1, 2, 3, 4, 5] }, section: { type: 'string', enum: SECTIONS.map((x) => x.id) } }),
+    run: async (i, ctx) => fromUser(ctx) ?? host.remember({ fact: s(i.fact), importance: Number(i.importance) || 2, section: (SECTIONS.some((x) => x.id === i.section) ? i.section : 'facts') as MemorySection }, ctx)
   })
+  add({
+    name: 'update_memory',
+    description: 'Change one of your notes that is wrong, out of date, or says the same as another: "old" is a few words from the note as it is now, "new" the whole note as it should read (merge two notes by updating one and forgetting the other).',
+    input_schema: schema({ old: str, new: str }),
+    strict: false,
+    run: async (i, ctx) => fromUser(ctx) ?? host.updateMemory({ old: s(i.old), new: s(i.new) }, ctx)
+  })
+  add({
+    name: 'forget',
+    description: 'Drop one of your notes, when the user asks you to forget something or it stopped being true: "what" is a few words from the note.',
+    input_schema: schema({ what: str }),
+    strict: false,
+    run: async (i, ctx) => fromUser(ctx) ?? host.forget({ what: s(i.what) }, ctx)
+  })
+  add({
+    name: 'search_past',
+    description:
+      'Search everything from before the recent conversation: what the user said to you and you said back (chat), what you did for them (did: messages sent, jobs, files, browsing, reminders), and plans with their results (plans). For "what did I ask you about the dentist last week", "what did you send sam yesterday", "when did we talk about the trip". query: the few words that matter ("dentist", "sam"), or "" for everything in the time window; days_back: how far back to look (1 = since yesterday), null for all time; kind: any, chat, did or plans. Results come with dates.',
+    input_schema: schema({ query: str, days_back: nullable({ type: 'integer' }), kind: { type: 'string', enum: ['any', 'chat', 'did', 'plans'] } }),
+    strict: false,
+    run: (i, ctx) =>
+      host.searchPast(
+        { query: s(i.query), days_back: typeof i.days_back === 'number' && i.days_back > 0 ? Math.round(i.days_back) : null, kind: (['chat', 'did', 'plans'].includes(String(i.kind)) ? i.kind : 'any') as PastKind },
+        ctx
+      )
+  })
+  if (opts.guides?.any) {
+    add({
+      name: 'read_skill',
+      description: 'Load one of your skills (listed in your notes under Skills) before doing the task it covers: its step-by-step instructions, app quirks and edge cases. file: null for the instructions, or the path of a file the skill lists (a reference or template).',
+      input_schema: schema({ name: str, file: nullable(str) }),
+      strict: false,
+      run: (i, ctx) => host.readSkill({ name: s(i.name), file: i.file ? s(i.file) : null }, ctx)
+    })
+  }
+  if (opts.guides?.scripts) {
+    add({
+      name: 'run_skill_script',
+      description: "Run one of a skill's own scripts, when its instructions say to: name the skill, the script's path inside it (\"scripts/export.sh\") and its arguments. The user approves each skill's scripts once.",
+      input_schema: schema({ name: str, script: str, args: { type: 'array', items: str } }),
+      strict: false,
+      risk: 'shell',
+      describe: (i) => `run ${s(i.script)} from the ${s(i.name)} skill`,
+      slow: true,
+      run: (i, ctx) => host.runSkillScript({ name: s(i.name), script: s(i.script), args: Array.isArray(i.args) ? i.args.map((a) => String(a)).slice(0, 20) : [] }, ctx)
+    })
+  }
 
   for (const skill of opts.skills ?? []) {
     const def = skillTool(skill)

@@ -1,7 +1,13 @@
 // A fake pair of hands for the agent core: every worker records its call and answers from a small made-up world
 // (chats, files, a web page, the screen). Nothing is pressed, opened or sent. Used by test/core.test.ts and the eval.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { MemoryFiles, type MemorySection } from '../../src/main/memfiles.ts'
+import { describeHits, PastIndex } from '../../src/main/past.ts'
+import { describeGuide, findGuide, guideIndex, loadGuides, type Guide } from '../../src/main/skillmd.ts'
 import type { Skill } from '../../src/main/skills.ts'
-import type { ChatApp, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
+import type { ChatApp, PastKind, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
 import { untrusted } from '../../src/main/untrusted.ts'
 
 export interface FakeWorld {
@@ -20,6 +26,12 @@ export interface FakeWorld {
   calendar?: string
   journal?: string
   reminders?: string[]
+  /** her notes as they are on disk: USER.md and MEMORY.md */
+  notes?: { user?: string; memory?: string }
+  /** what search_past can find: chats (you / her) and day-log lines (app, browse, plan…), days before "now" */
+  past?: { daysAgo: number; kind: string; text: string; at?: string }[]
+  /** instruction skills (SKILL.md) she has */
+  guides?: { name: string; description: string; body: string }[]
 }
 
 export interface HostCall {
@@ -45,9 +57,55 @@ export class FakeHost implements WorkerHost {
   /** what the user answers to a read-back */
   answer: (question: string) => boolean
 
-  constructor(world: FakeWorld = {}, answer: (question: string) => boolean = () => true) {
+  private readonly now: Date
+  private home: string | null = null
+  private mem: MemoryFiles | null = null
+  readonly guides: Guide[] = []
+  private past: PastIndex | null = null
+  /** facts of importance 1–2 (they fade in the app) */
+  readonly fading: string[] = []
+
+  constructor(world: FakeWorld = {}, answer: (question: string) => boolean = () => true, now = new Date()) {
     this.world = world
     this.answer = answer
+    this.now = now
+    if (world.guides?.length) {
+      const skillsDir = join(this.scratch(), 'skills')
+      for (const g of world.guides) {
+        mkdirSync(join(skillsDir, g.name), { recursive: true })
+        writeFileSync(join(skillsDir, g.name, 'SKILL.md'), `---\nname: ${g.name}\ndescription: ${JSON.stringify(g.description)}\n---\n\n${g.body}\n`)
+      }
+      this.guides = loadGuides([{ dir: skillsDir, source: 'user' }]).guides
+    }
+  }
+
+  /** Her notes, in a scratch folder made when first needed. */
+  get memFiles(): MemoryFiles {
+    if (!this.mem) {
+      this.mem = new MemoryFiles(join(this.scratch(), 'memory'))
+      this.mem.ensure()
+      if (this.world.notes?.user) writeFileSync(this.mem.path('user'), this.world.notes.user)
+      if (this.world.notes?.memory) writeFileSync(this.mem.path('memory'), this.world.notes.memory)
+    }
+    return this.mem
+  }
+
+  private scratch(): string {
+    if (!this.home) this.home = mkdtempSync(join(tmpdir(), 'deskmate-fake-'))
+    return this.home
+  }
+
+  /** What the agent core gets as its notes and skills list, as the app builds them. */
+  prompt(): { memory: string; skills: string } {
+    const files = this.world.notes ? this.memFiles.prompt() : ''
+    return { memory: files ? `Your notes (yours to keep up to date with remember, update_memory and forget):\n${files}` : '', skills: guideIndex(this.guides) }
+  }
+
+  /** Removes the scratch folder. */
+  dispose(): void {
+    this.past?.close()
+    if (this.home) rmSync(this.home, { recursive: true, force: true })
+    this.home = null
   }
 
   /** The confirm function to give the core; it records the question. */
@@ -192,9 +250,61 @@ export class FakeHost implements WorkerHost {
     return this.ok(`Moving: ${a.action}.`)
   }
 
-  async remember(a: { fact: string; importance: number }, ctx: ToolCtx): Promise<ToolOutcome> {
+  async remember(a: { fact: string; importance: number; section: MemorySection }, ctx: ToolCtx): Promise<ToolOutcome> {
     this.rec('remember', a, ctx)
-    return this.ok('Kept.')
+    if (a.importance < 3) {
+      this.fading.push(a.fact)
+      return this.ok('Kept for now.', '')
+    }
+    const r = this.memFiles.add(a.fact, a.section)
+    return { ok: r.ok, text: r.text, say: '' }
+  }
+
+  async updateMemory(a: { old: string; new: string }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('update_memory', a, ctx)
+    const r = this.memFiles.update(a.old, a.new)
+    return { ok: r.ok, text: r.text, say: '' }
+  }
+
+  async forget(a: { what: string }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('forget', a, ctx)
+    const r = this.memFiles.remove(a.what)
+    return { ok: r.ok, text: r.text, say: '' }
+  }
+
+  async searchPast(a: { query: string; days_back: number | null; kind: PastKind }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('search_past', a, ctx)
+    if (!this.past) {
+      const dir = this.scratch()
+      const day = (at: number): string => new Date(at).toISOString().slice(0, 10)
+      for (const p of this.world.past ?? []) {
+        const at = this.now.getTime() - p.daysAgo * 86_400_000 - 3_600_000
+        const chat = p.kind === 'you' || p.kind === 'her'
+        const sub = join(dir, chat ? 'chats' : 'log')
+        mkdirSync(sub, { recursive: true })
+        const line = chat ? { at, role: p.kind === 'her' ? 'assistant' : 'user', text: p.text } : { at, kind: p.kind, text: p.text }
+        writeFileSync(join(sub, `${day(at)}.jsonl`), `${JSON.stringify(line)}\n`, { flag: 'a' })
+      }
+      this.past = new PastIndex(join(dir, 'past.db'), { chats: join(dir, 'chats'), journal: join(dir, 'log'), plans: join(dir, 'plans') })
+    }
+    const category = a.kind === 'any' ? undefined : a.kind
+    const since = a.days_back ? this.now.getTime() - a.days_back * 86_400_000 - 86_400_000 : undefined
+    let hits = this.past.search(a.query, { category, since, limit: 12 })
+    if (!hits.length && since) hits = this.past.search(a.query, { category, limit: 8 })
+    if (!hits.length) return this.ok(`Nothing about "${a.query}" in the chat archive, the day logs or the plans.`)
+    return { ok: true, text: untrusted('past', describeHits(hits, this.now)), untrusted: 'past' }
+  }
+
+  async readSkill(a: { name: string; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('read_skill', a, ctx)
+    const g = findGuide(this.guides, a.name)
+    if (!g) return { ok: false, text: `No skill called ${a.name}. Skills: ${this.guides.map((x) => x.name).join(', ') || 'none'}.` }
+    return this.ok(describeGuide(g), '')
+  }
+
+  async runSkillScript(a: { name: string; script: string; args: string[] }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('run_skill_script', a, ctx)
+    return { ok: true, text: untrusted('skill', `ran ${a.script} ${a.args.join(' ')}`), untrusted: 'skill' }
   }
 
   async runSkill(skill: Skill, slots: Record<string, string>, ctx: ToolCtx): Promise<ToolOutcome> {

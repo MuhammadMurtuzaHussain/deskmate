@@ -99,6 +99,8 @@ export interface Plan {
   createdAt: number
   /** why it paused, or how it ended */
   note?: string
+  /** 'skill': not a plan but a skill she wrote, shown on the same card with Keep it / Throw away */
+  kind?: 'skill'
 }
 
 /** What her body is doing on the desktop, beyond idle and dancing. */
@@ -278,7 +280,22 @@ export interface SetupState {
   notices?: NoticeState
   /** tool servers from <user data>/mcp.json; missing from an older main process */
   mcp?: McpSetupState
+  /** her notes, what she can search, her skills and the drafts waiting for a yes; missing from an older main process */
+  learn?: LearnSetupState
 }
+
+export interface LearnSetupState {
+  memoryDir: string
+  files: { name: string; used: number; cap: number; entries: number }[]
+  /** entries in the search index (chats, day logs, plans); null when search is not working */
+  searchable: number | null
+  skills: { name: string; description: string; kind: 'routine' | 'guide'; source: 'bundled' | 'user' }[]
+  drafts: { name: string; kind: 'new' | 'update'; updates?: string; description: string; why?: string; steps: string[] }[]
+  /** DESKMATE_SKILL_CODE=1: skills of yours may run their scripts (each after a yes) */
+  skillCode: boolean
+}
+
+export type DraftAction = 'keep' | 'discard' | 'show'
 
 export interface McpSetupState {
   configPath: string
@@ -381,6 +398,9 @@ export interface DeskmateApi {
   mcpToggle?(name: string, on: boolean): Promise<McpSetupState>
   mcpReload?(): Promise<McpSetupState>
   mcpOpenConfig?(): Promise<void>
+  openMemory?(): Promise<void>
+  openSkills?(): Promise<void>
+  draftAction?(name: string, action: DraftAction): Promise<LearnSetupState>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
   /** Setup → Characters */

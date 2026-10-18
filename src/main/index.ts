@@ -18,6 +18,10 @@ import * as chrome from './chrome'
 import { routeCommand } from './commands'
 import { loadDotEnv } from './env'
 import { Memory } from './memory'
+import { MemoryFiles } from './memfiles'
+import { describeHits, PastIndex, type PastCategory } from './past'
+import { describeGuide, findGuide, guideIndex, guidePath, loadGuides, scriptsHash, type Guide } from './skillmd'
+import { draftFromTurn, draftLine, learnPlan, SkillDrafts, type Draft } from './learn'
 import { checkToken, outsidePhone, PhoneRemote, TelegramApi, type PairRequest } from './remote'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
@@ -133,7 +137,14 @@ if (characters.length === 0) throw new Error('no characters found under characte
 const requested = process.env.DESKMATE_CHARACTER?.trim() || settings.get().activeCharacter || 'mika'
 let activeId = characters.some((c) => c.id === requested) ? requested : characters[0].id
 let { character, persona } = readCharacter(activeId)
-let memory = new Memory(join(app.getPath('userData'), `memory-${activeId}.json`))
+// Her notes (USER.md, MEMORY.md) are about the user, so every character shares them; the small talk that fades and
+// the recent turns are each character's own. Every turn also goes into the chat archive that search_past reads.
+const MEMORY_DIR = join(USER_DATA, 'memory')
+const memFiles = new MemoryFiles(MEMORY_DIR)
+const CHATS_DIR = join(USER_DATA, 'chats')
+const memoryFor = (id: string): Memory => new Memory(join(USER_DATA, `memory-${id}.json`), { files: memFiles, archiveDir: CHATS_DIR })
+let memory = memoryFor(activeId)
+moveFactsToFiles()
 const brain = new Brain(memory, persona, settings)
 
 // Her hands and ears: Claude Code jobs, the folders they run in, her Chrome, and hands-free listening.
@@ -200,9 +211,27 @@ async function swatLine(): Promise<void> {
   if (herSpeaking || hearing || acting || browsing) return
   await deliver({ say, emotion, speak: true, remember: [] }, 'touch')
 }
-// Skills: app routines from skills/ in the app and <user data>/skills (see docs/SKILLS.md).
+// Skills: app routines (skill.json) and instructions in the open SKILL.md format, from skills/ in the app and
+// <user data>/skills (see docs/SKILLS.md). Drafts she wrote herself wait in <user data>/skills/drafts.
 let skills: Skill[] = []
+let guides: Guide[] = []
 const USER_SKILLS = join(USER_DATA, 'skills')
+const SKILL_CODE = process.env.DESKMATE_SKILL_CODE?.trim() === '1'
+
+/** Once: the facts worth keeping from every character's JSON memory move into USER.md / MEMORY.md. */
+function moveFactsToFiles(): void {
+  try {
+    memFiles.ensure()
+    let moved = 0
+    for (const f of readdirSync(USER_DATA).filter((n) => /^memory-[\w-]+\.json$/.test(n))) {
+      const m = f === `memory-${activeId}.json` ? memory : new Memory(join(USER_DATA, f), { files: memFiles })
+      moved += m.moveToFiles()
+    }
+    if (moved) console.log(`[memory] moved ${moved} fact(s) into ${MEMORY_DIR}`)
+  } catch (err) {
+    console.warn('[memory] could not set up her notes:', (err as Error).message)
+  }
+}
 
 async function reloadSkills(): Promise<void> {
   const loaded = await loadSkills(
@@ -210,17 +239,29 @@ async function reloadSkills(): Promise<void> {
       { dir: join(RESOURCES, 'skills'), source: 'bundled' },
       { dir: USER_SKILLS, source: 'user' }
     ],
-    { allowUserCode: process.env.DESKMATE_SKILL_CODE?.trim() === '1' }
+    { allowUserCode: SKILL_CODE }
   )
   skills = loaded.skills
   console.log(`[skills] ${skills.length ? skills.map((s) => `${s.name}${s.source === 'user' ? ' (yours)' : ''}`).join(', ') : 'none'}`)
   for (const p of loaded.problems) console.warn(`[skills] ${p.dir} not loaded: ${p.errors.join('; ')}`)
+  const md = loadGuides([
+    { dir: join(RESOURCES, 'skills'), source: 'bundled' },
+    { dir: USER_SKILLS, source: 'user' }
+  ])
+  guides = md.guides
+  console.log(`[skills] SKILL.md: ${guides.length ? guides.map((g) => `${g.name}${g.source === 'user' ? ' (yours)' : ''}`).join(', ') : 'none'}`)
+  for (const p of md.problems) console.warn(`[skills] ${p.dir}: ${p.errors.join('; ')}`)
   refreshTray()
+  setupChanged()
 }
 
 // What she did, by day ("what did you do today?"), and the plan she is showing or working through.
 const journal = new Journal(join(USER_DATA, 'log'))
 const plans = new PlanStore(join(USER_DATA, 'plans'))
+/** Full-text search over the chat archive, the day logs and the plans (a cache beside them, rebuilt when missing). */
+const past = new PastIndex(join(USER_DATA, 'past.db'), { chats: CHATS_DIR, journal: join(USER_DATA, 'log'), plans: join(USER_DATA, 'plans') })
+/** Skills she wrote herself, waiting for the user's yes. */
+const drafts = new SkillDrafts(USER_SKILLS)
 let plan: Plan | null = null
 let planRunning = false
 /** set to end the running step early (stop), or to pause after it (pause) */
@@ -244,6 +285,8 @@ function activity(): void {
 type Pending =
   | { kind: 'job'; call: ToolCall; project: Project; at: number }
   | { kind: 'confirm'; at: number; resolve: (yes: boolean) => void }
+  /** a skill she just wrote (or a better version of one): yes keeps it */
+  | { kind: 'skill'; at: number; name: string }
 let pending: Pending | null = null
 
 // Her phone remote (a Telegram bot), when it is set up and on; see the "phone remote" section below.
@@ -264,7 +307,7 @@ function switchCharacter(id: string): void {
   pending = null
   ;({ character, persona } = readCharacter(id))
   wake = createWakeMatcher(character.name)
-  memory = new Memory(join(app.getPath('userData'), `memory-${id}.json`))
+  memory = memoryFor(id)
   brain.setCharacter(memory, persona)
   settings.set({ activeCharacter: id })
   win?.setTitle(character.name)
@@ -461,12 +504,15 @@ function buildTrayMenu(): Menu {
     { label: 'Characters…', click: () => openSetup('characters') },
     { label: 'Setup…', click: () => openSetup() },
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
+    { label: 'Open her memory', toolTip: 'USER.md and MEMORY.md: what she knows about you, in plain text you can edit', click: openMemoryFolder },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
     {
-      label: `Skills (${skills.length})`,
+      label: `Skills (${skills.length + guides.filter((g) => !g.routine).length})${drafts.list().length ? ' · new' : ''}`,
       submenu: [
         ...skills.map((s) => ({ label: `${s.title} · ${s.app.name}${s.source === 'user' ? ' (yours)' : ''}`, enabled: false })),
-        ...(skills.length ? [{ type: 'separator' as const }] : []),
+        ...guides.filter((g) => !g.routine).map((g) => ({ label: `${g.name.replace(/-/g, ' ')}${g.source === 'user' ? ' (yours)' : ''}`, toolTip: g.description, click: () => void shell.openPath(join(g.dir, 'SKILL.md')) })),
+        ...draftsMenu(),
+        ...(skills.length || guides.length ? [{ type: 'separator' as const }] : []),
         {
           label: 'Open my skills folder',
           click: () => {
@@ -2098,6 +2144,8 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   activity()
   if (text.toLowerCase() === '/forget') {
     memory.clear()
+    memFiles.reset()
+    journal.add('memory', 'forgot everything (/forget); the old notes are in USER.md.bak and MEMORY.md.bak')
     const reply: Reply = { say: 'Clean slate. Who are you again, sweetheart?', emotion: 'smug', speak: true, remember: [] }
     await deliver(reply, 'chat')
     return reply
@@ -2143,6 +2191,13 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
       p.resolve(answer === 'yes')
       if (answer) return QUIET
       // Not an answer: that is a no for the risky action, and a normal message otherwise.
+    } else if (pending.kind === 'skill') {
+      const p = pending
+      pending = null
+      const said = stripName(text).toLowerCase()
+      const keep = /^(?:keep it|save it|yes keep it|update it|do that)\b/.test(said) ? 'yes' : /^(?:throw it away|bin it|delete it|discard it|scrap it|get rid of it)\b/.test(said) ? 'no' : yesNo(said)
+      if (keep && Date.now() - p.at < 5 * 60_000) return sayPlain(await settleDraft(p.name, keep === 'yes'), keep === 'yes' ? 'happy' : 'neutral')
+      // Anything else is a new message; the draft waits in the tray and in Setup.
     } else if (Date.now() - pending.at > 90_000) {
       pending = null
     } else {
@@ -2898,8 +2953,94 @@ const workerHost: WorkerHost = {
     return done(`Doing it: ${a.action}.`, '')
   },
   async remember(a) {
-    memory.remember([{ text: a.fact, importance: Math.min(5, Math.max(1, Math.round(a.importance))) }])
-    return done('Kept.', '')
+    const importance = Math.min(5, Math.max(1, Math.round(a.importance)))
+    const [r] = memory.remember([{ text: a.fact, importance, section: a.section }])
+    if (r?.ok && importance >= 3) journal.add('memory', `kept: ${a.fact}`)
+    return r ? { ok: r.ok, text: r.text, say: '' } : failed('Nothing to keep.')
+  },
+  async updateMemory(a) {
+    const r = memFiles.update(a.old, a.new)
+    if (r.ok) journal.add('memory', `changed: ${a.old} → ${a.new}`)
+    return { ok: r.ok, text: r.text, say: '' }
+  },
+  async forget(a) {
+    const r = memFiles.remove(a.what)
+    if (r.ok) {
+      journal.add('memory', `forgot: ${a.what}`)
+      return { ok: true, text: r.text, say: '' }
+    }
+    const faded = memory.forget(a.what)
+    return faded ? done(`Forgot "${faded}".`, '') : { ok: false, text: r.text, say: '' }
+  },
+  async searchPast(a) {
+    const category: PastCategory | undefined = a.kind === 'any' ? undefined : a.kind
+    const since = a.days_back ? Date.now() - a.days_back * 86_400_000 : undefined
+    try {
+      let hits = past.search(a.query, { category, since, limit: 12 })
+      // Nothing in that window: say so, and look further back once.
+      let wider = ''
+      if (!hits.length && since) {
+        hits = past.search(a.query, { category, limit: 8 })
+        if (hits.length) wider = `Nothing in the last ${a.days_back} day(s); from further back:\n`
+      }
+      if (!hits.length) return done(`Nothing about "${a.query}" in the chat archive, the day logs or the plans.`, "I don't have anything on that.")
+      // Old logs hold what pages, screens and messages said, so the lines go in as data.
+      return { ok: true, text: `${wider}${untrusted('past', describeHits(hits))}`, untrusted: 'past' }
+    } catch (err) {
+      console.warn('[past]', (err as Error).message)
+      return failed(`Search is not working: ${(err as Error).message}`)
+    }
+  },
+  async readSkill(a) {
+    const g = findGuide(guides, a.name)
+    if (!g) return failed(`No skill called ${a.name}. Skills: ${guides.map((x) => x.name).join(', ') || 'none'}.`)
+    if (!a.file) {
+      console.log(`[skills] read ${g.name}`)
+      return done(describeGuide(g), '')
+    }
+    const p = guidePath(g, a.file)
+    if (!p) return failed(`${a.file} is not one of the ${g.name} skill's files: ${g.files.join(', ') || 'none'}.`)
+    try {
+      return done(readFileSync(p, 'utf8').slice(0, 20_000), '')
+    } catch (err) {
+      return failed(`Could not read ${a.file}: ${(err as Error).message}`)
+    }
+  },
+  async runSkillScript(a, ctx) {
+    const g = findGuide(guides, a.name)
+    if (!g) return failed(`No skill called ${a.name}.`)
+    if (!SKILL_CODE && g.source === 'user') return failed('Skill scripts are off. They run only when Deskmate is started with DESKMATE_SKILL_CODE=1; tell the user.', "Skill scripts are off on this Mac.")
+    const p = g.scripts.includes(a.script) ? guidePath(g, a.script) : null
+    if (!p) return failed(`${a.script} is not one of the ${g.name} skill's scripts: ${g.scripts.join(', ') || 'none'}.`)
+    // The user says yes to a skill's scripts once; a change to any of them asks again.
+    const hash = scriptsHash(g)
+    const allowed = settings.get().skillScripts ?? {}
+    if (allowed[g.name] !== hash) {
+      if (!(await confirm(`The ${g.name.replace(/-/g, ' ')} skill wants to run its script ${basename(a.script)} on this Mac. Allow its scripts from now on?`))) {
+        return failed('The user said no; the script did not run.', 'Okay, not running it.')
+      }
+      settings.set({ skillScripts: { ...allowed, [g.name]: hash } })
+      journal.add('skill', `allowed the scripts of ${g.name}`)
+    }
+    const ext = a.script.split('.').pop()?.toLowerCase()
+    const [cmd, args, env]: [string, string[], NodeJS.ProcessEnv] =
+      ext === 'py'
+        ? ['python3', [p, ...a.args], {}]
+        : ext === 'sh' || ext === 'bash'
+          ? ['/bin/bash', [p, ...a.args], {}]
+          : ext === 'js' || ext === 'mjs' || ext === 'cjs'
+            ? [process.execPath, [p, ...a.args], { ELECTRON_RUN_AS_NODE: '1' }]
+            : [p, a.args, {}]
+    status(`skill · ${g.name} · ${basename(a.script)}`)
+    const out = await new Promise<{ ok: boolean; text: string }>((resolve) => {
+      execFile(cmd, args, { cwd: g.dir, timeout: 120_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH, HOME: homedir(), LANG: process.env.LANG ?? 'en_US.UTF-8', ...env } }, (err, stdout, stderr) => {
+        const text = `${stdout}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 8000)
+        resolve({ ok: !err, text: err ? `${err.message}\n${text}` : text || '(no output)' })
+      })
+    })
+    journal.add('skill', `ran ${g.name}/${a.script}: ${out.ok ? 'ok' : 'failed'}`)
+    if (ctx.stopped()) return failed('Stopped.')
+    return { ok: out.ok, text: untrusted('skill', out.text, `${g.name}/${a.script}`), untrusted: 'skill' }
   },
   async runSkill(skill, slots, ctx) {
     const blocked = await handsReady(true)
@@ -2916,6 +3057,7 @@ const workerHost: WorkerHost = {
 function currentTools(): ToolSpec[] {
   return buildTools(workerHost, {
     skills: appHands.available ? skills : [],
+    guides: { any: guides.some((g) => !g.routine), scripts: guides.some((g) => g.scripts.length > 0 && (SKILL_CODE || g.source === 'bundled')) },
     external: mcp.tools(),
     has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available }
   })
@@ -2925,10 +3067,9 @@ function useAgentCore(): boolean {
   return AGENT_CORE && Boolean(brain.claudeForAgent)
 }
 
-/** What she remembers about them, as her brain reads it. */
-function memoryLines(): string {
-  const facts = memory.recall()
-  return facts.length ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}` : 'You do not know this person yet.'
+/** The instruction skills for her prompt (the routines are tools of their own). */
+function skillLines(): string {
+  return guideIndex(guides.filter((g) => !g.routine))
 }
 
 /** A note on the state she is in, for her brain: a plan on the card, Claude jobs running. */
@@ -2989,7 +3130,9 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
         text: said,
         origin,
         persona,
-        memory: memoryLines(),
+        memory: memory.notesBlock(),
+        recent: memory.recentBlock(),
+        skills: skillLines(),
         history: memory.recentTurns(12).map((t) => ({ role: t.role === 'assistant' ? 'assistant' : 'user', text: t.text })),
         now: new Date(),
         screenshot,
@@ -3018,6 +3161,7 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     const reply: Reply = { say: result.say, emotion: result.emotion, speak: true, remember: [] }
     memory.addTurn('assistant', reply.say)
     await deliver(reply, 'chat')
+    void learnFrom(said, result, claude)
     return reply
   } catch (err) {
     const e = err instanceof ClaudeError ? err : toClaudeError(err)
@@ -3036,6 +3180,133 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     agentBusy = acting = false
     refreshTray()
     status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+// ---- she gets better with use: skills she writes herself (learn.ts), and what Setup shows of her memory
+
+/** DESKMATE_LEARN_SKILLS=0: she never writes skills on her own */
+const LEARN_SKILLS = !/^(0|false|no|off)$/i.test(process.env.DESKMATE_LEARN_SKILLS?.trim() || '')
+
+/** After a long task that worked, or one done by following a skill, she writes down how (one more Claude call). */
+async function learnFrom(request: string, result: Awaited<ReturnType<typeof runAgentTurn>>, claude: NonNullable<Brain['claudeForAgent']>): Promise<void> {
+  if (!LEARN_SKILLS) return
+  const plan = learnPlan(result, guides)
+  if (!plan) return
+  try {
+    const draft = await draftFromTurn(
+      (req) => callClaude(claude.client, { system: req.system, messages: req.messages, model: claude.model, effort: claude.effort, maxTokens: 6000 }),
+      plan,
+      request,
+      result.calls,
+      { skills: guideIndex(guides), guides }
+    )
+    if (!draft) {
+      console.log(`[learn] ${plan.kind === 'update' ? `${plan.skill}: no change` : 'nothing worth a skill'}`)
+      return
+    }
+    const taken = [...guides.map((g) => g.name), ...skills.map((x) => x.name)]
+    const d = drafts.write(draft, plan.kind === 'update' ? { kind: 'update', updates: plan.skill, request } : { kind: 'new', request }, taken)
+    console.log(`[learn] draft ${d.name} (${d.kind}) in ${d.dir}`)
+    journal.add('skill', d.kind === 'update' ? `proposed a better ${d.updates}${d.why ? `: ${d.why}` : ''}` : `wrote a draft skill, ${d.name}, from "${request.slice(0, 120)}"`)
+    offerDraft(d)
+  } catch (err) {
+    console.warn('[learn]', (err as Error).message)
+  }
+}
+
+function draftCard(d: Draft): Plan {
+  return {
+    id: `skill:${d.name}`,
+    goal: d.request,
+    title: d.kind === 'update' ? `Better: ${(d.updates ?? d.name).replace(/-/g, ' ')}` : `New skill: ${d.name.replace(/-/g, ' ')}`,
+    steps: (d.steps.length ? d.steps : [d.description]).map((text) => ({ text, worker: 'say' as PlanWorker, input: '', status: 'pending' as const })),
+    status: 'draft',
+    current: 0,
+    createdAt: d.created,
+    note: d.why ?? d.description,
+    kind: 'skill'
+  }
+}
+
+/** The draft on the card and in one line; a yes said next keeps it (the card, the tray and Setup work too). */
+function offerDraft(d: Draft): void {
+  if (!plan || plan.status === 'done' || plan.status === 'stopped') planCard.show(draftCard(d))
+  refreshTray()
+  setupChanged()
+  if (!pending && !agentBusy && !acting && !planRunning) pending = { kind: 'skill', at: Date.now(), name: d.name }
+  void sayPlain(draftLine(d))
+}
+
+/** Keep a draft (it becomes a skill she uses) or throw it away; returns her line. */
+async function settleDraft(name: string, keep: boolean): Promise<string> {
+  const d = drafts.get(name)
+  if (planCard.shown?.id === `skill:${name}`) planCard.hide()
+  if (!d) return 'That draft is gone already.'
+  let line: string
+  if (keep) {
+    const r = drafts.approve(name, guides)
+    journal.add('skill', r.ok ? (d.kind === 'update' ? `updated ${d.updates} (your yes)` : `kept ${d.name} as a skill (your yes)`) : `could not keep ${d.name}: ${r.text}`)
+    await reloadSkills()
+    line = r.ok ? (d.kind === 'update' ? "Updated. I'll do it that way from now on." : "Kept it. Next time I'll know how.") : r.text
+  } else {
+    drafts.reject(name)
+    journal.add('skill', `threw away the draft ${d.name}`)
+    line = 'Okay, binned it.'
+  }
+  refreshTray()
+  setupChanged()
+  return line
+}
+
+function draftsMenu(): Electron.MenuItemConstructorOptions[] {
+  const list = drafts.list()
+  if (!list.length) return []
+  return [
+    { type: 'separator' },
+    {
+      label: `Drafts waiting for your yes (${list.length})`,
+      submenu: list.map((d) => ({
+        label: d.kind === 'update' ? `Better ${d.updates?.replace(/-/g, ' ')}` : d.name.replace(/-/g, ' '),
+        toolTip: d.why ?? d.description,
+        submenu: [
+          { label: d.kind === 'update' ? 'Update the skill' : 'Keep it', click: () => void settleDraft(d.name, true).then((l) => sayPlain(l, 'happy')) },
+          { label: 'Show it', click: () => void shell.openPath(join(d.dir, 'SKILL.md')) },
+          { label: 'On the card', click: () => planCard.show(draftCard(d)) },
+          { label: 'Throw it away', click: () => void settleDraft(d.name, false).then((l) => sayPlain(l)) }
+        ]
+      }))
+    }
+  ]
+}
+
+function openMemoryFolder(): void {
+  memFiles.ensure()
+  void shell.openPath(MEMORY_DIR)
+}
+
+function learnState(): NonNullable<SetupState['learn']> {
+  let searchable: number | null = null
+  try {
+    past.sync()
+    searchable = past.count()
+  } catch (err) {
+    console.warn('[past]', (err as Error).message)
+  }
+  const sizes = memFiles.sizes()
+  return {
+    memoryDir: MEMORY_DIR,
+    files: [
+      { name: 'USER.md', ...sizes.user },
+      { name: 'MEMORY.md', ...sizes.memory }
+    ],
+    searchable,
+    skills: [
+      ...skills.map((x) => ({ name: x.title, description: `${x.description} (${x.app.name})`, kind: 'routine' as const, source: x.source })),
+      ...guides.filter((g) => !g.routine).map((g) => ({ name: g.name, description: g.description, kind: 'guide' as const, source: g.source }))
+    ],
+    drafts: drafts.list().map((d) => ({ name: d.name, kind: d.kind, ...(d.updates ? { updates: d.updates } : {}), description: d.description, ...(d.why ? { why: d.why } : {}), steps: d.steps })),
+    skillCode: SKILL_CODE
   }
 }
 
@@ -3253,6 +3524,14 @@ ipcMain.on('window:ignore-mouse', (_event, ignore: boolean) => {
 
 ipcMain.on('bar:hide', () => bar.hide())
 ipcMain.on('plan:action', (_event, action: PlanAction) => {
+  // The card may be showing a skill she wrote instead of a plan.
+  const shown = planCard.shown
+  if (shown?.kind === 'skill' && shown.id.startsWith('skill:')) {
+    const name = shown.id.slice('skill:'.length)
+    if (action === 'go' || action === 'stop') void settleDraft(name, action === 'go').then((line) => sayPlain(line, action === 'go' ? 'happy' : 'neutral'))
+    else planCard.hide()
+    return
+  }
   const known: PlanAction[] = ['go', 'pause', 'resume', 'stop', 'retry', 'dismiss']
   if (known.includes(action)) void planDo({ kind: action } as PlanCommand)
 })
@@ -3472,7 +3751,8 @@ async function setupState(): Promise<SetupState> {
       error: remoteError
     },
     notices: noticeState(),
-    mcp: mcpState()
+    mcp: mcpState(),
+    learn: learnState()
   }
 }
 
@@ -3568,6 +3848,17 @@ ipcMain.handle('setup:mcp-reload', async () => {
   return mcpState()
 })
 ipcMain.handle('setup:mcp-open', () => openMcpConfig())
+ipcMain.handle('setup:memory-open', () => openMemoryFolder())
+ipcMain.handle('setup:skills-open', () => {
+  mkdirSync(USER_SKILLS, { recursive: true })
+  void shell.openPath(USER_SKILLS)
+})
+ipcMain.handle('setup:draft', async (_event, name: string, action: string) => {
+  const d = drafts.get(String(name))
+  if (d && action === 'show') void shell.openPath(join(d.dir, 'SKILL.md'))
+  else if (d && (action === 'keep' || action === 'discard')) void sayPlain(await settleDraft(d.name, action === 'keep'), action === 'keep' ? 'happy' : 'neutral')
+  return learnState()
+})
 ipcMain.handle('setup:finish', () => {
   setupWin?.close()
 })

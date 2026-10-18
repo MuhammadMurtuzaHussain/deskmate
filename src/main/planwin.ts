@@ -56,6 +56,11 @@ export class PlanCard {
     }
   }
 
+  /** what the card shows (or showed last) */
+  get shown(): Plan | null {
+    return this.plan
+  }
+
   hide(): void {
     if (this.win && !this.win.isDestroyed()) this.win.hide()
   }

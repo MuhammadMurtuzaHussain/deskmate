@@ -28,6 +28,8 @@ export interface SettingsData {
   notices?: Partial<NoticePrefs>
   /** MCP servers from mcp.json switched off in Setup (by name) */
   mcpDisabled?: string[]
+  /** skills whose scripts the user allowed to run, with a fingerprint of the scripts they said yes to (skillmd.ts) */
+  skillScripts?: Record<string, string>
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

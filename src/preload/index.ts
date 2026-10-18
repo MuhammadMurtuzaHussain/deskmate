@@ -52,6 +52,9 @@ const api: DeskmateApi = {
   mcpToggle: (name, on) => ipcRenderer.invoke('setup:mcp-toggle', name, on),
   mcpReload: () => ipcRenderer.invoke('setup:mcp-reload'),
   mcpOpenConfig: () => ipcRenderer.invoke('setup:mcp-open'),
+  openMemory: () => ipcRenderer.invoke('setup:memory-open'),
+  openSkills: () => ipcRenderer.invoke('setup:skills-open'),
+  draftAction: (name, action) => ipcRenderer.invoke('setup:draft', name, action),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
   },

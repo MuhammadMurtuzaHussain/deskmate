@@ -24,8 +24,12 @@ export interface TurnInput {
   origin: Origin
   /** her persona (character/<id>/persona.md) */
   persona: string
-  /** what she remembers about them, as lines */
+  /** her notes: USER.md and MEMORY.md as the prompt shows them (cached with the skills list) */
   memory: string
+  /** small things that came up lately and fade (not cached: it moves) */
+  recent?: string
+  /** the instruction skills she has, one "name: description" line each (read_skill loads one) */
+  skills?: string
   /** the recent conversation, oldest first */
   history: { role: 'user' | 'assistant'; text: string }[]
   now: Date
@@ -80,6 +84,11 @@ How to act:
 - If a tool says the user said no, or something failed, do not try to get around it; tell them.
 - Times: work out in_minutes or at from the current time given with their message.
 - Before a slow tool (use_computer, browse, claude_code) you may say a few words first ("On it."); never claim it is done before a tool says so.
+
+Memory and skills:
+- Your notes about them (USER.md) and what you have learned (MEMORY.md) are below; use them without being asked ("text my sister" is the person your notes name). When they tell you something worth keeping (who they are, a preference, a person they message, a project, how they want things done), remember it with importance 3 to 5 and the right section, then carry on with what they asked; small talk is 1 or 2. When a note is wrong or stale, update_memory; when they ask you to forget something, forget. Do not make a show of remembering.
+- For anything from before the recent conversation ("what did I ask you about the dentist last week", "what did you send sam yesterday"), use search_past, then answer from what it finds.
+- When a request matches one of your skills (listed below), read_skill it first and follow its steps with your tools.
 
 Your last message is spoken out loud: one to three short, plain sentences in your own voice, saying what you did and found, with names, numbers and times exact. Only say something happened if a tool reported it. No markdown, no lists. Start it with your face in brackets, one of: ${EMOTIONS.map((e) => `[${e}]`).join(' ')}.`
 
@@ -154,10 +163,14 @@ export async function runAgentTurn(input: TurnInput, deps: TurnDeps): Promise<Tu
   if (input.screenshot) taint.mark('screen')
   const byName = new Map(deps.tools.map((t) => [t.name, t]))
   const tools = apiTools(deps.tools)
+  // Persona and rules never change; the notes and the skills list change now and then; the fading facts often. Each
+  // stable part ends in a cache breakpoint, so a turn only pays full price for what moved.
+  const notes = [input.memory.trim() || 'You do not know this person yet.', input.skills?.trim() ? `## Skills (read_skill loads one)\n${input.skills.trim()}` : ''].filter(Boolean).join('\n\n')
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
     { type: 'text', text: `${input.persona.trim()}\n\n${AGENT_RULES}\n\n${UNTRUSTED_RULES}`, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: input.memory.trim() || 'You do not know this person yet.' }
+    { type: 'text', text: notes, cache_control: { type: 'ephemeral' } }
   ]
+  if (input.recent?.trim()) system.push({ type: 'text', text: input.recent.trim() })
   const messages: Anthropic.Beta.BetaMessageParam[] = input.history.map((t) => ({ role: t.role, content: t.text }))
   while (messages.length && messages[0].role !== 'user') messages.shift()
   messages.push({ role: 'user', content: userContent(input) })
