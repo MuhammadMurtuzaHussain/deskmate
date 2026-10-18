@@ -9,16 +9,20 @@ if (process.platform !== 'darwin') process.exit(0)
 
 const root = join(__dirname, '..')
 const src = join(root, 'native', 'hands', 'main.swift')
+// The usage text macOS shows when she asks for Calendars, linked into the binary.
+const plist = join(root, 'native', 'hands', 'Info.plist')
 const outDir = join(root, 'native', 'bin')
 const out = join(outDir, 'deskmate-hands')
 const universal = process.argv.includes('--universal')
 
-const fresh = existsSync(out) && statSync(out).mtimeMs > statSync(src).mtimeMs
+const fresh = existsSync(out) && statSync(out).mtimeMs > Math.max(statSync(src).mtimeMs, statSync(plist).mtimeMs)
 if (fresh && !universal) process.exit(0)
 
 mkdirSync(outDir, { recursive: true })
 const compile = (target, dest) =>
-  execFileSync('xcrun', ['swiftc', '-O', '-swift-version', '5', '-target', target, '-o', dest, src], { stdio: 'inherit' })
+  execFileSync('xcrun', ['swiftc', '-O', '-swift-version', '5', '-target', target, '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', plist, '-o', dest, src], {
+    stdio: 'inherit'
+  })
 
 try {
   if (universal) {

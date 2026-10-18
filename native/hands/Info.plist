@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Linked into deskmate-hands (__TEXT,__info_plist) so macOS finds the usage text when the helper asks for Calendars. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.murtuza.deskmate.hands</string>
+  <key>CFBundleName</key>
+  <string>deskmate-hands</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Deskmate reads your upcoming events so your companion can remind you before they start. Nothing is changed.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Deskmate reads your upcoming events so your companion can remind you before they start. Nothing is changed.</string>
+</dict>
+</plist>

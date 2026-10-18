@@ -7,9 +7,12 @@
 // Keys and typing are Quartz events posted to the HID tap, which needs the Accessibility permission of the app that
 // started this helper (Deskmate, or Electron / your terminal in development). Apps are launched and activated through
 // LaunchServices, which needs nothing. Window titles, the focused element and menus come from the accessibility API.
+// Notification banners are read from Notification Center's accessibility tree; calendar events come from EventKit
+// (macOS asks for Calendars access once; the usage text is in the Info.plist linked into this binary).
 
 import AppKit
 import ApplicationServices
+import EventKit
 import Foundation
 import Vision
 
@@ -550,6 +553,127 @@ func norm(_ s: String) -> String {
   s.lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "").trimmingCharacters(in: .whitespaces)
 }
 
+// MARK: - Notification banners
+
+/// The notifications macOS is showing right now, read from the Notification Center process's accessibility tree: the
+/// banners that slide in at the top right, and the list when the user has Notification Center open. No Full Disk
+/// Access (the notification database stays closed); only Accessibility, like the rest of her hands. Each one is an
+/// AXGroup with an AXNotificationCenter… subrole ("AXNotificationCenterBanner", "…BannerStack", "…Alert"), a
+/// description "App, title, subtitle, body[, stacked]", and static texts identified as title / subtitle / body.
+func banners() -> Json {
+  guard let nc = runningApp("com.apple.notificationcenterui") else { return ["banners": [], "running": false] }
+  let app = axApp(nc.processIdentifier)
+  var out: [Json] = []
+  var panelOpen = false
+  for window in (axAttr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? [] {
+    // The open Notification Center panel has the widgets and their "Edit Widgets" button; a banner window does not.
+    var panel = false
+    var found: [AXUIElement] = []
+    func walk(_ el: AXUIElement, _ depth: Int) {
+      if depth > 12 { return }
+      let role = axString(el, kAXRoleAttribute) ?? ""
+      if role == "AXOpaqueProviderGroup" { return } // widgets: big, and never notifications
+      if axString(el, kAXIdentifierAttribute) == "widget-editor-button" { panel = true }
+      if role == "AXGroup", (axString(el, kAXSubroleAttribute) ?? "").hasPrefix("AXNotificationCenter") {
+        found.append(el)
+        return
+      }
+      for c in axChildren(el) { walk(c, depth + 1) }
+    }
+    walk(window, 0)
+    if panel { panelOpen = true }
+    for el in found {
+      var texts: [String: String] = [:]
+      var loose: [String] = []
+      for c in axChildren(el) where axString(c, kAXRoleAttribute) == "AXStaticText" {
+        guard let v = axString(c, kAXValueAttribute) else { continue }
+        if let id = axString(c, kAXIdentifierAttribute), ["title", "subtitle", "body"].contains(id) { texts[id] = v } else { loose.append(v) }
+      }
+      let desc = axString(el, kAXDescriptionAttribute) ?? ""
+      let stacked = desc.hasSuffix(", stacked")
+      // The app's name is what the description says before the title.
+      var appName = ""
+      if let title = texts["title"], let r = desc.range(of: ", \(title)") {
+        appName = String(desc[desc.startIndex..<r.lowerBound])
+      } else if let comma = desc.range(of: ", ") {
+        appName = String(desc[desc.startIndex..<comma.lowerBound])
+      }
+      if texts["title"] == nil, texts["body"] == nil, loose.isEmpty { continue }
+      var b: Json = [
+        "id": axString(el, kAXIdentifierAttribute) ?? "",
+        "kind": axString(el, kAXSubroleAttribute) ?? "",
+        "app": appName,
+        "title": texts["title"] ?? "",
+        "subtitle": texts["subtitle"] ?? "",
+        "body": texts["body"] ?? "",
+        "stacked": stacked,
+        "inPanel": panel
+      ]
+      if texts["title"] == nil, texts["body"] == nil { b["body"] = loose.first ?? "" }
+      out.append(b)
+    }
+  }
+  return ["banners": out, "running": true, "panelOpen": panelOpen]
+}
+
+// MARK: - Calendar (EventKit, read only)
+
+/// notDetermined / restricted / denied / fullAccess / writeOnly (or authorized before macOS 14).
+func calendarStatus() -> String {
+  switch EKEventStore.authorizationStatus(for: .event) {
+  case .notDetermined: return "notDetermined"
+  case .restricted: return "restricted"
+  case .denied: return "denied"
+  case .fullAccess: return "fullAccess" // .authorized before macOS 14 has the same raw value
+  case .writeOnly: return "writeOnly"
+  @unknown default: return "unknown"
+  }
+}
+
+/// Asks macOS for read access to the calendars (a one-time prompt; System Settings → Privacy → Calendars after that).
+/// Run this as a one-shot call: macOS stops a process that asks without a usage description, and the long-lived
+/// helper should never be the one it stops.
+func requestCalendarAccess(timeoutMs: Int) -> Json {
+  let store = EKEventStore()
+  let done = DispatchSemaphore(value: 0)
+  var granted = false
+  var failure: String?
+  let answer = { (ok: Bool, err: Error?) in
+    granted = ok
+    failure = err?.localizedDescription
+    done.signal()
+  }
+  if #available(macOS 14.0, *) { store.requestFullAccessToEvents(completion: answer) } else { store.requestAccess(to: .event, completion: answer) }
+  if done.wait(timeout: .now() + .milliseconds(timeoutMs)) == .timedOut { return ["granted": false, "status": calendarStatus(), "error": "timed out waiting for an answer"] }
+  var out: Json = ["granted": granted, "status": calendarStatus()]
+  if let f = failure { out["error"] = f }
+  return out
+}
+
+/// Events between now (minus `pastMinutes`) and `minutes` from now, earliest first. Times in ms since 1970.
+func calendarEvents(minutes: Int, pastMinutes: Int) throws -> Json {
+  let status = calendarStatus()
+  guard status == "fullAccess" else { throw HandsError("calendar_access: \(status)") }
+  let store = EKEventStore()
+  let from = Date().addingTimeInterval(TimeInterval(-60 * pastMinutes))
+  let to = Date().addingTimeInterval(TimeInterval(60 * minutes))
+  let events = store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
+  let ms = { (d: Date) -> Double in (d.timeIntervalSince1970 * 1000).rounded() }
+  return ["events": events.sorted { $0.startDate < $1.startDate }.prefix(60).map { e -> Json in
+    var j: Json = [
+      "id": e.calendarItemIdentifier,
+      "title": e.title ?? "",
+      "start": ms(e.startDate),
+      "end": ms(e.endDate),
+      "allDay": e.isAllDay,
+      "calendar": e.calendar?.title ?? ""
+    ]
+    if let loc = e.location, !loc.isEmpty { j["location"] = loc }
+    if e.status == .canceled { j["cancelled"] = true }
+    return j
+  }]
+}
+
 // MARK: - Commands
 
 func handle(_ req: Json) throws -> Json {
@@ -687,6 +811,14 @@ func handle(_ req: Json) throws -> Json {
       if let s = e.shortcut { d["shortcut"] = s }
       return d
     }]
+  case "banners":
+    return banners()
+  case "calendarStatus":
+    return ["status": calendarStatus()]
+  case "calendarAccess":
+    return requestCalendarAccess(timeoutMs: int(req, "timeoutMs") ?? 120_000)
+  case "calendar":
+    return try calendarEvents(minutes: int(req, "minutes") ?? 120, pastMinutes: int(req, "pastMinutes") ?? 0)
   case "sleep":
     sleepMs(int(req, "ms") ?? 100)
     return [:]

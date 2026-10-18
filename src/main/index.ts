@@ -18,7 +18,11 @@ import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavD
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
 import { Body } from './body'
+import { agendaLine, dueEvents, eventLine, type CalendarEvent } from './calendar'
+import { appAllowed, BannerWatch, messageLine } from './inbox'
 import { Journal } from './journal'
+import { NoticeCenter, noticePrefs, parseQuietHours, type Notice } from './notice'
+import { dueLine, listLine, parseReminder, parseWhen, ReminderStore, setLine, timerName, toSecondPerson, whenText, type Reminder, type ReminderIntent } from './reminders'
 import { planCommand, planSummary, plannerSystem, PLAN_SCHEMA, PlanStore, reviseSystem, toPlan, type PlanCommand } from './plan'
 import { PlanCard } from './planwin'
 import { runComputerTask } from './computer'
@@ -26,7 +30,7 @@ import { Hands, HandsError } from './hands'
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -294,6 +298,14 @@ function buildTrayMenu(): Menu {
         { label: body.mode === 'sleep' ? 'Wake her' : 'Let her nap', click: () => void runBodyCommand(body.mode === 'sleep' ? 'wake' : 'sleep') },
         { label: 'Walk around on her own', type: 'checkbox', checked: body.wandering, click: () => void runBodyCommand(body.wandering ? 'stay' : 'wander') }
       ]
+    },
+    ...remindersMenu(),
+    {
+      label: notices.quiet() && !noticeSettings().dnd ? 'Do not disturb (quiet hours now)' : 'Do not disturb',
+      type: 'checkbox',
+      checked: noticeSettings().dnd,
+      toolTip: 'She keeps what comes up to herself (reminders still ring) and tells you after',
+      click: () => setNoticePrefs({ dnd: !noticeSettings().dnd })
     },
     { label: 'Look at my screen now', click: () => void observe(true) },
     { label: watching ? 'Stop watching' : 'Watch my screen', type: 'checkbox', checked: watching, click: () => void setWatching(!watching) },
@@ -1510,7 +1522,17 @@ async function runPlan(): Promise<void> {
         p.status = 'paused'
         p.note = `Step ${n} didn't work: ${out.result.slice(0, 160)}`
         showPlan()
-        await sayPlain(`Step ${n}, ${step.text.toLowerCase()}, didn't work: ${out.result.slice(0, 160)}. Say retry, skip step ${n}, or stop the plan.`, 'sad')
+        // It needs them: she comes over to say so (or tells them after quiet time).
+        const line = `Step ${n}, ${step.text.toLowerCase()}, didn't work: ${out.result.slice(0, 160)}. Say retry, skip step ${n}, or stop the plan.`
+        notices.post({
+          kind: 'plan',
+          key: `plan:${p.id}:failed:${n}:${Date.now()}`,
+          text: line,
+          brief: `step ${n} of the plan "${p.title}" didn't work`,
+          important: true,
+          log: false,
+          speak: () => sayPlain(line, 'sad').then(() => undefined)
+        })
         return
       }
       p.current++
@@ -1529,8 +1551,17 @@ async function runPlan(): Promise<void> {
     const skippedSteps = p.steps.filter((s) => s.status === 'skipped').map((s) => s.text).join('; ')
     journal.add('plan', `finished "${p.title}": did ${did || 'nothing'}${skippedSteps ? `; skipped (not done) ${skippedSteps}` : ''}`)
     memory.addTurn('user', `[Plan "${p.title}" done: ${p.steps.filter((s) => s.status === 'done').map((s) => s.text).join('; ')}]`)
-    // A plan that ends with a "say" step has already said what came of it.
-    if (p.steps.at(-1)?.worker !== 'say') await sayPlain(`Done: ${p.title}.`, 'happy')
+    // A plan that ends with a "say" step has already said what came of it; she still comes over.
+    const said = p.steps.at(-1)?.worker === 'say'
+    notices.post({
+      kind: 'plan',
+      key: `plan:${p.id}:done`,
+      text: `Done: ${p.title}.`,
+      brief: `the plan "${p.title}" is done`,
+      important: true,
+      log: false,
+      speak: said ? async () => undefined : () => sayPlain(`Done: ${p.title}.`, 'happy').then(() => undefined)
+    })
   } finally {
     planRunning = false
     planHalt = null
@@ -1620,6 +1651,8 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return findAndShow(call.input)
     case 'plan':
       return makePlan(call.input)
+    case 'remind':
+      return remindTool(call.input)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -1733,6 +1766,27 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     return report({ kind: 'day', phase: 'status', title: when, detail: journal.describe(when === 'yesterday' ? -1 : 0) })
   }
 
+  // The answer to "when should I remind you?": "in 10 minutes", "at 6".
+  if (reminderAsk && Date.now() - reminderAsk.at < 120_000) {
+    const ask = reminderAsk
+    const when = parseWhen(plainSaid)
+    reminderAsk = null
+    if (when) {
+      const ms = when.ms
+      if (ask.timer && !ms) return sayPlain('For how long? Say it like "5 minutes".')
+      const r = reminderStore.add({ text: ask.text || (ask.timer && ms ? timerName(ms) : ''), at: when.at, timer: ask.timer, ...(ms ? { ms } : {}) })
+      journal.add('reminder', `set: ${r.text} ${whenText(r.at, Date.now())}`)
+      refreshTray()
+      return sayPlain(setLine(r, Date.now()), 'happy')
+    }
+  }
+  // "What's on my calendar today?", "what's next on my calendar?"
+  const calAsk = /^(?:what(?:'s| is| do i have| have i got)(?: on)?(?: my)? (?:calendar|schedule|agenda)|(?:do i have|have i got|any) (?:any )?(?:meetings|events|calls|appointments))(?: (?:for |on )?(today|tomorrow))?[?.!]*$/i.exec(plainSaid)
+  if (calAsk) return calendarAnswer(calAsk[1]?.toLowerCase() === 'tomorrow' ? 'tomorrow' : 'today')
+  if (/^(?:when(?:'s| is) my next (?:meeting|event|call|appointment)|what(?:'s| is) (?:next|coming up) on my (?:calendar|schedule)|what(?:'s| is) my next (?:meeting|event|call|appointment))[?.!]*$/i.test(plainSaid)) {
+    return calendarAnswer('next')
+  }
+
   // Her body: "come here", "sit on this window", "go to sleep", "walk around", "where's my resume?".
   const said = stripName(text).replace(/^(?:can you |could you |please )+/i, '').replace(/[.!]+$/, '')
   const move = BODY_PHRASES.find(([re]) => re.test(said))
@@ -1803,14 +1857,302 @@ agent.on('end', (task: Task) => {
   journal.add('claude', `${task.status}: ${task.title} in ${folder}`)
   // A job a plan started is that step's result; the plan says what came of it.
   if (planJobs.delete(task.id)) return
+  if (task.status !== 'done' && task.status !== 'failed') return
   const tell = async (): Promise<void> => {
     if (task.status === 'done') await report({ phase: 'done', title: task.title, folder, detail: (task.result || task.lastText || '').slice(0, 1500) })
-    else if (task.status === 'failed') await report({ phase: 'failed', title: task.title, folder, detail: task.error })
+    else await report({ phase: 'failed', title: task.title, folder, detail: task.error })
   }
-  // A job started from the phone reports there as well, however long it took.
-  if (phoneJobs.delete(task.id) && remote) void remote.run(tell)
-  else void tell()
+  // A job started from the phone reports there, however long it took: they asked from there.
+  if (phoneJobs.delete(task.id) && remote) {
+    void remote.run(tell)
+    return
+  }
+  // Otherwise it is news: she comes over and tells them (or tells them after quiet time).
+  const short = task.title.length > 60 ? `${task.title.slice(0, 57)}…` : task.title
+  notices.post({
+    kind: 'job',
+    key: `job:${task.id}`,
+    text: task.status === 'done' ? `Claude finished "${short}" in ${folder}.` : `Claude couldn't finish "${short}" in ${folder}.`,
+    brief: task.status === 'done' ? `Claude finished "${short}"` : `Claude's job "${short}" failed`,
+    important: true,
+    log: false,
+    speak: tell
+  })
 })
+
+// ---- notices: what she comes to tell you about on her own (notice.ts): jobs, messages, calendar, reminders
+
+function noticeSettings(): NoticePrefs {
+  return noticePrefs(settings.get().notices)
+}
+
+/** After she walks over for something, she goes back to her spot once nobody has needed her for a couple of minutes. */
+let homeTimer: NodeJS.Timeout | null = null
+function approach(): void {
+  if (!win?.isVisible()) return
+  void body.comeToCursor()
+  if (homeTimer) clearTimeout(homeTimer)
+  const at = Date.now()
+  homeTimer = setTimeout(() => {
+    homeTimer = null
+    if (lastActivity <= at + 1000 && body.mode === 'idle' && !body.wandering && !acting && !browsing && !herSpeaking) void body.goHome()
+  }, 120_000)
+  homeTimer.unref()
+}
+
+const notices = new NoticeCenter({
+  prefs: noticeSettings,
+  say: async (n: Notice) => {
+    const speak = async (): Promise<void> => {
+      if (n.speak) await n.speak()
+      else await sayPlain(n.text)
+    }
+    // With the phone remote on, what she tells you on her own goes to the phone too.
+    if (remote?.paired) await remote.run(speak)
+    else await speak()
+  },
+  show: (text) => status(text),
+  wake: () => activity(),
+  approach,
+  log: (kind, text) => journal.add(kind, text),
+  busy: () => herSpeaking || hearing || Boolean(pending) || touching,
+  gapMs: Math.max(0, Number(process.env.DESKMATE_NOTICE_GAP ?? 12) * 1000)
+})
+
+/** A line she says on her own, in her own voice when a brain is there (the plain line otherwise). */
+async function sayInVoice(line: string): Promise<void> {
+  if (!brain.canThink) {
+    await sayPlain(line)
+    return
+  }
+  await report({ kind: 'notice', phase: 'status', title: 'notice', detail: line })
+}
+
+function setNoticePrefs(patch: Partial<NoticePrefs>): void {
+  const was = noticeSettings()
+  settings.set({ notices: { ...(settings.get().notices ?? {}), ...patch } })
+  const now = noticeSettings()
+  if (was.dnd !== now.dnd) status(now.dnd ? 'do not disturb · I\'ll tell you what comes up later' : 'do not disturb off')
+  // Quiet time may have just ended: what she held back comes now.
+  notices.tick()
+  if (patch.calendar) void refreshCalendarAccess()
+  refreshTray()
+  setupChanged()
+}
+
+/** What the renderer may change, checked field by field. */
+function cleanNoticePatch(raw: unknown): Partial<NoticePrefs> {
+  const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const out: Partial<NoticePrefs> = {}
+  for (const k of ['jobs', 'messages', 'readMessages', 'calendar', 'reminders', 'dnd'] as const) if (typeof p[k] === 'boolean') out[k] = p[k] as boolean
+  if (typeof p.quietHours === 'string') out.quietHours = p.quietHours.trim().slice(0, 40)
+  if (typeof p.calendarLead === 'number' && p.calendarLead > 0) out.calendarLead = Math.min(120, Math.round(p.calendarLead))
+  for (const k of ['allowApps', 'denyApps'] as const) {
+    const v = p[k]
+    if (Array.isArray(v)) out[k] = v.map((x) => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 40)
+    else if (typeof v === 'string') out[k] = v.split(',').map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 40)
+  }
+  return out
+}
+
+function noticeState(): NoticeState {
+  const saved = settings.get().notices
+  return {
+    prefs: noticeSettings(),
+    quietNow: notices.quiet(),
+    quietFromEnv: saved?.quietHours === undefined && Boolean(process.env.DESKMATE_QUIET_HOURS?.trim()),
+    calendarAccess,
+    accessibility: appHands.available ? appTrusted : null
+  }
+}
+
+// Messages: the banners Notification Center shows, read every few seconds (inbox.ts).
+const bannerWatch = new BannerWatch()
+const BANNER_POLL_MS = Math.max(1, Number(process.env.DESKMATE_BANNER_POLL) || 3) * 1000
+let bannerPolling = false
+async function pollBanners(): Promise<void> {
+  const prefs = noticeSettings()
+  if (bannerPolling || !prefs.messages || !appHands.available || appTrusted === false) return
+  bannerPolling = true
+  try {
+    const list = await appHands.banners().catch(() => null)
+    if (!list) return
+    for (const b of bannerWatch.update(list)) {
+      if (!appAllowed(b.app, prefs)) {
+        console.log(`[inbox] not mentioned: a notification from ${b.app || 'an unnamed app'}`)
+        continue
+      }
+      const line = messageLine(b, prefs.readMessages)
+      console.log(`[inbox] ${b.app}: ${line.text.slice(0, 90)}`)
+      notices.post({ kind: 'message', key: `message:${b.app}|${b.title}|${b.subtitle}|${b.body}`, text: line.text, brief: line.brief })
+    }
+  } finally {
+    bannerPolling = false
+  }
+}
+
+// Calendar: events about to start, read through EventKit (calendar.ts). Each one is mentioned once.
+let calendarAccess = 'unknown'
+const calendarMentioned = new Set<string>()
+async function refreshCalendarAccess(): Promise<string> {
+  calendarAccess = appHands.available ? await appHands.calendarStatus().catch(() => 'unknown') : 'unavailable'
+  return calendarAccess
+}
+
+async function pollCalendar(): Promise<void> {
+  const prefs = noticeSettings()
+  if (!prefs.calendar || calendarAccess !== 'fullAccess') return
+  const events = await appHands.calendarEvents(prefs.calendarLead + 2, 2).catch((err) => {
+    console.warn(`[calendar] ${(err as Error).message}`)
+    return null
+  })
+  if (!events) return
+  for (const due of dueEvents(events, Date.now(), prefs.calendarLead, calendarMentioned)) {
+    calendarMentioned.add(due.key)
+    const line = eventLine(due.event, due.minutes)
+    console.log(`[calendar] ${line}`)
+    notices.post({ kind: 'calendar', key: `calendar:${due.key}`, text: line, important: true, speak: () => sayInVoice(line) })
+  }
+}
+
+/** "What's on my calendar today?", "what's next?": read straight from the calendar. */
+async function calendarAnswer(which: 'today' | 'tomorrow' | 'next'): Promise<Reply> {
+  if (!appHands.available) return sayPlain('I need my hands helper to read your calendar (it comes with the Mac app).', 'sad')
+  if ((await refreshCalendarAccess()) === 'notDetermined') {
+    status('asking macOS for your calendars…')
+    await appHands.requestCalendarAccess()
+    await refreshCalendarAccess()
+    setupChanged()
+  }
+  if (calendarAccess !== 'fullAccess') {
+    return sayPlain("I can't see your calendar. Let me in: System Settings → Privacy & Security → Calendars, switch me on, then ask again.", 'sad')
+  }
+  const now = new Date()
+  const startOfDay = new Date(now)
+  startOfDay.setHours(0, 0, 0, 0)
+  const sinceMidnight = (now.getTime() - startOfDay.getTime()) / 60_000
+  let events: CalendarEvent[]
+  try {
+    if (which === 'today') {
+      events = await appHands.calendarEvents(24 * 60 - sinceMidnight, sinceMidnight)
+    } else if (which === 'tomorrow') {
+      const from = startOfDay.getTime() + 86_400_000
+      events = (await appHands.calendarEvents(48 * 60 - sinceMidnight, 0)).filter((e) => e.start >= from && e.start < from + 86_400_000)
+    } else {
+      events = (await appHands.calendarEvents(7 * 24 * 60, 0)).filter((e) => !e.allDay && !e.cancelled && e.start > now.getTime())
+      const next = events[0]
+      if (!next) return sayPlain('Nothing on your calendar in the next week.')
+      return sayPlain(`Next up: ${next.title || 'an event'} ${whenText(next.start, now.getTime())}.`)
+    }
+  } catch (err) {
+    return sayPlain(`I couldn't read your calendar: ${(err as Error).message}`, 'sad')
+  }
+  journal.add('calendar', `read the calendar for ${which}`)
+  return sayPlain(agendaLine(events, now.getTime(), which))
+}
+
+// Reminders and timers (reminders.ts): kept in reminders.json, fired through notices like an alarm (even in quiet time).
+const reminderStore = new ReminderStore(join(USER_DATA, 'reminders.json'), (r, lateMs) => {
+  const line = dueLine(r, lateMs)
+  console.log(`[reminders] due: ${line}`)
+  notices.post({ kind: 'reminder', key: `reminder:${r.id}`, text: line, important: true, urgent: true, speak: () => sayInVoice(line) })
+  refreshTray()
+})
+/** "Remind me to stretch" without a time: what to remind them of, while she waits for "in 20 minutes". */
+let reminderAsk: { text: string; timer: boolean; at: number } | null = null
+
+function remindersMenu(): Electron.MenuItemConstructorOptions[] {
+  const list = reminderStore.list()
+  if (!list.length) return []
+  const now = Date.now()
+  return [
+    {
+      label: `Reminders (${list.length})`,
+      submenu: list.slice(0, 12).map((r) => ({
+        label: `Cancel: ${r.timer && / timer$/.test(r.text) ? r.text : r.text || 'reminder'} · ${whenText(r.at, now)}`,
+        click: () => {
+          reminderStore.remove(r.id)
+          journal.add('reminder', `cancelled: ${r.text}`)
+          refreshTray()
+        }
+      }))
+    }
+  ]
+}
+
+const REMIND_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['set', 'list', 'cancel', 'none'] },
+    in_minutes: { type: ['number', 'null'] },
+    at: { type: ['string', 'null'] },
+    what: { type: 'string' },
+    timer: { type: 'boolean' },
+    all: { type: 'boolean' }
+  },
+  required: ['action', 'in_minutes', 'at', 'what', 'timer', 'all']
+}
+
+/** The odd phrasing the parser does not know ("nudge me after lunch… say 1:30"): her brain reads it into the same shape. */
+async function reminderFromBrain(input: string): Promise<ReminderIntent | null> {
+  const now = new Date()
+  const local = `${now.toDateString()} ${now.toTimeString().slice(0, 5)}`
+  const obj = await brain
+    .plan(
+      `You read a request about reminders or timers. Now it is ${local} (local time). Reply with ONE JSON object: {"action": "set"|"list"|"cancel"|"none", "in_minutes": number|null (a length of time from now), "at": "YYYY-MM-DDTHH:MM"|null (a local clock time), "what": string (what to remind them of, in second person, or the timer's label; for cancel, words that name the reminder), "timer": boolean, "all": boolean (cancel all)}. "none" when it is not about reminders or timers, or no time is given for a new one.`,
+      input,
+      REMIND_SCHEMA
+    )
+    .catch(() => null)
+  if (!obj) return null
+  const what = toSecondPerson(String(obj.what ?? '').trim())
+  const timer = Boolean(obj.timer)
+  if (obj.action === 'list') return { kind: 'list' }
+  if (obj.action === 'cancel') return { kind: 'cancel', query: what, all: Boolean(obj.all), timer }
+  if (obj.action !== 'set') return null
+  const minutes = Number(obj.in_minutes)
+  if (minutes > 0) return { kind: 'set', at: Date.now() + minutes * 60_000, text: what || (timer ? timerName(minutes * 60_000) : ''), timer, ms: minutes * 60_000 }
+  const at = typeof obj.at === 'string' ? new Date(obj.at).getTime() : NaN
+  if (at > Date.now()) return { kind: 'set', at, text: what, timer }
+  return what ? { kind: 'needTime', text: what, timer } : null
+}
+
+async function remindTool(input: string): Promise<Reply> {
+  let intent = parseReminder(input)
+  if (!intent && brain.canThink) {
+    status('working out when…')
+    intent = await reminderFromBrain(input)
+  }
+  if (!intent) return sayPlain('Say it like "remind me in 20 minutes to stretch", or "set a timer for 5 minutes".')
+  const now = Date.now()
+  switch (intent.kind) {
+    case 'set': {
+      reminderAsk = null
+      const r = reminderStore.add({ text: intent.text, at: intent.at, timer: intent.timer, ...(intent.ms ? { ms: intent.ms } : {}) })
+      console.log(`[reminders] set ${r.timer ? 'timer' : 'reminder'} "${r.text}" for ${new Date(r.at).toString()}`)
+      journal.add('reminder', `set: ${r.text} ${whenText(r.at, now)}`)
+      refreshTray()
+      return sayPlain(setLine(r, now), 'happy')
+    }
+    case 'needTime':
+      reminderAsk = { text: intent.text, timer: intent.timer, at: now }
+      return sayPlain(intent.timer ? 'For how long?' : `Sure. When should I remind you${intent.text ? ` to ${intent.text}` : ''}?`)
+    case 'list':
+      return sayPlain(listLine(reminderStore.list(), now))
+    case 'cancel': {
+      const hits = reminderStore.match(intent)
+      if (!hits.length) {
+        if (!reminderStore.list().length) return sayPlain('There are no reminders or timers to cancel.')
+        return sayPlain(`I couldn't tell which one. ${listLine(reminderStore.list(), now)}`)
+      }
+      for (const r of hits) reminderStore.remove(r.id)
+      journal.add('reminder', `cancelled: ${hits.map((r) => r.text).join('; ')}`)
+      refreshTray()
+      const name = (r: Reminder): string => (r.timer ? (/ timer$/.test(r.text) ? `the ${r.text}` : `the ${r.text} timer`) : r.text ? `the reminder to ${r.text}` : 'the reminder')
+      return sayPlain(hits.length > 1 ? `Cancelled all ${hits.length}.` : `Cancelled ${name(hits[0])}.`)
+    }
+  }
+}
 
 // ---- ears: hands-free listening
 
@@ -2218,14 +2560,16 @@ async function setupState(): Promise<SetupState> {
       paired: settings.get().remotePaired?.name ?? null,
       request: remote?.pairing && pairAnswer ? { name: remote.pairing.name, code: remote.pairing.code } : null,
       error: remoteError
-    }
+    },
+    notices: noticeState()
   }
 }
 
 const PRIVACY_PANES: Record<PermissionKind, string> = {
   microphone: 'Privacy_Microphone',
   screen: 'Privacy_ScreenCapture',
-  keys: 'Privacy_Accessibility'
+  keys: 'Privacy_Accessibility',
+  calendars: 'Privacy_Calendars'
 }
 
 async function allow(kind: PermissionKind): Promise<void> {
@@ -2233,6 +2577,12 @@ async function allow(kind: PermissionKind): Promise<void> {
   if (kind === 'microphone') {
     // Asked once by macOS itself; after a "no" only System Settings can change it.
     if (systemPreferences.getMediaAccessStatus('microphone') === 'not-determined' && (await systemPreferences.askForMediaAccess('microphone'))) return
+  } else if (kind === 'calendars') {
+    // Asked once by macOS itself, like the microphone; after a "no" only System Settings can change it.
+    if ((await refreshCalendarAccess()) === 'notDetermined' && (await appHands.requestCalendarAccess()).granted) {
+      await refreshCalendarAccess()
+      return
+    }
   } else if (kind === 'screen') {
     // The first capture attempt is what puts the app on the Screen Recording list.
     await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => undefined)
@@ -2285,6 +2635,18 @@ ipcMain.handle('setup:remote', (_event, action: string) => {
   } else if (action === 'on' || action === 'off') setRemote(action === 'on')
   refreshTray()
   setupChanged()
+})
+ipcMain.handle('setup:notices', (_event, raw: unknown) => {
+  setNoticePrefs(cleanNoticePatch(raw))
+  return noticeState()
+})
+ipcMain.handle('setup:calendar', async () => {
+  const result = await appHands.requestCalendarAccess()
+  await refreshCalendarAccess()
+  console.log(`[calendar] access ${result.granted ? 'granted' : `not granted (${result.status}${result.error ? `: ${result.error}` : ''})`}`)
+  if (result.granted) void pollCalendar()
+  setupChanged()
+  return result
 })
 ipcMain.handle('setup:finish', () => {
   setupWin?.close()
@@ -2346,6 +2708,21 @@ app.whenReady().then(async () => {
   }
   createTray()
   startRemote()
+  // What she comes to tell you about on her own: reminders (kept across restarts), messages, the calendar.
+  reminderStore.start()
+  setInterval(() => void pollBanners(), BANNER_POLL_MS).unref()
+  setInterval(() => {
+    notices.tick()
+    void pollCalendar()
+  }, 30_000).unref()
+  void refreshCalendarAccess().then((access) => {
+    const p = noticeSettings()
+    const quiet = parseQuietHours(p.quietHours)
+    console.log(
+      `[notice] jobs ${p.jobs ? 'on' : 'off'}; messages ${p.messages ? `on${p.readMessages ? ' (with the text)' : ''}${appHands.available ? '' : ' (no helper)'}` : 'off'}; calendar ${p.calendar ? access : 'off'}; reminders ${p.reminders ? 'on' : 'off'} (${reminderStore.list().length} waiting); quiet hours ${quiet ? p.quietHours : 'none'}${p.dnd ? '; do not disturb' : ''}`
+    )
+    setTimeout(() => void pollCalendar(), 5000).unref()
+  })
   // First run: no brain yet, so the setup window does the asking (it does not come back once closed).
   if (!settings.get().setupDone && brain.mode === 'demo') openSetup()
   if (ears && WAKE_MODE === 'word') void setListening(true)
@@ -2366,6 +2743,7 @@ app.on('before-quit', () => {
   browseStop = true
   actStop = true
   appHands.stop()
+  reminderStore.stop()
   remote?.stop()
   bar.destroy()
   body.destroy()

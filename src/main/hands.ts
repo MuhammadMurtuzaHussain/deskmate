@@ -1,7 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
+import type { CalendarEvent } from './calendar'
+import type { Banner } from './inbox'
 
 /** A failure the helper reported ("not_installed", "focus_changed: …", "blocked_combo: …"). */
 export class HandsError extends Error {
@@ -235,6 +237,42 @@ export class Hands {
   async locate(bundleId: string, text: string): Promise<Rect | null> {
     const r = await this.call('locate', { bundleId, text }, 20_000)
     return (r.frame as Rect | null) ?? null
+  }
+
+  /** The notification banners on screen now, and the list when Notification Center is open (needs Accessibility). */
+  async banners(): Promise<Banner[]> {
+    const r = await this.call('banners', {}, 5000)
+    return (r.banners as Banner[]) ?? []
+  }
+
+  /** notDetermined / denied / restricted / fullAccess / writeOnly: what macOS lets her read of the calendars. */
+  async calendarStatus(): Promise<string> {
+    return String((await this.call('calendarStatus')).status ?? 'unknown')
+  }
+
+  /** Calendar events from `pastMinutes` ago to `minutes` from now, earliest first (needs fullAccess). */
+  async calendarEvents(minutes: number, pastMinutes = 0): Promise<CalendarEvent[]> {
+    const r = await this.call('calendar', { minutes: Math.round(minutes), pastMinutes: Math.round(pastMinutes) }, 15_000)
+    return (r.events as CalendarEvent[]) ?? []
+  }
+
+  /**
+   * Asks macOS for read access to the calendars. Runs as its own short-lived helper process: the question can sit on
+   * screen for a while (the long-lived helper would hold every other request behind it), and macOS stops a process
+   * that asks wrongly, which must not be the one doing her other work.
+   */
+  requestCalendarAccess(timeoutMs = 120_000): Promise<{ granted: boolean; status: string; error?: string }> {
+    if (!this.available) return Promise.resolve({ granted: false, status: 'unavailable', error: 'the hands helper is missing' })
+    return new Promise((resolve) => {
+      execFile(this.binary, [JSON.stringify({ cmd: 'calendarAccess', timeoutMs })], { timeout: timeoutMs + 5000 }, (err, stdout) => {
+        try {
+          const r = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>
+          resolve({ granted: Boolean(r.granted), status: String(r.status ?? 'unknown'), ...(r.error ? { error: String(r.error) } : {}) })
+        } catch {
+          resolve({ granted: false, status: 'unknown', error: err ? err.message : 'no answer from the helper' })
+        }
+      })
+    })
   }
 
   stop(): void {

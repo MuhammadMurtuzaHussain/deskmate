@@ -87,6 +87,26 @@
       <div class="msg" id="remote-msg"></div>
     </section>
 
+    <section id="notices" class="hidden">
+      <div class="head"><h2>5 · What she tells you about</h2><span class="chip" id="notices-chip">…</span></div>
+      <div class="hint">She comes to you with these on her own: one short line, and for the important ones she walks over to your pointer.</div>
+      <label class="toggle"><input type="checkbox" id="n-jobs" /><div><b>Claude jobs and plans</b><span>when one finishes, fails, or needs you</span></div></label>
+      <label class="toggle"><input type="checkbox" id="n-messages" /><div><b>New messages</b><span id="n-messages-note">who messaged you, on which app (Messages, Discord, Slack, WhatsApp, Mail…), from the banners macOS shows</span></div></label>
+      <div class="sub" id="n-messages-more">
+        <label class="toggle"><input type="checkbox" id="n-read" /><div><b>Read the message out loud</b><span>off: only the app and who it's from</span></div></label>
+        <div class="row"><input id="n-allow" placeholder="also these apps (e.g. Calendar, Script Editor)" /></div>
+        <div class="row"><input id="n-deny" placeholder="never these apps (e.g. Mail)" /></div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="n-calendar" /><div><b>Calendar</b><span>a nudge <input id="n-lead" class="tiny" type="number" min="1" max="120" /> minutes before an event</span></div><span class="chip" id="n-cal-chip"></span><button id="n-cal-allow" class="hidden">Allow</button></label>
+      <label class="toggle"><input type="checkbox" id="n-reminders" /><div><b>Reminders and timers</b><span>"remind me in 20 minutes to stretch", "set a timer for 5 minutes"; they ring even in quiet hours</span></div></label>
+      <div class="row quiet">
+        <div class="grow"><b>Quiet hours</b><span class="hint" id="n-quiet-note">she keeps things to herself and tells you after</span></div>
+        <input id="n-quiet" class="narrow" placeholder="23-8" />
+        <label class="inline"><input type="checkbox" id="n-dnd" /> Do not disturb</label>
+      </div>
+      <div class="msg" id="notices-msg"></div>
+    </section>
+
     <footer>
       <span class="hint" id="tip"></span>
       <button id="done" class="primary">Done</button>

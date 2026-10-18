@@ -47,3 +47,15 @@ footer { margin-top: auto; display: flex; align-items: center; justify-content: 
 .pair > div span { color: var(--dim); font-size: 12px; }
 .grow { flex: 1; }
 h2 .dim { color: var(--dim); font-weight: 400; }
+.toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.toggle > input[type='checkbox'] { flex: none; width: 16px; height: 16px; accent-color: var(--accent); }
+.toggle > div { flex: 1; display: flex; flex-direction: column; }
+.toggle > div span { color: var(--dim); font-size: 12px; }
+.sub { display: flex; flex-direction: column; gap: 8px; padding-left: 26px; }
+.sub.off { opacity: 0.45; pointer-events: none; }
+input.tiny { flex: none; width: 52px; padding: 1px 6px; font-size: 12px; }
+input.narrow { flex: none; width: 90px; }
+.quiet { align-items: center; }
+.quiet > div { display: flex; flex-direction: column; }
+label.inline { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+label.inline input { accent-color: var(--accent); }

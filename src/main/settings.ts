@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { NoticePrefs } from '../shared/types'
 
 export interface SettingsData {
   geminiApiKey?: string
@@ -23,6 +24,8 @@ export interface SettingsData {
   setupDone?: boolean
   /** newest release the "update available" status line was already shown for, so it is said once per version */
   updateNotified?: string
+  /** what she tells you about on her own (Setup → "What she tells you about"); missing fields take the defaults */
+  notices?: Partial<NoticePrefs>
 }
 
 /** Small JSON settings file in the app's user-data folder; holds what published users enter in the app (their own key). */

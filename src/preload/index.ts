@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
+import type { Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, NoticePrefs, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -47,6 +47,8 @@ const api: DeskmateApi = {
   reportAnchors: (anchors: Anchors) => ipcRenderer.send('avatar:anchors', anchors),
   useTelegram: (token) => ipcRenderer.invoke('setup:telegram', token),
   remote: (action: RemoteAction) => ipcRenderer.invoke('setup:remote', action),
+  setNotices: (patch: Partial<NoticePrefs>) => ipcRenderer.invoke('setup:notices', patch),
+  calendarAccess: () => ipcRenderer.invoke('setup:calendar'),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
   },

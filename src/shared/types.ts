@@ -12,12 +12,12 @@ export type DanceStyle = 'groove' | 'slow' | 'spin'
  * Things she can do on the computer, beyond talking. `claude` hands a job to Claude Code (the coding agent
  * installed on the machine) in a project folder; `claude_resume` continues an earlier session there.
  */
-export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer' | 'find' | 'plan'
-export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer', 'find', 'plan']
+export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer' | 'find' | 'plan' | 'remind'
+export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer', 'find', 'plan', 'remind']
 /** Only a Claude brain may pick `computer` (a multi-step agent run across desktop apps); small models would overreach. */
 export const CLAUDE_ONLY_TOOLS: ToolName[] = ['computer']
 /** The ones her brain may pick. `chrome` (tab and page verbs) only ever comes from the spoken-command router. */
-export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app', 'find', 'plan']
+export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app', 'find', 'plan', 'remind']
 export interface ToolCall {
   name: ToolName
   /** the instruction for Claude, the browsing goal, the question about the page, the thing to open, a chrome verb,
@@ -233,11 +233,49 @@ export interface SetupState {
     request: { name: string; code: string } | null
     error: string | null
   }
+  /** what she tells you about on her own; missing from an older main process */
+  notices?: NoticeState
 }
 
 export type RemoteAction = 'allow' | 'refuse' | 'forget' | 'on' | 'off'
 
-export type PermissionKind = 'microphone' | 'screen' | 'keys'
+/** What she comes to tell you about on her own (Setup → "What she tells you about"; saved in settings.json). */
+export interface NoticePrefs {
+  /** a Claude Code job or a plan finished, failed, or needs you */
+  jobs: boolean
+  /** new message banners from chat apps (Messages, Discord, Slack, WhatsApp, …): who, on which app */
+  messages: boolean
+  /** and what the message says (off: only the app and the sender) */
+  readMessages: boolean
+  /** a nudge before an event on your calendar */
+  calendar: boolean
+  /** how many minutes before an event she nudges */
+  calendarLead: number
+  /** reminders and timers you set ("remind me in 20 minutes to stretch") */
+  reminders: boolean
+  /** "23-8": she keeps quiet between these hours (reminders still ring); '' for none (DESKMATE_QUIET_HOURS) */
+  quietHours: string
+  /** do not disturb, from the tray: like quiet hours, until switched off */
+  dnd: boolean
+  /** other apps whose notifications she mentions too, by the name macOS shows */
+  allowApps: string[]
+  /** apps she never mentions, even chat apps */
+  denyApps: string[]
+}
+
+export interface NoticeState {
+  prefs: NoticePrefs
+  /** quiet hours or do not disturb right now */
+  quietNow: boolean
+  /** the quiet hours come from DESKMATE_QUIET_HOURS in .env (nothing set in Setup) */
+  quietFromEnv: boolean
+  /** notDetermined / denied / fullAccess / …, or unavailable without the helper */
+  calendarAccess: string
+  /** reading notification banners needs Accessibility for the app running her */
+  accessibility: boolean | null
+}
+
+export type PermissionKind = 'microphone' | 'screen' | 'keys' | 'calendars'
 
 export interface DeskmateApi {
   getConfig(): Promise<AppConfig>
@@ -281,6 +319,10 @@ export interface DeskmateApi {
   /** phone remote: checks a bot token with Telegram and turns the remote on with it */
   useTelegram?(token: string): Promise<{ ok: boolean; error?: string; bot?: string }>
   remote?(action: RemoteAction): Promise<void>
+  /** saves part of "What she tells you about" */
+  setNotices?(patch: Partial<NoticePrefs>): Promise<NoticeState>
+  /** asks macOS for read access to the calendars */
+  calendarAccess?(): Promise<{ granted: boolean; status: string; error?: string }>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
   /** plan card window */

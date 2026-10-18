@@ -1,5 +1,6 @@
 import type { ToolCall } from '../shared/types'
 import { parseAppRequest } from './apps'
+import { parseReminder } from './reminders'
 
 export interface Routed extends ToolCall {
   /** the user named the tool outright ("ask claude to…", "/tasks", "next tab"), so no model had to decide */
@@ -88,6 +89,14 @@ export function routeCommand(raw: string): Routed | null {
       case 'computer':
       case 'agent':
         return rest ? tool('computer', rest) : null
+      case 'remind':
+      case 'reminder':
+        return rest ? tool('remind', `remind me ${rest}`) : tool('remind', 'what reminders do I have')
+      case 'timer':
+        return rest ? tool('remind', `set a timer for ${rest}`) : tool('remind', 'what timers do I have')
+      case 'reminders':
+      case 'timers':
+        return tool('remind', 'what reminders do I have')
       case 'discord':
       case 'slack':
         // /discord sam: running late · /slack #general
@@ -96,6 +105,9 @@ export function routeCommand(raw: string): Routed | null {
         return null
     }
   }
+
+  // Reminders and timers: "remind me in 20 minutes to stretch", "set a timer for 5 minutes", "cancel the stretch reminder".
+  if (parseReminder(text)) return tool('remind', text)
 
   // Desktop apps first: "ask the claude app to …" is a prompt in the app, not a Claude Code job.
   if (parseAppRequest(text)) return tool('app', text)

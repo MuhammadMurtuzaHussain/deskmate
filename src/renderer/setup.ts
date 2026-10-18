@@ -1,4 +1,4 @@
-import type { PermissionKind, RemoteAction, SetupState } from '../shared/types'
+import type { NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -110,7 +110,7 @@ function render(state: SetupState): void {
   const mac = state.platform === 'darwin'
   $<HTMLElement>('perms').classList.toggle('hidden', !mac)
   for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {
-    const kind = row.dataset.kind as PermissionKind
+    const kind = row.dataset.kind as Exclude<PermissionKind, 'calendars'>
     const value = kind === 'keys' ? (state.permissions.keys === null ? 'unavailable' : state.permissions.keys ? 'granted' : 'denied') : state.permissions[kind]
     const ok = value === 'granted'
     chip(row.querySelector('.chip') as HTMLElement, ok ? 'allowed' : value === 'unavailable' ? 'not built' : 'not yet', ok ? 'ok' : 'bad')
@@ -162,11 +162,108 @@ function renderRemote(state: SetupState): void {
   toggle.dataset.action = r.on ? 'off' : 'on'
 }
 
+// ---- What she tells you about
+
+const noticesMsg = $<HTMLDivElement>('notices-msg')
+function noticesMessage(text: string, kind: 'good' | 'bad' | '' = ''): void {
+  noticesMsg.textContent = text
+  noticesMsg.className = `msg${kind ? ` ${kind}` : ''}`
+}
+const box = (id: string): HTMLInputElement => $<HTMLInputElement>(id)
+const CHECKS: [string, keyof NoticePrefs][] = [
+  ['n-jobs', 'jobs'],
+  ['n-messages', 'messages'],
+  ['n-read', 'readMessages'],
+  ['n-calendar', 'calendar'],
+  ['n-reminders', 'reminders'],
+  ['n-dnd', 'dnd']
+]
+
+function renderNotices(n: NoticeState | undefined): void {
+  $<HTMLElement>('notices').classList.toggle('hidden', !n || !api.setNotices)
+  if (!n) return
+  const p = n.prefs
+  for (const [id, key] of CHECKS) box(id).checked = Boolean(p[key])
+  // Do not overwrite what they are typing.
+  const typing = (el: HTMLInputElement): boolean => document.activeElement === el
+  if (!typing(box('n-allow'))) box('n-allow').value = p.allowApps.join(', ')
+  if (!typing(box('n-deny'))) box('n-deny').value = p.denyApps.join(', ')
+  if (!typing(box('n-quiet'))) box('n-quiet').value = p.quietHours
+  if (!typing(box('n-lead'))) box('n-lead').value = String(p.calendarLead)
+  $<HTMLDivElement>('n-messages-more').classList.toggle('off', !p.messages)
+  $<HTMLSpanElement>('n-quiet-note').textContent = n.quietFromEnv
+    ? 'from DESKMATE_QUIET_HOURS in .env; type here to change it'
+    : 'she keeps things to herself and tells you after'
+  const note = $<HTMLSpanElement>('n-messages-note')
+  note.textContent =
+    n.accessibility === false
+      ? 'needs Accessibility (section 3) to read the banners macOS shows'
+      : 'who messaged you, on which app (Messages, Discord, Slack, WhatsApp, Mail…), from the banners macOS shows'
+  const cal = $<HTMLSpanElement>('n-cal-chip')
+  const allowCal = $<HTMLButtonElement>('n-cal-allow')
+  const access = n.calendarAccess
+  allowCal.classList.toggle('hidden', !(access === 'notDetermined' || access === 'denied' || access === 'writeOnly'))
+  allowCal.textContent = access === 'notDetermined' ? 'Allow' : 'Open Settings'
+  allowCal.dataset.access = access
+  if (access === 'fullAccess') chip(cal, 'allowed', 'ok')
+  else if (access === 'unavailable') chip(cal, 'needs the helper', 'bad')
+  else if (access === 'notDetermined') chip(cal, 'not allowed yet', 'bad')
+  else chip(cal, access === 'denied' ? 'denied' : access, 'bad')
+  const chipEl = $<HTMLSpanElement>('notices-chip')
+  if (p.dnd) chip(chipEl, 'do not disturb', 'bad')
+  else if (n.quietNow) chip(chipEl, 'quiet hours now', 'bad')
+  else chip(chipEl, 'on', 'ok')
+}
+
+async function saveNotices(patch: Partial<NoticePrefs>, said = 'Saved.'): Promise<void> {
+  if (!api.setNotices) return
+  const state = await api.setNotices(patch)
+  renderNotices(state)
+  noticesMessage(said, 'good')
+}
+
+for (const [id, key] of CHECKS) {
+  box(id).addEventListener('change', () => void saveNotices({ [key]: box(id).checked } as Partial<NoticePrefs>))
+}
+const listOf = (el: HTMLInputElement): string[] => el.value.split(',').map((s) => s.trim()).filter(Boolean)
+box('n-allow').addEventListener('change', () => void saveNotices({ allowApps: listOf(box('n-allow')) }))
+box('n-deny').addEventListener('change', () => void saveNotices({ denyApps: listOf(box('n-deny')) }))
+box('n-lead').addEventListener('change', () => {
+  const n = Number(box('n-lead').value)
+  if (n >= 1 && n <= 120) void saveNotices({ calendarLead: Math.round(n) })
+  else noticesMessage('Between 1 and 120 minutes.', 'bad')
+})
+box('n-quiet').addEventListener('change', () => {
+  const v = box('n-quiet').value.trim()
+  // Same shapes the main process reads: "23-8", "22:30-7", "11pm-7am"; empty for none.
+  if (v && !/^\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|until)\s*\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?$/i.test(v)) {
+    noticesMessage('Write it like 23-8 (from 11 pm to 8 am), or leave it empty.', 'bad')
+    return
+  }
+  void saveNotices({ quietHours: v }, v ? `Quiet from ${v.replace(/\s*(?:-|–|—|to|until)\s*/i, ' to ')}.` : 'No quiet hours.')
+})
+$<HTMLButtonElement>('n-cal-allow').addEventListener('click', async (e) => {
+  e.preventDefault()
+  const button = e.currentTarget as HTMLButtonElement
+  if (button.dataset.access !== 'notDetermined') {
+    // Refused once: only System Settings can change it now.
+    await api.allow?.('calendars')
+    noticesMessage('Switch Deskmate (or Electron) on under Calendars, then come back here.')
+    return
+  }
+  if (!api.calendarAccess) return
+  noticesMessage('macOS is asking you…')
+  const r = await api.calendarAccess()
+  noticesMessage(r.granted ? 'She can see your calendar now.' : 'Not allowed. System Settings → Privacy & Security → Calendars switches it on.', r.granted ? 'good' : 'bad')
+  await refresh()
+})
+
 async function refresh(): Promise<void> {
   if (!api.getSetup) return
   const state = await api.getSetup()
   render(state)
   renderRemote(state)
+  renderNotices(state.notices)
 }
 
 useOllama.addEventListener('click', async () => {
