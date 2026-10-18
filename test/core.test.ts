@@ -194,6 +194,8 @@ test('fast path: unambiguous commands become tool calls, the rest goes to the ag
   assert.equal(route('open spotify')?.tool, 'open')
   assert.equal(route('open the vlog folder and then start a claude job'), null)
   assert.equal(route('how are you today?'), null)
+  assert.equal(route("how's it going?"), null)
+  assert.equal(route("how's claude doing?")?.tool, 'claude_jobs')
 })
 
 test('mcp.json: Claude Desktop shape, bad entries reported, names namespaced', () => {

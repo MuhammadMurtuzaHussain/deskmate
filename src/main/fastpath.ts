@@ -112,8 +112,11 @@ export function fastRoute(raw: string, opts: { skills?: Skill[]; now?: Date } = 
         return null
       }
       case 'tasks':
+        // "how's it going?" is small talk unless it names the work.
+        if (!slash && !/\b(?:claude|tasks?|jobs?|status)\b/i.test(text)) return null
         return { tool: 'claude_jobs', input: { action: 'status' }, why: 'job status' }
       case 'cancel':
+        if (!slash && !/\b(?:claude|tasks?|jobs?|browsing)\b/i.test(text)) return null
         return { tool: 'claude_jobs', input: { action: 'cancel' }, why: 'job cancel' }
       case 'claude':
         if (COMPOUND.test(routed.input) && !slash) return null

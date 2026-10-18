@@ -2848,7 +2848,9 @@ const workerHost: WorkerHost = {
     if (!Number.isFinite(at)) return failed('Give in_minutes or at.', 'When should I remind you?')
     if (at < now - 30_000) return failed(`${a.at} has already passed; ask the user or pick the next one.`)
     const ms = a.in_minutes !== null ? Math.round(a.in_minutes * 60_000) : undefined
-    const text = a.text || (a.timer && ms ? timerName(ms) : '')
+    // "Write your standup notes." reads as "remind you to write your standup notes".
+    const words = a.text.trim().replace(/[.!]+$/, '')
+    const text = (/^[A-Z][a-z]/.test(words) ? words[0].toLowerCase() + words.slice(1) : words) || (a.timer && ms ? timerName(ms) : '')
     const r = reminderStore.add({ text, at, timer: a.timer, ...(ms ? { ms } : {}), ...(a.repeat !== 'none' ? { repeat: a.repeat } : {}) })
     console.log(`[reminders] set ${r.timer ? 'timer' : 'reminder'} "${r.text}" for ${new Date(r.at).toString()}${r.repeat ? `, ${r.repeat}` : ''}`)
     journal.add('reminder', `set: ${r.text} ${whenText(r.at, now)}${r.repeat ? ` (${r.repeat})` : ''}`)
@@ -2970,7 +2972,9 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
   if (!claude) return null
   if (agentBusy || acting) return sayPlain("I'm still on the last thing. Say \"stop\" to cut it short.", 'annoyed')
   // Let her see the screen when the message is about it ("what's this error").
-  const aboutScreen = /\b(this|that|these|here|screen|error|tab|window|what am i|what i'm|see|look)\b/i.test(said) && !/\b(?:message|text|tell|remind)\b/i.test(said)
+  const aboutScreen =
+    /\b(?:screen|error|window|what am i|what i'm|(?:see|look at|looking at|read) (?:this|that|it|here)|what(?:'s| is) (?:this|that)|this (?:page|tab|error|window|thing|code|message|email|bug)|fix (?:this|that|it))\b/i.test(said) &&
+    !/\b(?:message|text|tell|remind|timer)\b/i.test(said)
   const screenshot = aboutScreen ? await captureScreen().catch(() => undefined) : undefined
   agentBusy = acting = true
   actStop = false
