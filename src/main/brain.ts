@@ -414,10 +414,7 @@ export class Brain {
       }
     }
 
-    const facts = this.memory.recall()
-    const memoryBlock = facts.length
-      ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}`
-      : 'You do not know this person yet.'
+    const memoryBlock = this.memory.promptBlock()
 
     const contents: GeminiContent[] = this.memory
       .recentTurns()
@@ -464,10 +461,7 @@ export class Brain {
    */
   private async respondClaude(stimulus: Stimulus): Promise<Reply> {
     const client = this.claude as Anthropic
-    const facts = this.memory.recall()
-    const memoryBlock = facts.length
-      ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}`
-      : 'You do not know this person yet.'
+    const memoryBlock = this.memory.promptBlock()
     const messages: Anthropic.Beta.BetaMessageParam[] = this.memory
       .recentTurns()
       .map((t): Anthropic.Beta.BetaMessageParam => ({ role: t.role === 'assistant' ? 'assistant' : 'user', content: t.text }))
@@ -518,10 +512,7 @@ export class Brain {
   }
 
   private async respondLocal(stimulus: Stimulus): Promise<Reply> {
-    const facts = this.memory.recall()
-    const memoryBlock = facts.length
-      ? `What you remember about this person (importance in brackets):\n${facts.map((f) => `- [${f.importance}] ${f.text}`).join('\n')}`
-      : 'You do not know this person yet.'
+    const memoryBlock = this.memory.promptBlock()
     const messages: OllamaMessage[] = [
       // Persona first, memory next, the output contract last so a small model has it freshest; one example anchors the shape.
       { role: 'system', content: `${this.persona}\n\n${memoryBlock}\n\n${OUTPUT_CONTRACT}\n\n${LOCAL_EXAMPLE}` },
