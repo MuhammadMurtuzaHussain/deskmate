@@ -139,13 +139,13 @@ interface DraftInfo {
   created: number
 }
 
-/** "## Steps" items of a SKILL.md, short, for the card. */
+/** "## Steps" items of a SKILL.md (the top-level ones; numbered when there are numbers), short, for the card. */
 export function draftSteps(text: string): string[] {
   const m = /^##\s+Steps?\s*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/im.exec(text)
-  const src = m ? m[1] : text
-  return src
-    .split('\n')
-    .map((l) => /^\s*(?:\d+[.)]|[-*])\s+(.+)$/.exec(l)?.[1]?.trim())
+  const lines = (m ? m[1] : text).split('\n')
+  const numbered = lines.some((l) => /^\d+[.)]\s+/.test(l))
+  return lines
+    .map((l) => (numbered ? /^\d+[.)]\s+(.+)$/ : /^(?:\d+[.)]|[-*])\s+(.+)$/).exec(l)?.[1]?.trim())
     .filter((l): l is string => Boolean(l))
     .map((l) => l.replace(/[`*]/g, '').slice(0, 90))
     .slice(0, 8)
@@ -280,6 +280,16 @@ export async function draftFromTurn(
   // An update that came back the same is no update.
   if (currentText && splitFrontmatter(currentText).body.trim() === splitFrontmatter(draft.text).body.trim()) return null
   return draft
+}
+
+/** The answer to "Keep it?" about a skill she wrote: only a short, whole answer counts, so a new request that starts
+ * with "cancel" or "no" is not taken for one. */
+export function draftAnswer(text: string): 'keep' | 'discard' | 'later' | null {
+  const t = text.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  if (/^(?:yes|yeah|yep|yup|sure|ok|okay|please|yes please|go ahead|do it|keep it|save it|yes keep it|keep|update it|yes update it|sounds good)$/.test(t)) return 'keep'
+  if (/^(?:no|nope|nah|no thanks|no thank you|throw it away|bin it|delete it|discard it|scrap it|get rid of it|don't keep it)$/.test(t)) return 'discard'
+  if (/^(?:later|not now|maybe later|ask me later|not yet)$/.test(t)) return 'later'
+  return null
 }
 
 /** Her one line about a draft. */

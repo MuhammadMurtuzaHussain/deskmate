@@ -374,7 +374,7 @@ function renderLearn(l: LearnSetupState | undefined): void {
         const next = await api.draftAction(d.name, action)
         renderLearn(next)
         if (action !== 'show') {
-          learnMsg.textContent = action === 'keep' ? `${d.name} is a skill now.` : 'Thrown away.'
+          learnMsg.textContent = action === 'keep' ? (d.kind === 'update' ? `Updated ${d.updates ?? d.name}.` : `${d.name} is a skill now.`) : 'Thrown away.'
           learnMsg.className = 'msg good'
         }
       })

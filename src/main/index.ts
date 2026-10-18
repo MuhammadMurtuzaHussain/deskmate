@@ -21,7 +21,7 @@ import { Memory } from './memory'
 import { MemoryFiles } from './memfiles'
 import { describeHits, PastIndex, type PastCategory } from './past'
 import { describeGuide, findGuide, guideIndex, guidePath, loadGuides, scriptsHash, type Guide } from './skillmd'
-import { draftFromTurn, draftLine, learnPlan, SkillDrafts, type Draft } from './learn'
+import { draftAnswer, draftFromTurn, draftLine, learnPlan, SkillDrafts, type Draft } from './learn'
 import { checkToken, outsidePhone, PhoneRemote, TelegramApi, type PairRequest } from './remote'
 import { mentionedProject, Projects, type Project } from './projects'
 import { Settings } from './settings'
@@ -2194,10 +2194,10 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     } else if (pending.kind === 'skill') {
       const p = pending
       pending = null
-      const said = stripName(text).toLowerCase()
-      const keep = /^(?:keep it|save it|yes keep it|update it|do that)\b/.test(said) ? 'yes' : /^(?:throw it away|bin it|delete it|discard it|scrap it|get rid of it)\b/.test(said) ? 'no' : yesNo(said)
-      if (keep && Date.now() - p.at < 5 * 60_000) return sayPlain(await settleDraft(p.name, keep === 'yes'), keep === 'yes' ? 'happy' : 'neutral')
-      // Anything else is a new message; the draft waits in the tray and in Setup.
+      const answer = Date.now() - p.at < 5 * 60_000 ? draftAnswer(stripName(text)) : null
+      if (answer === 'later') return sayPlain("Okay, it'll wait in my tray menu under Skills.")
+      if (answer) return sayPlain(await settleDraft(p.name, answer === 'keep'), answer === 'keep' ? 'happy' : 'neutral')
+      // Anything else ("cancel my reminders") is a new message; the draft waits in the tray and in Setup.
     } else if (Date.now() - pending.at > 90_000) {
       pending = null
     } else {
@@ -3224,7 +3224,7 @@ function draftCard(d: Draft): Plan {
     status: 'draft',
     current: 0,
     createdAt: d.created,
-    note: d.why ?? d.description,
+    note: (d.why ?? d.description).slice(0, 160),
     kind: 'skill'
   }
 }

@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import { runAgentTurn, type CallRecord, type ModelCall } from '../src/main/core.ts'
-import { draftFromTurn, draftLine, draftSteps, learnPlan, parseWriterReply, SkillDrafts, writerRequest } from '../src/main/learn.ts'
+import { draftAnswer, draftFromTurn, draftLine, draftSteps, learnPlan, parseWriterReply, SkillDrafts, writerRequest } from '../src/main/learn.ts'
 import { guessSection, MemoryFiles, sectionFor } from '../src/main/memfiles.ts'
 import { Memory } from '../src/main/memory.ts'
 import { describeHits, ftsQuery, PastIndex } from '../src/main/past.ts'
@@ -331,9 +331,17 @@ test('the writer reply: a SKILL.md, NO_SKILL, NO_CHANGE, an update with WHY', ()
   assert.equal(d.name, 'weekly-report')
   assert.doesNotMatch(d.text, /evil/, 'only name, description and metadata are kept in the frontmatter')
   assert.deepEqual(draftSteps(d.text), ['find_file "<report template>"', 'open it'])
+  assert.deepEqual(draftSteps('## Steps\n1. For each item, call set_reminder with:\n   - text: the task\n   - at: "<time>"\n2. Read them back\n## Edge cases\n- x'), ['For each item, call set_reminder with:', 'Read them back'])
   const u = parseWriterReply('WHY: Slack search finds the channel faster than scrolling.\n---\nname: something-else\ndescription: Post the report\n---\n## Steps\n1. a', { name: 'weekly-report' })
   assert.equal(u?.name, 'weekly-report')
   assert.equal(u?.why, 'Slack search finds the channel faster than scrolling.')
+  // only a short, whole answer settles a draft: a new request that starts with "cancel" or "no" is a new request
+  assert.equal(draftAnswer('Yes.'), 'keep')
+  assert.equal(draftAnswer('keep it!'), 'keep')
+  assert.equal(draftAnswer('nah'), 'discard')
+  assert.equal(draftAnswer('not now'), 'later')
+  assert.equal(draftAnswer('cancel all my reminders'), null)
+  assert.equal(draftAnswer('no, play some music'), null)
   assert.equal(draftLine({ name: 'weekly-report', kind: 'new' }), 'I wrote down how I did that as a skill, "weekly report". Keep it?')
   assert.match(draftLine({ name: 'weekly-report', kind: 'update', updates: 'weekly-report', why: 'Search is faster.' }), /^I found a better way to do weekly report: Search is faster\. Update the skill\?$/)
 })
@@ -462,4 +470,7 @@ test('shortcuts leave "my sister", "my portfolio" and "my usual" to the agent, w
   assert.equal(fastRoute('text mum on imessage that I will be late')?.input.to, 'mum')
   assert.equal(fastRoute('ask claude to add a dark mode to deskmate')?.tool, 'claude_code')
   assert.equal(fastRoute('/claude fix my portfolio')?.tool, 'claude_code', 'a slash command is always a shortcut')
+  // several clock times are several reminders: the agent sets them one by one
+  assert.equal(fastRoute('remind me to call the bank at 8pm, the dentist at 8:15pm and the vet at 9pm'), null)
+  assert.equal(fastRoute('remind me at 8pm to call the bank')?.tool, 'set_reminder')
 })

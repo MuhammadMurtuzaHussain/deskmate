@@ -70,8 +70,12 @@ function appCall(req: AppRequest): FastCall {
   }
 }
 
+/** "at 8pm …, the dentist at 8:15pm …": several clock times are several reminders, which the agent sets one by one. */
+const CLOCK = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b/gi
+
 function reminderCall(text: string, now: Date): FastCall | null {
   if (REPEATS.test(text)) return null
+  if ((text.match(CLOCK) ?? []).length > 1) return null
   const intent = parseReminder(text, now)
   if (!intent) return null
   switch (intent.kind) {
