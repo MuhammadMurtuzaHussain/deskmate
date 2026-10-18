@@ -1,4 +1,4 @@
-import type { PermissionKind, SetupState } from '../shared/types'
+import type { PermissionKind, RemoteAction, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -119,9 +119,54 @@ function render(state: SetupState): void {
   }
 }
 
+const remoteMsg = $<HTMLDivElement>('remote-msg')
+function remoteMessage(text: string, kind: 'good' | 'bad' | '' = ''): void {
+  remoteMsg.textContent = text
+  remoteMsg.className = `msg${kind ? ` ${kind}` : ''}`
+}
+
+function renderRemote(state: SetupState): void {
+  const r = state.remote
+  // An older main process (development hot reload) has no phone remote.
+  $<HTMLElement>('remote').classList.toggle('hidden', !r || !api.useTelegram)
+  if (!r) return
+  const bot = r.bot ? `@${r.bot}` : 'your bot'
+  const remoteChip = $<HTMLSpanElement>('remote-chip')
+  if (r.error) chip(remoteChip, 'token rejected', 'bad')
+  else if (!r.token) chip(remoteChip, 'not set up')
+  else if (!r.on) chip(remoteChip, 'off')
+  else if (r.paired) chip(remoteChip, 'paired', 'ok')
+  else if (r.request) chip(remoteChip, 'asking you', 'bad')
+  else chip(remoteChip, 'waiting for /start', 'bad')
+  $<HTMLInputElement>('telegram-token').placeholder = r.token
+    ? r.fromEnv
+      ? 'using the token from .env; paste one to replace it'
+      : 'a token is saved; paste a new one to replace it'
+    : 'paste your bot token (123456:ABC…)'
+  $<HTMLDivElement>('remote-request').classList.toggle('hidden', !r.request)
+  if (r.request) {
+    $<HTMLElement>('remote-request-name').textContent = r.request.name
+    $<HTMLElement>('remote-request-code').textContent = r.request.code
+  }
+  $<HTMLDivElement>('remote-paired').classList.toggle('hidden', !r.paired)
+  if (r.paired) $<HTMLElement>('remote-paired-name').textContent = r.paired
+  const text = $<HTMLSpanElement>('remote-text')
+  const toggle = $<HTMLButtonElement>('remote-toggle')
+  $<HTMLDivElement>('remote-row').classList.toggle('hidden', !r.token)
+  if (r.error) text.textContent = r.error
+  else if (!r.on) text.textContent = 'The phone remote is off; messages to the bot wait in Telegram.'
+  else if (r.request) text.textContent = 'Check the code matches the one on the phone, then allow it (or say yes to her).'
+  else if (r.paired) text.textContent = `Message ${bot} in Telegram. Only this account can; everyone else is ignored.`
+  else text.textContent = `On your phone, open ${bot} in Telegram and send /start. She asks here before it can control her.`
+  toggle.textContent = r.on ? 'Turn off' : 'Turn on'
+  toggle.dataset.action = r.on ? 'off' : 'on'
+}
+
 async function refresh(): Promise<void> {
   if (!api.getSetup) return
-  render(await api.getSetup())
+  const state = await api.getSetup()
+  render(state)
+  renderRemote(state)
 }
 
 useOllama.addEventListener('click', async () => {
@@ -169,6 +214,41 @@ useClaude.addEventListener('click', async () => {
 })
 
 $<HTMLButtonElement>('recheck').addEventListener('click', () => void refresh())
+
+$<HTMLFormElement>('telegram').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const input = $<HTMLInputElement>('telegram-token')
+  const token = input.value.trim()
+  if (!token || !api.useTelegram) return
+  remoteMessage('Asking Telegram…')
+  const result = await api.useTelegram(token)
+  if (result.ok) input.value = ''
+  remoteMessage(
+    result.ok ? `That works. On your phone, open @${result.bot} in Telegram and send /start.` : (result.error ?? 'That did not work.'),
+    result.ok ? 'good' : 'bad'
+  )
+  await refresh()
+})
+
+const remoteAction = (id: string, action: RemoteAction): void => {
+  $<HTMLButtonElement>(id).addEventListener('click', async () => {
+    await api.remote?.(action)
+    if (action === 'allow') remoteMessage('Paired. Message her from your phone.', 'good')
+    else if (action === 'refuse') remoteMessage('Refused. That account was told no.')
+    else if (action === 'forget') remoteMessage('Forgotten. A /start from your phone asks here again.')
+    await refresh()
+  })
+}
+remoteAction('remote-allow', 'allow')
+remoteAction('remote-refuse', 'refuse')
+remoteAction('remote-forget', 'forget')
+$<HTMLButtonElement>('remote-toggle').addEventListener('click', async (e) => {
+  await api.remote?.((e.currentTarget as HTMLButtonElement).dataset.action as RemoteAction)
+  remoteMessage('')
+  await refresh()
+})
+// A pairing request comes in from Telegram while this window is open.
+api.onSetupChanged?.(() => void refresh())
 
 for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {
   row.querySelector('button')?.addEventListener('click', async () => {

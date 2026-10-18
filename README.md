@@ -39,6 +39,7 @@
 - **Stays out of the way.** Her chat panel tucks away and comes back when you move the pointer over her or the bottom of her window; while it is away, news ("Discord · finding sam") shows as a short status line.
 - **Works your apps (macOS).** "Tell sam on Discord I'm running late", "text Note Pad that I'm on my way, and send a photo of yourself", "message #general in Slack: standup moved", "skip this song", "open Claude and ask it to draft a cover letter". She opens the app even if it's closed, jumps to the chat, checks the window shows the right one, reads the message back, and sends it on your yes. [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
 - **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
+- **Answers your phone.** Away from the laptop, text her through a Telegram bot of your own: "tell sam on Discord I'm running late", "what's on my screen?", "ask Claude to fix the build", `/selfie`. Everything she says while she works on it comes back to the phone, and her "send it?" questions get Yes / No buttons. Only the one account you paired (with a yes on the Mac) can control her. [docs/AGENT.md](docs/AGENT.md#from-your-phone-telegram).
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
 - **Lives on your desktop.** "Come here", "sit on this window" (she sits on its top edge, legs dangling, and rides along when you move it), "go to sleep", "walk around". "Where's my resume?" and she finds it, opens Finder on it, walks over and points at it with a ring around the spot. Carry her by the head and she dangles. Left alone for ten minutes she dozes off. Full body in 3D (VRM); with a Live2D model she leans, bobs, looks, and uses the model's own poses.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
@@ -91,6 +92,10 @@ On a Mac she can also drive the Chrome you have open: say yes when macOS asks, a
 
 If [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is installed and logged in on your machine, she can give it jobs: "ask Claude to …", "resume the vlog edit", "stop the task". Pick the folder she works in from the tray menu, or name it in the sentence. How it works, what Claude is allowed to do, and how to turn the read-back confirmation on or off: [docs/AGENT.md](docs/AGENT.md).
 
+### Control her from your phone (optional)
+
+Make a Telegram bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste its token in the setup window (**4 · From your phone**), then send `/start` to your bot from your phone and say yes on the Mac. The tray menu turns it on and off. Details and the safety rules: [docs/AGENT.md](docs/AGENT.md#from-your-phone-telegram).
+
 ## Run from source
 
 ```bash
@@ -119,7 +124,7 @@ Full guide: [docs/CHARACTERS.md](docs/CHARACTERS.md). Five characters ship, each
 
 ## Settings reference
 
-All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), watch folder and interval, default character.
+All settings are environment variables, read from `.env` / `.env.local` in the user-data folder (installed app) or the project root (source). See [`.env.example`](.env.example) for the full list: brain and model, voice provider and preset, ears (Whisper size, shortcut, wake word, barge-in), hands (Claude Code folder, permissions, confirmation), the phone remote's bot token, watch folder and interval, default character.
 
 | folder | macOS | Windows | Linux |
 |---|---|---|---|
@@ -134,6 +139,7 @@ Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, e
    │  tool: claude ──► `claude -p` in the project folder (stream-json) ──► she reports back
    │  tool: browse / page ──► Chrome over AppleScript (tabs, page text, click, type) ──► look · decide · act loop
    │  tool: app ──► native/bin/deskmate-hands (Swift: open -b, key events, accessibility titles) ──► Discord · Slack · Claude routines
+   │  phone ──► Telegram Bot API (long polling, one paired account) ──► same path as typed chat ──► her lines back to the phone
    ▼ IPC
 Renderer: Live2D: PixiJS 7 + pixi-live2d-display (lip-sync fork) + Live2D Cubism Core
           3D: three.js + three-vrm (VRM) · vendored MMDLoader + Ammo physics (MMD) · OBJ/GLTF (static)
@@ -144,7 +150,7 @@ The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, t
 
 ## Privacy
 
-Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. Memory and settings live in your user-data folder and nowhere else.
+Local mode sends nothing anywhere. With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them and her selfies pass through Telegram under your own bot. Memory and settings live in your user-data folder and nowhere else.
 
 ## Roadmap
 

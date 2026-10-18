@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, ReplyPayload } from '../shared/types'
+import type { Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -44,7 +44,12 @@ const api: DeskmateApi = {
   onGesture: (cb) => {
     ipcRenderer.on('avatar:gesture', (_event, gesture: Gesture) => cb(gesture))
   },
-  reportAnchors: (anchors: Anchors) => ipcRenderer.send('avatar:anchors', anchors)
+  reportAnchors: (anchors: Anchors) => ipcRenderer.send('avatar:anchors', anchors),
+  useTelegram: (token) => ipcRenderer.invoke('setup:telegram', token),
+  remote: (action: RemoteAction) => ipcRenderer.invoke('setup:remote', action),
+  onSetupChanged: (cb) => {
+    ipcRenderer.on('setup:changed', () => cb())
+  }
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)

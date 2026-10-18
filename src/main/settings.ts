@@ -13,6 +13,12 @@ export interface SettingsData {
   anthropicApiKey?: string
   anthropicModel?: string
   anthropicEffort?: 'low' | 'medium' | 'high'
+  /** phone remote: the Telegram bot token from @BotFather (DESKMATE_TELEGRAM_TOKEN in .env is used when this is empty) */
+  telegramToken?: string
+  /** phone remote on (default when a token exists) or off, from the tray menu or Setup */
+  remoteEnabled?: boolean
+  /** the one Telegram account allowed to control her, confirmed on the Mac */
+  remotePaired?: { chatId: number; userId: number; name: string }
   /** the first-run window was finished or closed once */
   setupDone?: boolean
 }

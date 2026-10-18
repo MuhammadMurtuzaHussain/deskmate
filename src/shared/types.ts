@@ -189,7 +189,23 @@ export interface SetupState {
   voice: { provider: 'local' | 'elevenlabs' | 'system'; localServer: boolean }
   /** granted / denied / not-determined / restricted / unknown, as macOS reports them; keys is null without the helper */
   permissions: { microphone: string; screen: string; keys: boolean | null }
+  /** phone remote (Telegram); missing from an older main process */
+  remote?: {
+    token: boolean
+    /** the token comes from DESKMATE_TELEGRAM_TOKEN in .env */
+    fromEnv: boolean
+    /** the bot's @name, once Telegram answered */
+    bot: string | null
+    on: boolean
+    /** who controls her from their phone */
+    paired: string | null
+    /** a /start waiting for a yes on the Mac */
+    request: { name: string; code: string } | null
+    error: string | null
+  }
 }
+
+export type RemoteAction = 'allow' | 'refuse' | 'forget' | 'on' | 'off'
 
 export type PermissionKind = 'microphone' | 'screen' | 'keys'
 
@@ -232,6 +248,11 @@ export interface DeskmateApi {
   /** a stretch, a yawn, a glance at the pointer */
   onGesture?(cb: (gesture: Gesture) => void): void
   reportAnchors?(anchors: Anchors): void
+  /** phone remote: checks a bot token with Telegram and turns the remote on with it */
+  useTelegram?(token: string): Promise<{ ok: boolean; error?: string; bot?: string }>
+  remote?(action: RemoteAction): Promise<void>
+  /** the setup window's state changed in the main process (a pairing request came in, say) */
+  onSetupChanged?(cb: () => void): void
 }
 
 declare global {
