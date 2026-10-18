@@ -1,7 +1,13 @@
-// Phone remote against a fake Telegram Bot API: no bot token, no network. Run with `npm test`.
+// The Telegram channel and the hub together, against a fake Telegram Bot API: no bot token, no network. Run with
+// `npm test`. (The rules every channel shares are tested on their own in channels.test.ts.)
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { checkToken, chunks, outsidePhone, PhoneRemote, TelegramApi, type Paired, type PairRequest, type TgUpdate } from '../src/main/remote.ts'
+import { chunks } from '../src/main/channels/channel.ts'
+import { ChannelHub, outsideChannels, type Owner, type PairRequest } from '../src/main/channels/hub.ts'
+import { checkTelegramToken as checkToken, TelegramApi, TelegramChannel, type TgUpdate } from '../src/main/channels/telegram.ts'
+
+type Paired = Owner
+type PhoneRemote = ChannelHub
 
 const TOKEN = '123456:AAbbCCddEEffGGhhIIjjKKllMMnn'
 const ME = { id: 42, first_name: 'Sam', username: 'sam' }
@@ -24,6 +30,7 @@ class FakeTelegram {
 
   fetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const u = String(url)
+    if (u.startsWith(`https://api.telegram.org/file/bot${TOKEN}/`)) return new Response(new Uint8Array([7, 7, 7]))
     assert.ok(u.startsWith(`https://api.telegram.org/bot${TOKEN}/`), `unexpected url ${u}`)
     const method = u.slice(u.lastIndexOf('/') + 1)
     let body: Record<string, unknown> = {}
@@ -38,11 +45,12 @@ class FakeTelegram {
     if (method === 'getUpdates') return json({ ok: true, result: await this.poll(Number(body.offset), init?.signal ?? undefined) })
     this.calls.push({ method, body })
     if (method === 'getMe') return json({ ok: true, result: { id: 1, is_bot: true, first_name: 'Deskmate', username: 'my_deskmate_bot' } })
-    if (method === 'sendMessage' || method === 'sendPhoto') return json({ ok: true, result: { message_id: this.nextMessage++, date: 0, chat: { id: Number(body.chat_id), type: 'private' } } })
+    if (method === 'getFile') return json({ ok: true, result: { file_id: body.file_id, file_path: 'voice/file_1.oga', file_size: 3 } })
+    if (method === 'sendMessage' || method === 'sendPhoto' || method === 'sendDocument' || method === 'sendAudio') return json({ ok: true, result: { message_id: this.nextMessage++, date: 0, chat: { id: Number(body.chat_id), type: 'private' } } })
     return json({ ok: true, result: true })
   }
 
-  push(from: { id: number; first_name?: string; username?: string }, text: string, opts: { chatId?: number; type?: string; ageSec?: number } = {}): void {
+  push(from: { id: number; first_name?: string; username?: string }, text: string, opts: { chatId?: number; type?: string; ageSec?: number; voice?: boolean } = {}): void {
     this.updates.push({
       update_id: this.nextUpdate++,
       message: {
@@ -50,7 +58,7 @@ class FakeTelegram {
         date: Math.floor(Date.now() / 1000) - (opts.ageSec ?? 0),
         chat: { id: opts.chatId ?? from.id, type: opts.type ?? 'private' },
         from,
-        text
+        ...(opts.voice ? { voice: { file_id: 'v1', mime_type: 'audio/ogg', duration: 2 } } : { text })
       }
     })
     this.wake?.()
@@ -58,13 +66,13 @@ class FakeTelegram {
 
   sent(chatId?: number): { method: string; chatId: number; text: string; markup?: Record<string, unknown>; photo?: unknown }[] {
     return this.calls
-      .filter((c) => c.method === 'sendMessage' || c.method === 'sendPhoto' || c.method === 'editMessageText')
+      .filter((c) => c.method === 'sendMessage' || c.method === 'sendPhoto' || c.method === 'editMessageText' || c.method === 'sendDocument')
       .map((c) => ({
         method: c.method,
         chatId: Number(c.body.chat_id),
         text: String(c.body.text ?? c.body.caption ?? ''),
         markup: c.body.reply_markup as Record<string, unknown> | undefined,
-        photo: c.body.photo
+        photo: c.body.photo ?? c.body.document
       }))
       .filter((m) => chatId === undefined || m.chatId === chatId)
   }
@@ -98,43 +106,49 @@ async function until(check: () => boolean, what: string): Promise<void> {
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-let live: PhoneRemote[] = []
+let live: ChannelHub[] = []
 afterEach(() => {
-  for (const r of live) r.stop()
+  for (const r of live) r.stopAll()
   live = []
 })
 
 function setup(
-  opts: { paired?: Paired | null; answer?: (req: PairRequest) => Promise<boolean>; onMessage?: (text: string, remote: PhoneRemote) => Promise<void>; cooldownMs?: number } = {}
+  opts: {
+    paired?: Paired | null
+    answer?: (req: PairRequest) => Promise<boolean>
+    onMessage?: (text: string, remote: ChannelHub) => Promise<void>
+    cooldownMs?: number
+    transcribe?: (audio: Uint8Array, mime: string) => Promise<string | null>
+  } = {}
 ) {
   const tg = new FakeTelegram()
   const asked: PairRequest[] = []
   const stored: (Paired | null)[] = []
   const received: string[] = []
   const logs: string[] = []
-  const remote: PhoneRemote = new PhoneRemote({
-    api: new TelegramApi(TOKEN, { fetch: tg.fetch }),
-    paired: opts.paired ?? null,
+  const remote: ChannelHub = new ChannelHub({
+    owners: { telegram: opts.paired ?? null },
     askToPair: (req) => {
       asked.push(req)
       return opts.answer ? opts.answer(req) : Promise.resolve(false)
     },
-    onPaired: (p) => stored.push(p),
+    onPaired: (_ch, p) => stored.push(p),
     onMessage: async (text) => {
       received.push(text)
       await opts.onMessage?.(text, remote)
     },
+    transcribe: opts.transcribe,
     log: (line) => logs.push(line),
     statusDelayMs: 20,
-    pairCooldownMs: opts.cooldownMs,
-    pollTimeoutSec: 1
+    pairCooldownMs: opts.cooldownMs
   })
   live.push(remote)
-  remote.start()
+  remote.add(new TelegramChannel(new TelegramApi(TOKEN, { fetch: tg.fetch }), { pollTimeoutSec: 1 }))
+  remote.start('telegram')
   return { tg, remote, asked, stored, received, logs }
 }
 
-const PAIRED: Paired = { chatId: ME.id, userId: ME.id, name: 'Sam (@sam)' }
+const PAIRED: Paired = { chat: String(ME.id), id: String(ME.id), name: 'Sam (@sam)' }
 
 test('checkToken asks getMe and reports the bot name', async () => {
   const tg = new FakeTelegram()
@@ -152,18 +166,20 @@ test('the first /start asks the Mac; a yes pairs that account and its messages a
   let approve!: (yes: boolean) => void
   const { tg, remote, asked, stored, received } = setup({ answer: () => new Promise((r) => (approve = r)) })
   tg.push(ME, 'hello?')
+  await until(() => tg.sent(ME.id).length === 1, 'the not-paired line')
+  assert.match(tg.sent(ME.id)[0].text, /send \/start/)
   tg.push(ME, '/start')
   await until(() => asked.length === 1, 'the pairing question')
   assert.equal(received.length, 0, 'nothing is relayed before pairing')
-  assert.equal(asked[0].userId, ME.id)
+  assert.equal(asked[0].id, String(ME.id))
   assert.match(asked[0].code, /^\d{4}$/)
-  await until(() => tg.sent(ME.id).length === 1, 'the code message')
-  assert.match(tg.sent(ME.id)[0].text, new RegExp(`code on the Mac is ${asked[0].code}`))
-  assert.equal(remote.pairing?.userId, ME.id)
+  await until(() => tg.sent(ME.id).length === 2, 'the code message')
+  assert.match(tg.sent(ME.id)[1].text, new RegExp(`code on the Mac is ${asked[0].code}`))
+  assert.equal(remote.pairing?.id, String(ME.id))
 
   approve(true)
   await until(() => stored.length === 1, 'pairing stored')
-  assert.deepEqual(stored[0], { chatId: ME.id, userId: ME.id, name: 'Sam (@sam)' })
+  assert.deepEqual(stored[0], { chat: String(ME.id), id: String(ME.id), name: 'Sam (@sam)' })
   assert.equal(remote.pairing, null)
   await until(() => tg.sent(ME.id).some((m) => m.text.startsWith('Paired.')), 'the welcome')
 
@@ -179,7 +195,7 @@ test('a second /start while the Mac is still being asked is ignored', async () =
   tg.push(STRANGER, '/start')
   await until(() => logs.some((l) => l.includes('already asking the Mac')), 'the ignore log')
   assert.equal(asked.length, 1)
-  assert.equal(tg.sent(STRANGER.id).length, 0)
+  assert.equal(tg.sent(STRANGER.id).length, 0, 'a second /start is not answered')
 })
 
 test('a refused /start is not paired and cools down', async () => {
@@ -187,7 +203,7 @@ test('a refused /start is not paired and cools down', async () => {
   tg.push(STRANGER, '/start')
   await until(() => tg.sent(STRANGER.id).some((m) => m.text.startsWith('Not paired')), 'the refusal')
   assert.equal(stored.length, 0)
-  assert.equal(remote.paired, null)
+  assert.equal(remote.owner('telegram'), null)
   tg.push(STRANGER, 'open terminal')
   tg.push(STRANGER, '/start')
   await until(() => logs.some((l) => l.includes('just refused')), 'the cooldown')
@@ -217,9 +233,11 @@ test('only the paired account is relayed; strangers and group chats are ignored 
   await until(() => received.length === 1, 'the paired message')
   await tick()
   assert.deepEqual(received, ['what time is it'])
-  assert.equal(tg.sent(STRANGER.id).length, 0)
-  assert.equal(logs.filter((l) => l.includes('not the paired phone')).length, 3)
-  assert.ok(logs.some((l) => l.includes('ignored a supergroup message')))
+  assert.equal(tg.sent(STRANGER.id).length, 1, 'one short not-paired line, not one per message')
+  assert.match(tg.sent(STRANGER.id)[0].text, /private Deskmate/)
+  assert.ok(!tg.sent(STRANGER.id)[0].text.includes('/start'), 'no pairing hint once someone is paired')
+  assert.equal(logs.filter((l) => l.includes('not the owner')).length, 3)
+  assert.ok(logs.some((l) => l.includes('ignored a group message')))
 })
 
 test('messages that arrived while she was away are not acted on', async () => {
@@ -244,7 +262,7 @@ test('lines said while handling a phone message go back, including from timers i
   tg.push(ME, 'tell Ana hi')
   await until(() => tg.sent(ME.id).length === 2, 'both lines')
   await later
-  outsidePhone(() => remote.say('outside'))
+  outsideChannels(() => remote.say('outside'))
   await tick()
   assert.deepEqual(tg.sent(ME.id).map((m) => m.text), ['On it.', 'Sent it to Ana.'])
 })
@@ -315,7 +333,7 @@ test('/stop, /help and /unpair from the paired phone', async () => {
   tg.push(ME, '/unpair')
   await until(() => stored.length === 1, 'unpaired')
   assert.equal(stored[0], null)
-  assert.equal(remote.paired, null)
+  assert.equal(remote.owner('telegram'), null)
   tg.push(ME, 'still there?')
   await tick(60)
   assert.equal(received.length, 1, 'nothing is relayed after unpairing')
@@ -325,6 +343,7 @@ test('photo sends the PNG with sendPhoto, only for phone work', async () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
   const { tg, remote } = setup({ paired: PAIRED, onMessage: (_text, r) => r.photo(png, 'me') })
   await remote.photo(png)
+  assert.equal(tg.sent(ME.id).length, 0, 'nothing outside phone work')
   tg.push(ME, '/selfie')
   await until(() => tg.sent(ME.id).length === 1, 'the photo')
   const [sent] = tg.sent(ME.id)
@@ -338,18 +357,13 @@ test('a rejected token stops polling and says so; flood control waits and retrie
   const tg = new FakeTelegram()
   tg.failOnce.set('getUpdates', { code: 401, description: 'Unauthorized' })
   let fatal = ''
-  const remote = new PhoneRemote({
-    api: new TelegramApi(TOKEN, { fetch: tg.fetch }),
-    paired: null,
-    askToPair: async () => false,
-    onPaired: () => undefined,
-    onMessage: async () => undefined,
-    onFatal: (m) => (fatal = m)
-  })
+  const remote = new ChannelHub({ askToPair: async () => false, onPaired: () => undefined, onMessage: async () => undefined, onFatal: (_c, m) => (fatal = m) })
   live.push(remote)
-  remote.start()
+  remote.add(new TelegramChannel(new TelegramApi(TOKEN, { fetch: tg.fetch }), { pollTimeoutSec: 1 }))
+  remote.start('telegram')
   await until(() => fatal !== '', 'the fatal error')
-  assert.equal(remote.running, false)
+  assert.match(fatal, /rejected the bot token/)
+  assert.equal(remote.state('telegram')?.running, false)
 
   const api = new TelegramApi(TOKEN, { fetch: tg.fetch })
   tg.failOnce.set('sendMessage', { code: 429, description: 'Too Many Requests', retry_after: 1 })
@@ -365,4 +379,22 @@ test('long lines are split to fit Telegram', () => {
   assert.ok(parts.length >= 3)
   assert.ok(parts.every((p) => p.length <= 4000))
   assert.equal(parts.join(' '), words)
+})
+
+test('a voice note is fetched with getFile, transcribed and relayed; files go out as documents', async () => {
+  const mimes: string[] = []
+  const { tg, received } = setup({
+    paired: PAIRED,
+    transcribe: async (audio, mime) => (mimes.push(`${audio.byteLength}:${mime}`), 'play some lo-fi'),
+    onMessage: async (_t, r) => r.file({ name: 'report.pdf', bytes: new Uint8Array([1, 2]), mime: 'application/pdf' }, 'your PDF')
+  })
+  tg.push(ME, '', { voice: true })
+  await until(() => received.length === 1, 'the transcript')
+  assert.deepEqual(received, ['play some lo-fi'])
+  assert.deepEqual(mimes, ['3:audio/ogg'])
+  await until(() => tg.calls.some((c) => c.method === 'sendDocument'), 'the document')
+  const doc = tg.calls.find((c) => c.method === 'sendDocument')!
+  assert.equal(doc.body.caption, 'your PDF')
+  assert.equal((doc.body.document as File).name, 'report.pdf')
+  assert.ok(tg.calls.some((c) => c.method === 'sendChatAction'), '"typing…" while she works')
 })

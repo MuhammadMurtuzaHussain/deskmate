@@ -467,6 +467,19 @@ const SEND_TO_CHAT = `on run argv
   end tell
 end run`
 
+/**
+ * Sends a line (and a file by path) into a Messages chat by its id: the chat guid chat.db holds, which is how the
+ * iMessage channel answers the chat a message came from. Nothing is looked up by name, so it cannot pick the wrong one.
+ */
+export async function sendToMessagesChat(chatId: string, text: string, filePath = ''): Promise<void> {
+  try {
+    await osa(SEND_TO_CHAT, [chatId, text, filePath])
+  } catch (err) {
+    if (err instanceof ScriptError && err.notAllowed) throw new Error('macOS is not letting Deskmate control Messages (Privacy & Security → Automation → Messages)')
+    throw err
+  }
+}
+
 interface Chat {
   id: string
   name: string
