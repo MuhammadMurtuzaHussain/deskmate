@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>What she did</title>
+    <link rel="stylesheet" href="./activity.css" />
+  </head>
+  <body>
+    <header>
+      <div><h1>What she did</h1><span id="day" class="dim"></span></div>
+      <span id="halted" class="chip stop hidden">everything stopped · say "resume"</span>
+    </header>
+    <div class="bar">
+      <span id="spend" class="dim"></span>
+      <label class="inline"><input type="checkbox" id="all" /> show looking too</label>
+    </div>
+    <ol id="rows"></ol>
+    <div id="empty" class="dim hidden">Nothing yet today. Every tool she uses shows up here: when, from where, who said yes, and why.</div>
+    <footer class="dim">"Undo that" or "what did you just do?" work by voice too. Sent messages can't be undone; files she trashed or moved, apps and tabs she opened, reminders and jobs can.</footer>
+    <script type="module" src="./activity.ts"></script>
+  </body>
+</html>

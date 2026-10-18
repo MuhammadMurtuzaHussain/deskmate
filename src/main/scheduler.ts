@@ -30,6 +30,8 @@ export interface SchedulerDeps {
   store: ScheduleStore
   /** an agent core to run jobs with (a Claude brain) */
   canRun(): boolean
+  /** everything was stopped (the kill switch): a job that comes round is skipped, not run */
+  halted?(): boolean
   /** one job as an isolated agent turn; its risky steps ask through `ask` */
   runTurn(job: Job, ask: Ask, lateMs: number): Promise<RunResult>
   /** a plan for the job on the card, waiting for their go */
@@ -135,6 +137,12 @@ export class Scheduler {
 
   private async runOne(job: Job, lateMs: number): Promise<void> {
     const { store } = this.deps
+    // The kill switch is on: nothing runs on its own until the user says resume.
+    if (this.deps.halted?.()) {
+      store.record(job.id, 'skipped', 'everything was stopped')
+      this.deps.log('schedule', `skipped "${job.label}": everything was stopped`)
+      return
+    }
     // Jobs that tick every few minutes do not run in quiet hours (the user picked a clock time for the others).
     if (job.rule.kind === 'interval' && this.deps.quiet()) {
       store.record(job.id, 'skipped', 'quiet hours')

@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { redact } from './secrets.ts'
 
 /**
  * What she did, by day: one line per thing that happened on the computer (a message sent, a plan run, a Claude job
@@ -23,7 +24,7 @@ export class Journal {
   add(kind: string, text: string): void {
     try {
       mkdirSync(this.dir, { recursive: true })
-      appendFileSync(join(this.dir, `${day()}.jsonl`), `${JSON.stringify({ at: Date.now(), kind, text: text.slice(0, 400) })}\n`)
+      appendFileSync(join(this.dir, `${day()}.jsonl`), `${JSON.stringify({ at: Date.now(), kind, text: redact(text).slice(0, 400) })}\n`)
     } catch (err) {
       console.warn('[journal]', (err as Error).message)
     }

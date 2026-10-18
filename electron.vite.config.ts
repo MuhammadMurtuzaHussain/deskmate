@@ -12,7 +12,8 @@ export default defineConfig({
           index: resolve(__dirname, 'src/renderer/index.html'),
           bar: resolve(__dirname, 'src/renderer/bar.html'),
           setup: resolve(__dirname, 'src/renderer/setup.html'),
-          plan: resolve(__dirname, 'src/renderer/plan.html')
+          plan: resolve(__dirname, 'src/renderer/plan.html'),
+          activity: resolve(__dirname, 'src/renderer/activity.html')
         }
       }
     }

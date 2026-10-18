@@ -19,7 +19,7 @@ function takesEffort(model: string): boolean {
   return !/claude-(?:3|haiku-4|sonnet-4-5|opus-4-5|opus-4-1|opus-4-0|sonnet-4-0)/.test(model)
 }
 
-export type ClaudeErrorCode = 'auth' | 'rate' | 'overloaded' | 'refusal' | 'bad_request' | 'network' | 'other'
+export type ClaudeErrorCode = 'auth' | 'rate' | 'overloaded' | 'refusal' | 'bad_request' | 'network' | 'budget' | 'other'
 
 export class ClaudeError extends Error {
   readonly code: ClaudeErrorCode
@@ -44,8 +44,20 @@ export interface ClaudeCall {
   maxTokens?: number
 }
 
+/** The spending meter (spend.ts, wired in index.ts): before() may refuse a call (the monthly budget is used up and the
+ * user did not say to go on) by throwing a ClaudeError with code 'budget'; after() counts what a call used. */
+export interface ClaudeMeter {
+  before?(model: string): Promise<void>
+  after?(model: string, usage: Anthropic.Beta.BetaUsage | undefined): void
+}
+let meter: ClaudeMeter | null = null
+export function setClaudeMeter(m: ClaudeMeter | null): void {
+  meter = m
+}
+
 /** One Messages API call with her defaults; typed failures become ClaudeError. */
 export async function callClaude(client: Anthropic, call: ClaudeCall): Promise<Anthropic.Beta.BetaMessage> {
+  await meter?.before?.(call.model)
   const outputConfig: Anthropic.Beta.BetaOutputConfig = {}
   if (call.effort && takesEffort(call.model)) outputConfig.effort = call.effort
   if (call.schema) outputConfig.format = { type: 'json_schema', schema: call.schema }
@@ -63,6 +75,11 @@ export async function callClaude(client: Anthropic, call: ClaudeCall): Promise<A
     })
   } catch (err) {
     throw toClaudeError(err)
+  }
+  try {
+    meter?.after?.(res.model || call.model, res.usage)
+  } catch (err) {
+    console.warn('[spend]', (err as Error).message)
   }
   if (res.stop_reason === 'refusal') {
     throw new ClaudeError(`Claude declined this request${res.stop_details?.category ? ` (${res.stop_details.category})` : ''}`, 'refusal')

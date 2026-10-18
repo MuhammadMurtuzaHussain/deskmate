@@ -11,6 +11,7 @@ import type { Skill } from '../../src/main/skills.ts'
 import type { ChatApp, JobAction, PastKind, ScheduleInput, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
 import { untrusted } from '../../src/main/untrusted.ts'
 import { blockedPath, fileQuery, kindOf } from '../../src/main/channels/sendfile.ts'
+import { checkCommand } from '../../src/main/shellsafe.ts'
 
 export interface FakeWorld {
   /** chat names each app knows; a name not here is "not found" */
@@ -38,6 +39,12 @@ export interface FakeWorld {
   jobs?: { task: string; when: string }[]
   /** what is in ~/Downloads, oldest first */
   downloads?: { name: string; path: string }[]
+  /** her activity log lately, as recent_actions shows it, oldest first */
+  actions?: string[]
+  /** the last thing she did that can be undone ("put Resume 2026.pdf back in Documents"); none when missing */
+  undoable?: string
+  /** what a terminal command prints */
+  shellOutput?: string
 }
 
 export interface HostCall {
@@ -363,6 +370,39 @@ export class FakeHost implements WorkerHost {
     if (blocked) return { ok: false, text: `Not sent: ${blocked}.` }
     if (!(await ctx.confirm(`Send ${hit.name} (1.2 MB) to you on Telegram?`))) return { ok: false, text: 'The user said no; not sent.', say: 'Okay, not sent.' }
     return this.ok(`Sent ${hit.name} (${hit.path}) to their phone.`, `Sent ${hit.name}.`)
+  }
+
+  async moveFile(a: { from: string; to: string }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('move_file', a, ctx)
+    const hit = (this.world.files ?? []).find((f) => f.path === a.from)
+    if (!hit) return { ok: false, text: `Not moved: ${a.from} does not exist.` }
+    if (ctx.mustConfirm && !(await ctx.confirm(`Move ${hit.name} to ${a.to}?`))) return { ok: false, text: 'The user said no; not moved.', refused: true }
+    return { ok: true, text: `Moved ${a.from} to ${a.to}.`, say: `Moved ${hit.name}.`, undo: { kind: 'move', from: a.from, to: a.to } }
+  }
+
+  async trashFile(a: { path: string }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('trash_file', a, ctx)
+    const hit = [...(this.world.files ?? []), ...(this.world.downloads ?? [])].find((f) => f.path === a.path)
+    if (!hit) return { ok: false, text: `Not trashed: ${a.path} does not exist.` }
+    return { ok: true, text: `Moved ${hit.name} to the Trash. It can be put back with "undo that".`, say: `${hit.name} is in the Trash.`, undo: { kind: 'trash', from: a.path, trashed: `/Users/me/.Trash/${hit.name}` } }
+  }
+
+  async runCommand(a: { command: string; folder: string | null }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('run_command', a, ctx)
+    const verdict = checkCommand(a.command)
+    if (!verdict.ok) return { ok: false, text: `Refused, not run: ${verdict.why}. Tell the user; do not try another way.` }
+    return this.ok(this.world.shellOutput ?? '(no output)')
+  }
+
+  async recentActions(ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('recent_actions', {}, ctx)
+    return this.ok(this.world.actions?.length ? this.world.actions.join('\n') : 'Nothing yet today.')
+  }
+
+  async undo(a: { what: string }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('undo', a, ctx)
+    if (!this.world.undoable) return { ok: false, text: 'Nothing I did lately can be undone (sent messages cannot be taken back).' }
+    return this.ok(`Undone: ${this.world.undoable}.`)
   }
 
   async runSkill(skill: Skill, slots: Record<string, string>, ctx: ToolCtx): Promise<ToolOutcome> {

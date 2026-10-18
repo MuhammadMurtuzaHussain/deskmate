@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { redact } from '../secrets.ts'
 import { CHANNEL_IDS, CHANNEL_LABELS, chunks, type Channel, type ChannelId, type Inbound, type OutFile } from './channel.ts'
 
 // The hub: every chat app she can be reached through goes through here, so the rules are the same everywhere.
@@ -341,7 +342,9 @@ export class ChannelHub {
   // ---- what she says
 
   /** One of her lines, sent only while handling channel work; ask=true asks for a yes or no. */
-  say(text: string, opts: { ask?: boolean } = {}): void {
+  say(raw: string, opts: { ask?: boolean } = {}): void {
+    // Nothing key-shaped ever leaves in a reply.
+    const text = redact(raw)
     const ctx = store.getStore()
     const id = this.activeChannel
     if (!ctx || !id || !text.trim()) return
@@ -376,7 +379,7 @@ export class ChannelHub {
     if (!id || !text.trim()) return
     const s = this.states.get(id)!
     if (!s.channel.editText) return
-    s.statusText = text.trim().slice(0, 300)
+    s.statusText = redact(text.trim()).slice(0, 300)
     if (s.statusTimer) return
     const chat = store.getStore()!.chat
     s.statusTimer = setTimeout(() => {

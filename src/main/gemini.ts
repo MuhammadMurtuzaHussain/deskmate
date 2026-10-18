@@ -9,6 +9,24 @@ export interface GeminiContent {
 interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[]
   promptFeedback?: { blockReason?: string }
+  usageMetadata?: GeminiUsage
+}
+
+export interface GeminiUsage {
+  promptTokenCount?: number
+  candidatesTokenCount?: number
+  cachedContentTokenCount?: number
+  thoughtsTokenCount?: number
+}
+
+/** The spending meter (spend.ts): before() may refuse a call when the budget is used up; after() counts it. */
+export interface GeminiMeter {
+  before?(model: string): Promise<void>
+  after?(model: string, usage: GeminiUsage | undefined): void
+}
+let meter: GeminiMeter | null = null
+export function setGeminiMeter(m: GeminiMeter | null): void {
+  meter = m
 }
 
 export class GeminiBlockedError extends Error {}
@@ -34,6 +52,7 @@ export async function geminiGenerate(opts: {
 }
 
 async function geminiOnce(opts: { apiKey: string; model: string; system: string; contents: GeminiContent[] }): Promise<string> {
+  await meter?.before?.(opts.model)
   const generationConfig: Record<string, unknown> = {
     temperature: 0.9,
     maxOutputTokens: 1024,
@@ -67,6 +86,11 @@ async function geminiOnce(opts: { apiKey: string; model: string; system: string;
     throw new Error(`Gemini HTTP ${res.status}: ${body}`)
   }
   const data = (await res.json()) as GeminiResponse
+  try {
+    meter?.after?.(opts.model, data.usageMetadata)
+  } catch (err) {
+    console.warn('[spend]', (err as Error).message)
+  }
   if (data.promptFeedback?.blockReason) throw new GeminiBlockedError(data.promptFeedback.blockReason)
   const candidate = data.candidates?.[0]
   if (!candidate) throw new GeminiBlockedError('no candidates')

@@ -123,8 +123,40 @@
       <div class="msg" id="learn-msg"></div>
     </section>
 
+    <section id="safety" class="hidden">
+      <div class="head"><h2>9 · Permissions and safety</h2><span class="chip" id="safety-chip">…</span></div>
+      <div class="hint">Every tool she has gets a level: <b>allow</b> runs it, <b>ask</b> asks you first every time, <b>never</b> takes it away from her. Reading is allow; sending, deleting, buying, running commands, Claude Code jobs and files leaving the Mac ask. Once she has read a web page, a message or anything else from outside, anything risky asks you whatever is set here. Say <b>"yes, always"</b> to one of her questions and that tool stops asking from there. More in docs/SAFETY.md.</div>
+      <div class="row quiet">
+        <div class="grow"><b>Stop everything</b><span class="hint" id="stop-note">stops what she is doing, plans, scheduled jobs, the heartbeat and chat apps; asks about Claude Code jobs. Say "resume" to turn them back on.</span></div>
+        <input id="stop-key" class="wide" title="an Electron accelerator, like Control+Alt+Escape" spellcheck="false" />
+        <button id="stop-now" class="danger">Stop now</button>
+      </div>
+      <div><b>Stricter from some places</b><span class="hint"> · risky tools asked for from here</span></div>
+      <div id="origin-list" class="origins"></div>
+      <div class="row"><input id="perm-filter" placeholder="find a tool: send, file, github…" /><label class="inline"><input type="checkbox" id="perm-risky" checked /> only risky ones</label></div>
+      <div id="perm-list" class="perms"></div>
+      <label class="toggle"><input type="checkbox" id="shell-on" /><div><b>Let her run terminal commands</b><span>adds run_command: each one asks first; sudo, deleting your home or system folders, keys and passwords, and piping downloads into a shell are refused. It runs in a scratch folder (or the project you name) without her keys.</span></div></label>
+      <div class="hint" id="deny-apps"></div>
+      <div class="hint" id="secrets-note"></div>
+      <div class="row"><button id="activity-open">What she did today…</button></div>
+      <div class="msg" id="safety-msg"></div>
+    </section>
+
+    <section id="spend" class="hidden">
+      <div class="head"><h2>10 · Spending</h2><span class="chip" id="spend-chip">…</span></div>
+      <div class="hint">What her Claude and Gemini calls cost, from the tokens each one used (cached and uncached) and the list price of the model. It is an estimate; your provider's bill is the real number.</div>
+      <div class="spendrow"><div><b id="spend-today">$0</b><span>today</span></div><div><b id="spend-month">$0</b><span id="spend-month-label">this month</span></div><div><b id="spend-calls">0</b><span>calls this month</span></div></div>
+      <div id="spend-origins" class="origins"></div>
+      <div class="row quiet">
+        <div class="grow"><b>Monthly budget</b><span class="hint">she tells you at 80%; at 100% she stops and asks before going on, and jobs on their own just stop</span></div>
+        <span class="hint">$</span><input id="budget" class="narrow" type="number" min="0" step="1" placeholder="none" />
+        <button id="budget-save">Save</button>
+      </div>
+      <div class="msg" id="spend-msg"></div>
+    </section>
+
     <section id="characters" class="hidden">
-      <div class="head"><h2>9 · Characters</h2><button id="char-add">Add a character…</button></div>
+      <div class="head"><h2>11 · Characters</h2><button id="char-add">Add a character…</button></div>
       <div class="hint">Click one to switch to her. Add your own: a <b>.vrm</b>, a Live2D model (its <b>.model3.json</b> or the whole folder), a <b>.pmx</b>, a rigged <b>.fbx</b>, or a <b>.zip</b> with one inside.</div>
       <div id="char-grid" class="cards"></div>
       <div class="msg" id="char-msg"></div>

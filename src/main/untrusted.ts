@@ -6,7 +6,7 @@
  * says. Pure, so the tests and the eval use it as is.
  */
 
-export type UntrustedSource = 'screen' | 'web' | 'message' | 'notification' | 'phone' | 'mcp' | 'past' | 'skill' | 'schedule'
+export type UntrustedSource = 'screen' | 'web' | 'message' | 'notification' | 'phone' | 'mcp' | 'past' | 'skill' | 'shell' | 'schedule'
 
 /** What a tool does that someone could trick her into: these wait for a yes in a turn that read untrusted text. */
 export type Risk = 'send' | 'delete' | 'purchase' | 'shell' | 'external'
@@ -20,6 +20,7 @@ const SOURCE_NAMES: Record<UntrustedSource, string> = {
   mcp: 'a connected tool server',
   past: 'old logs that hold text from elsewhere',
   skill: "a skill script's output",
+  shell: "a command's output",
   // Not text from elsewhere: a run nobody is watching, so its risky steps wait for a yes the same way.
   schedule: 'your scheduled job'
 }

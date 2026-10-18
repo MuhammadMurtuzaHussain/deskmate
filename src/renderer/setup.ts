@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, ChannelKey, ChannelSetup, ScheduleSetupState, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, ChannelKey, ChannelSetup, ScheduleSetupState, SetupState, SafetySetupState, SpendSetupState, PermLevel, PermOriginId } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -697,6 +697,8 @@ async function refresh(): Promise<void> {
   renderMcp(state.mcp)
   renderLearn(state.learn)
   renderSchedule(state.schedule)
+  renderSafety(state.safety)
+  renderSpend(state.spend)
 }
 
 useOllama.addEventListener('click', async () => {
@@ -960,3 +962,208 @@ void api.getConfig().then((config) => {
 })
 void refresh()
 void renderCharacters()
+
+// ---- 9 · Permissions and safety, 10 · Spending
+
+const safetyMsg = $<HTMLDivElement>('safety-msg')
+function safetyMessage(text: string, kind: 'good' | 'bad' | '' = ''): void {
+  safetyMsg.textContent = text
+  safetyMsg.className = `msg${kind ? ` ${kind}` : ''}`
+}
+const ORIGIN_SHORT: Record<PermOriginId, string> = { voice: 'voice', typed: 'command bar', phone: 'chat apps', schedule: 'schedules', heartbeat: 'heartbeat' }
+let safety: SafetySetupState | null = null
+
+function levelSelect(current: PermLevel | null, def: PermLevel, onPick: (l: PermLevel | null) => void): HTMLSelectElement {
+  const sel = document.createElement('select')
+  const opts: [string, string][] = [
+    ['', `default (${def})`],
+    ['allow', 'allow'],
+    ['ask', 'ask'],
+    ['never', 'never']
+  ]
+  for (const [v, label] of opts) {
+    const o = document.createElement('option')
+    o.value = v
+    o.textContent = label
+    sel.append(o)
+  }
+  sel.value = current ?? ''
+  sel.className = `lvl-${current ?? def}`
+  sel.addEventListener('change', () => onPick((sel.value || null) as PermLevel | null))
+  return sel
+}
+
+function renderSafety(s: SafetySetupState | undefined): void {
+  $<HTMLElement>('safety').classList.toggle('hidden', !s || !api.setPermission)
+  if (!s) return
+  safety = s
+  const chipEl = $<HTMLSpanElement>('safety-chip')
+  if (s.halted) {
+    chipEl.textContent = 'everything stopped · say "resume"'
+    chipEl.className = 'chip stop'
+  } else {
+    const changed = s.tools.filter((t) => t.level || Object.keys(t.byOrigin).length).length
+    chip(chipEl, changed ? `${changed} tool${changed === 1 ? '' : 's'} changed` : 'defaults', changed ? 'ok' : '')
+  }
+  const key = $<HTMLInputElement>('stop-key')
+  if (document.activeElement !== key) key.value = s.stopShortcut
+  key.classList.toggle('bad', s.stopShortcutTaken)
+  $<HTMLSpanElement>('stop-note').textContent = s.stopShortcutTaken
+    ? `${s.stopShortcut} could not be registered (another app has it, or it is not a valid shortcut); the tray item still works.`
+    : 'stops what she is doing, plans, scheduled jobs, the heartbeat and chat apps; asks about Claude Code jobs. Say "resume" to turn them back on.'
+  $<HTMLInputElement>('shell-on').checked = s.shell
+  $<HTMLDivElement>('deny-apps').textContent = `Never, whatever is set: she does not work ${s.denyApps.length} apps that hold passwords, system settings or a shell (Keychain Access, 1Password, Bitwarden, System Settings, Terminal, iTerm, Warp, Ghostty).`
+  $<HTMLDivElement>('secrets-note').textContent =
+    s.secrets.store === 'keychain'
+      ? `Your ${s.secrets.count} key${s.secrets.count === 1 ? '' : 's'} and token${s.secrets.count === 1 ? '' : 's'} are encrypted with a key kept in the ${s.secrets.name}, not in settings.json; anything key-shaped is blanked out of her logs, notes, activity and chat replies.`
+      : `Your keys and tokens are in ${s.secrets.name}: this computer has no keyring she can use. Anything key-shaped is still blanked out of her logs, notes, activity and chat replies.`
+
+  const origins = $<HTMLDivElement>('origin-list')
+  origins.replaceChildren()
+  for (const o of s.origins) {
+    const row = document.createElement('label')
+    const name = document.createElement('span')
+    name.textContent = o.label
+    const sel = document.createElement('select')
+    for (const [v, label] of [['', 'as each tool is set'], ['ask', 'always ask'], ['never', 'never']] as const) {
+      const opt = document.createElement('option')
+      opt.value = v
+      opt.textContent = label
+      sel.append(opt)
+    }
+    sel.value = o.floor ?? ''
+    sel.addEventListener('change', async () => {
+      if (!api.setOriginFloor) return
+      renderSafety(await api.setOriginFloor(o.id, (sel.value || null) as 'ask' | 'never' | null))
+      safetyMessage(sel.value ? `Risky tools from ${o.label.toLowerCase()}: ${sel.value === 'ask' ? 'she asks first' : 'never'}.` : `${o.label}: as each tool is set.`, 'good')
+    })
+    row.append(name, sel)
+    origins.append(row)
+  }
+  renderPermList()
+}
+
+function renderPermList(): void {
+  const s = safety
+  if (!s) return
+  const list = $<HTMLDivElement>('perm-list')
+  const q = $<HTMLInputElement>('perm-filter').value.trim().toLowerCase()
+  const onlyRisky = $<HTMLInputElement>('perm-risky').checked
+  list.replaceChildren()
+  const shown = s.tools.filter((t) => (!onlyRisky || t.risky || t.level || Object.keys(t.byOrigin).length) && (!q || `${t.name} ${t.about}`.toLowerCase().includes(q)))
+  for (const t of shown) {
+    const row = el('div', 'perm-row')
+    const name = el('div', 'name', t.name)
+    if (t.kind !== 'built-in') name.append(el('span', 'tag', t.kind === 'mcp' ? 'tool server' : 'skill'))
+    if (t.risky) name.append(el('span', 'tag risky', 'risky'))
+    const about = el('div', 'about', t.about)
+    const ctl = el('div', 'ctl')
+    ctl.append(
+      levelSelect(t.level, t.defaultLevel, async (l) => {
+        if (!api.setPermission) return
+        renderSafety(await api.setPermission(t.name, l))
+        safetyMessage(`${t.name}: ${l ?? `back to the default (${t.defaultLevel})`}.`, 'good')
+      })
+    )
+    const over = el('div', 'over')
+    for (const [o, l] of Object.entries(t.byOrigin) as [PermOriginId, PermLevel][]) {
+      const b = el('button', '', `${ORIGIN_SHORT[o]}: ${l} ✕`)
+      b.title = 'Remove this setting for one place'
+      b.addEventListener('click', async () => {
+        if (!api.setPermission) return
+        renderSafety(await api.setPermission(t.name, null, o))
+      })
+      over.append(b)
+    }
+    const add = document.createElement('select')
+    const first = document.createElement('option')
+    first.value = ''
+    first.textContent = '+ only from…'
+    add.append(first)
+    for (const o of s.origins) {
+      for (const l of ['allow', 'ask', 'never'] as PermLevel[]) {
+        const opt = document.createElement('option')
+        opt.value = `${o.id}:${l}`
+        opt.textContent = `${ORIGIN_SHORT[o.id]}: ${l}`
+        add.append(opt)
+      }
+    }
+    add.addEventListener('change', async () => {
+      if (!add.value || !api.setPermission) return
+      const [o, l] = add.value.split(':') as [PermOriginId, PermLevel]
+      renderSafety(await api.setPermission(t.name, l, o))
+      safetyMessage(`${t.name} from ${ORIGIN_SHORT[o]}: ${l}.`, 'good')
+    })
+    over.append(add)
+    ctl.append(over)
+    row.append(name, ctl, about)
+    list.append(row)
+  }
+  if (!shown.length) list.append(el('div', 'hint', 'No tool matches.'))
+}
+
+$<HTMLInputElement>('perm-filter').addEventListener('input', () => renderPermList())
+$<HTMLInputElement>('perm-risky').addEventListener('change', () => renderPermList())
+$<HTMLInputElement>('shell-on').addEventListener('change', async (e) => {
+  if (!api.setSafety) return
+  const on = (e.target as HTMLInputElement).checked
+  renderSafety(await api.setSafety({ shell: on }))
+  safetyMessage(on ? 'She can run terminal commands now; each one asks you first.' : 'Terminal commands are off.', 'good')
+})
+$<HTMLInputElement>('stop-key').addEventListener('change', async (e) => {
+  if (!api.setSafety) return
+  const next = await api.setSafety({ stopShortcut: (e.target as HTMLInputElement).value })
+  renderSafety(next)
+  safetyMessage(next.stopShortcutTaken ? `${next.stopShortcut} did not work; try another.` : `${next.stopShortcut} now stops everything.`, next.stopShortcutTaken ? 'bad' : 'good')
+})
+$<HTMLButtonElement>('stop-now').addEventListener('click', async (e) => {
+  e.preventDefault()
+  await api.stopEverything?.()
+  safetyMessage('Everything is stopped. Say "resume", or use the tray, to turn it back on.', 'good')
+})
+$<HTMLButtonElement>('activity-open').addEventListener('click', (e) => {
+  e.preventDefault()
+  api.openActivity?.()
+})
+
+const spendMsg = $<HTMLDivElement>('spend-msg')
+function money(n: number): string {
+  if (n === 0) return '$0'
+  if (n < 0.01) return '<$0.01'
+  return `$${n < 10 ? n.toFixed(2) : n.toFixed(n < 100 ? 1 : 0)}`
+}
+
+function renderSpend(sp: SpendSetupState | undefined): void {
+  $<HTMLElement>('spend').classList.toggle('hidden', !sp || !api.setBudget)
+  if (!sp) return
+  $<HTMLElement>('spend-today').textContent = money(sp.today)
+  $<HTMLElement>('spend-month').textContent = sp.budget ? `${money(sp.month)} / ${money(sp.budget)}` : money(sp.month)
+  $<HTMLElement>('spend-month-label').textContent = `in ${sp.monthName}${sp.overridden ? ' (you said to go past the budget)' : ''}`
+  $<HTMLElement>('spend-calls').textContent = String(sp.calls)
+  const list = $<HTMLDivElement>('spend-origins')
+  list.replaceChildren()
+  for (const o of sp.byOrigin) {
+    const row = document.createElement('label')
+    row.append(el('span', '', o.label), el('span', 'cost', money(o.cost)))
+    list.append(row)
+  }
+  const cached = sp.tokens.cacheRead
+  const all = sp.tokens.input + sp.tokens.cacheRead + sp.tokens.cacheWrite
+  spendMsg.textContent = `${Math.round(all / 1000)}k tokens in (${all ? Math.round((100 * cached) / all) : 0}% from the cache), ${Math.round(sp.tokens.output / 1000)}k out this month${sp.unpriced ? ` · ${sp.unpriced} call${sp.unpriced === 1 ? '' : 's'} to a model with no price (counted as $0)` : ''}.`
+  spendMsg.className = 'msg'
+  const b = $<HTMLInputElement>('budget')
+  if (document.activeElement !== b) b.value = sp.budget ? String(sp.budget) : ''
+  const chipEl = $<HTMLSpanElement>('spend-chip')
+  if (sp.state === 'over') chip(chipEl, sp.overridden ? 'over budget (you said go on)' : 'budget used up', 'bad')
+  else if (sp.state === 'warn') chip(chipEl, `${Math.round((100 * sp.month) / sp.budget)}% of the budget`, 'bad')
+  else chip(chipEl, sp.budget ? `${Math.round((100 * sp.month) / sp.budget)}% of the budget` : `${money(sp.month)} this month`, 'ok')
+}
+
+$<HTMLButtonElement>('budget-save').addEventListener('click', async (e) => {
+  e.preventDefault()
+  if (!api.setBudget) return
+  const n = Number($<HTMLInputElement>('budget').value) || 0
+  renderSpend(await api.setBudget(n))
+  spendMsg.textContent = n ? `Budget set: ${money(n)} a month.` : 'No budget.'
+  spendMsg.className = 'msg good'
+})

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, NoticePrefs, PermissionKind, ChannelAction, ChannelKey, ReplyPayload } from '../shared/types'
+import type { ActivityView, Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, NoticePrefs, PermissionKind, ChannelAction, ChannelKey, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: (id) => ipcRenderer.invoke('config:get', id),
@@ -74,7 +74,17 @@ const api: DeskmateApi = {
     ipcRenderer.on('plan:update', (_event, plan: Plan | null) => cb(plan))
   },
   planAction: (action: PlanAction) => ipcRenderer.send('plan:action', action),
-  planHeight: (px: number) => ipcRenderer.send('plan:height', px)
+  planHeight: (px: number) => ipcRenderer.send('plan:height', px),
+  setPermission: (tool, level, origin) => ipcRenderer.invoke('setup:permission', tool, level, origin),
+  setOriginFloor: (origin, floor) => ipcRenderer.invoke('setup:floor', origin, floor),
+  setSafety: (patch) => ipcRenderer.invoke('setup:safety', patch),
+  stopEverything: () => ipcRenderer.invoke('safety:stop'),
+  setBudget: (n) => ipcRenderer.invoke('setup:budget', n),
+  openActivity: () => ipcRenderer.send('activity:open'),
+  onActivity: (cb) => {
+    ipcRenderer.on('activity:update', (_event, view: ActivityView) => cb(view))
+  },
+  activityUndo: (id) => ipcRenderer.invoke('activity:undo', id)
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)

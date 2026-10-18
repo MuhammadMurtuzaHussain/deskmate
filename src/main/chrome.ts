@@ -172,6 +172,31 @@ export async function closeTab(): Promise<void> {
   await osa([IN_CHROME, 'if (count of windows) = 0 then error "NO_WINDOW"', 'tell front window to close active tab', 'end tell'])
 }
 
+/** Closes the first tab whose address starts with `url` (a tab she opened, for undo). False when none is open. */
+export async function closeTabWithUrl(url: string): Promise<boolean> {
+  if (!(await running())) return false
+  const out = await osa(
+    [
+      'on run argv',
+      IN_CHROME,
+      'set target to item 1 of argv',
+      'repeat with w in windows',
+      'repeat with t in tabs of w',
+      'if (URL of t) starts with target then',
+      'close t',
+      'return "closed"',
+      'end if',
+      'end repeat',
+      'end repeat',
+      'return "none"',
+      'end tell',
+      'end run'
+    ],
+    [url.replace(/\/$/, '')]
+  )
+  return out.trim() === 'closed'
+}
+
 export async function navigate(action: 'back' | 'forward' | 'reload'): Promise<void> {
   const verb = action === 'back' ? 'go back' : action === 'forward' ? 'go forward' : 'reload'
   await osa([IN_CHROME, ...ACTIVE_TAB, verb, 'end tell', 'end tell'])

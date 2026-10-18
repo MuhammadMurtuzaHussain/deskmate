@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { EMOTIONS, type Emotion } from '../shared/types.ts'
 import type { Origin, ToolCtx, ToolImage, ToolOutcome, ToolSpec } from './tools.ts'
 import { apiTools } from './tools.ts'
+import type { Decision } from './permissions.ts'
 import { guardQuestion, isWrapped, Taint, UNTRUSTED_RULES, untrusted, type UntrustedSource } from './untrusted.ts'
 
 /**
@@ -54,6 +55,25 @@ export interface TurnDeps {
    * answer (a scheduled run while the user is away), so the call waits for them instead of running */
   confirmCall?(q: { question: string; name: string; input: Record<string, unknown>; what: string }): Promise<boolean | 'later'>
   maxRounds?: number
+  /** the permission level for one call (permissions.ts); without it every tool is allow (the guard still asks) */
+  gate?: Gate
+  /** a call is about to run (the app notes it, so a "yes, always" knows which tool it was for) */
+  onToolStart?(name: string, input: Record<string, unknown>): void
+  /** a call finished (or was refused): the activity log takes it from here */
+  onCall?(e: CallEvent): void
+}
+
+export type Gate = (spec: ToolSpec, input: Record<string, unknown>, origin: Origin) => Decision
+
+/** How a call got to run: on its own, after the user's yes, with its own read-back forced on, or not at all. */
+export type Approval = 'auto' | 'asked' | 'readback' | 'refused' | 'blocked' | 'waiting'
+
+/** A finished call, for the activity log. */
+export interface CallEvent extends CallRecord {
+  at: number
+  ms: number
+  origin: Origin
+  outcome: ToolOutcome
 }
 
 export interface CallRecord {
@@ -69,6 +89,8 @@ export interface CallRecord {
   deferred?: boolean
   /** the action as the guard put it ("send \"hi\" to sam on Discord") */
   what?: string
+  /** how it got to run (or why it did not) */
+  approval?: Approval
 }
 
 export interface TurnResult {
@@ -157,35 +179,53 @@ function resultContent(out: ToolOutcome): string | Anthropic.Beta.BetaToolResult
   ]
 }
 
-/** Runs one tool call with the guard in front of it. */
+/** Runs one tool call with the permission level and the guard in front of it. */
 async function execute(
   spec: ToolSpec,
   input: Record<string, unknown>,
   ctx: Omit<ToolCtx, 'mustConfirm'>,
-  confirmCall?: TurnDeps['confirmCall']
-): Promise<{ out: ToolOutcome; guarded: boolean; refused: boolean; deferred?: boolean; what?: string }> {
+  confirmCall?: TurnDeps['confirmCall'],
+  gate?: Gate
+): Promise<{ out: ToolOutcome; guarded: boolean; refused: boolean; deferred?: boolean; what?: string; approval: Approval }> {
+  const decision = gate?.(spec, input, ctx.origin)
+  if (decision?.level === 'never') {
+    ctx.log(`permission: ${spec.name} is never (${decision.why})`)
+    return {
+      out: { ok: false, text: `Not done: the user has switched ${spec.name} off${decision.source === 'origin' || decision.source === 'origin-floor' ? ' for requests from here' : ''} (Setup → Permissions). Do not try another way; tell them.` },
+      guarded: false,
+      refused: true,
+      approval: 'blocked'
+    }
+  }
   const risk = typeof spec.risk === 'function' ? spec.risk(input) : spec.risk
   const guarded = Boolean(risk) && ctx.taint.tainted
-  // In a scheduled run the guard always asks itself, even for a tool with its own read-back: only the guard can let a
-  // step wait for a user who is away.
-  const asks = guarded && (!spec.selfConfirm || ctx.origin === 'schedule')
-  const what = guarded ? (spec.describe?.(input) ?? `use ${spec.name}`) : undefined
+  // The user's level can ask for any tool; the guard asks for a risky one after untrusted text.
+  const mustAsk = guarded || decision?.level === 'ask'
+  // In a scheduled run the question is always asked here, even for a tool with its own read-back: only this question
+  // can let a step wait for a user who is away.
+  const asks = mustAsk && (!spec.selfConfirm || ctx.origin === 'schedule')
+  const what = mustAsk ? (spec.describe?.(input) ?? `use ${spec.name}`) : undefined
   let approved = false
+  let approval: Approval = mustAsk ? 'readback' : 'auto'
   if (asks && what) {
-    ctx.log(`guard: ${spec.name} after reading ${ctx.taint.list().join(', ')}`)
-    const question = guardQuestion(what, ctx.taint)
+    if (guarded) ctx.log(`guard: ${spec.name} after reading ${ctx.taint.list().join(', ')}`)
+    else ctx.log(`permission: ${spec.name} asks (${decision?.why ?? 'ask'})`)
+    const question = guardQuestion(what, guarded ? ctx.taint : new Taint())
     const answer = confirmCall ? await confirmCall({ question, name: spec.name, input, what }) : await ctx.confirm(question)
     if (answer === 'later') {
-      return { out: { ok: false, text: 'The user is away, so this was not done: it waits for their yes when they are back. Do not try another way; say it is waiting for them.' }, guarded, refused: true, deferred: true, what }
+      return { out: { ok: false, text: 'The user is away, so this was not done: it waits for their yes when they are back. Do not try another way; say it is waiting for them.' }, guarded, refused: true, deferred: true, what, approval: 'waiting' }
     }
-    if (!answer) return { out: { ok: false, text: 'The user said no, so it was not done. Do not try another way; tell them.' }, guarded, refused: true, what }
+    if (!answer) return { out: { ok: false, text: 'The user said no, so it was not done. Do not try another way; tell them.' }, guarded, refused: true, what, approval: 'refused' }
     approved = spec.selfConfirm === true
+    approval = 'asked'
   } else if (guarded) {
     ctx.log(`guard: ${spec.name} runs with its read-back forced on (read ${ctx.taint.list().join(', ')})`)
   }
-  const out = await spec.run(input, { ...ctx, mustConfirm: guarded && !approved, ...(approved ? { approved } : {}) })
+  const level = decision?.level === 'ask' ? 'ask' : 'allow'
+  const out = await spec.run(input, { ...ctx, mustConfirm: mustAsk && !approved, level, ...(decision?.explicit && level === 'allow' ? { trusted: true } : {}), ...(approved ? { approved } : {}) })
   if (out.untrusted) ctx.taint.mark(out.untrusted)
-  return { out, guarded, refused: false, what }
+  if (approval === 'readback' && out.refused) approval = 'refused'
+  return { out, guarded, refused: false, what, approval }
 }
 
 /** One turn: the user's message in, her line out, with every tool call it took. */
@@ -194,8 +234,10 @@ export async function runAgentTurn(input: TurnInput, deps: TurnDeps): Promise<Tu
   if (input.origin === 'phone') taint.mark('phone')
   if (input.origin === 'schedule') taint.mark('schedule')
   if (input.screenshot) taint.mark('screen')
+  // A tool set to never for this origin is not offered at all (and refused if it is asked for anyway).
+  const offered = deps.gate ? deps.tools.filter((t) => deps.gate?.(t, {}, input.origin).level !== 'never') : deps.tools
   const byName = new Map(deps.tools.map((t) => [t.name, t]))
-  const tools = apiTools(deps.tools)
+  const tools = apiTools(offered)
   // Persona and rules never change; the notes and the skills list change now and then; the fading facts often. Each
   // stable part ends in a cache breakpoint, so a turn only pays full price for what moved.
   const notes = [input.memory.trim() || 'You do not know this person yet.', input.skills?.trim() ? `## Skills (read_skill loads one)\n${input.skills.trim()}` : ''].filter(Boolean).join('\n\n')
@@ -254,14 +296,20 @@ export async function runAgentTurn(input: TurnInput, deps: TurnDeps): Promise<Tu
         continue
       }
       deps.log(`tool ${use.name} ${JSON.stringify(args).slice(0, 240)}`)
+      const at = Date.now()
+      deps.onToolStart?.(use.name, args)
       try {
-        const { out, guarded, refused, deferred, what } = await execute(spec, args, ctx, deps.confirmCall)
-        calls.push({ name: use.name, input: args, ok: out.ok, text: out.text.slice(0, 400), guarded, refused, ...(deferred ? { deferred } : {}), ...(what ? { what } : {}) })
+        const { out, guarded, refused, deferred, what, approval } = await execute(spec, args, ctx, deps.confirmCall, deps.gate)
+        const rec: CallRecord = { name: use.name, input: args, ok: out.ok, text: out.text.slice(0, 400), guarded, refused, ...(deferred ? { deferred } : {}), ...(what ? { what } : {}), approval }
+        calls.push(rec)
+        deps.onCall?.({ ...rec, at, ms: Date.now() - at, origin: input.origin, outcome: out })
         results.push({ type: 'tool_result', tool_use_id: use.id, content: resultContent(out) })
         deps.log(`  → ${out.ok ? 'ok' : 'not ok'}: ${out.text.slice(0, 200).replace(/\n/g, ' | ')}`)
       } catch (err) {
         const message = (err as Error).message || String(err)
-        calls.push({ name: use.name, input: args, ok: false, text: message.slice(0, 400), guarded: false, refused: false })
+        const rec: CallRecord = { name: use.name, input: args, ok: false, text: message.slice(0, 400), guarded: false, refused: false, approval: 'auto' }
+        calls.push(rec)
+        deps.onCall?.({ ...rec, at, ms: Date.now() - at, origin: input.origin, outcome: { ok: false, text: message } })
         results.push({ type: 'tool_result', tool_use_id: use.id, content: message, is_error: true })
         deps.log(`  ✗ ${message}`)
       }
@@ -272,12 +320,12 @@ export async function runAgentTurn(input: TurnInput, deps: TurnDeps): Promise<Tu
   return finish(`[sad] I ran out of steps before finishing${done.length ? `; I got through ${done.join(', ')}` : ''}.`, false, maxRounds)
 }
 
-/** A shortcut's single tool call (fastpath.ts), through the same guard as the agent's calls. */
+/** A shortcut's single tool call (fastpath.ts), through the same permission levels and guard as the agent's calls. */
 export async function runOneTool(
   tools: ToolSpec[],
   name: string,
   input: Record<string, unknown>,
-  deps: Pick<TurnDeps, 'confirm' | 'onStep' | 'log' | 'stopped'> & { origin: Origin; approved?: boolean }
+  deps: Pick<TurnDeps, 'confirm' | 'onStep' | 'log' | 'stopped' | 'gate' | 'onToolStart' | 'onCall'> & { origin: Origin; approved?: boolean }
 ): Promise<{ out: ToolOutcome; record: CallRecord }> {
   const spec = tools.find((t) => t.name === name)
   if (!spec) {
@@ -287,11 +335,28 @@ export async function runOneTool(
   const taint = new Taint()
   if (deps.origin === 'phone') taint.mark('phone')
   deps.log(`shortcut ${name} ${JSON.stringify(input).slice(0, 240)}`)
-  // A step a scheduled run left waiting, that the user has now said yes to, runs as it was without asking again.
-  if (deps.approved) {
-    const out = await spec.run(input, { origin: deps.origin, taint, confirm: deps.confirm, onStep: deps.onStep, log: deps.log, stopped: deps.stopped, mustConfirm: false, approved: true })
-    return { out, record: { name, input, ok: out.ok, text: out.text.slice(0, 400), guarded: false, refused: false } }
+  const at = Date.now()
+  deps.onToolStart?.(name, input)
+  const finish = (out: ToolOutcome, record: CallRecord): { out: ToolOutcome; record: CallRecord } => {
+    deps.onCall?.({ ...record, at, ms: Date.now() - at, origin: deps.origin, outcome: out })
+    return { out, record }
   }
-  const { out, guarded, refused } = await execute(spec, input, { origin: deps.origin, taint, confirm: deps.confirm, onStep: deps.onStep, log: deps.log, stopped: deps.stopped })
-  return { out, record: { name, input, ok: out.ok, text: out.text.slice(0, 400), guarded, refused } }
+  // A step a scheduled run left waiting, that the user has now said yes to, runs as it was without asking again (unless
+  // the user has since switched the tool off).
+  if (deps.approved) {
+    if (deps.gate?.(spec, input, deps.origin).level === 'never') {
+      const out = { ok: false, text: `Not done: ${name} is switched off in Setup → Permissions.` }
+      return finish(out, { name, input, ok: false, text: out.text, guarded: false, refused: true, approval: 'blocked' })
+    }
+    const out = await spec.run(input, { origin: deps.origin, taint, confirm: deps.confirm, onStep: deps.onStep, log: deps.log, stopped: deps.stopped, mustConfirm: false, approved: true })
+    return finish(out, { name, input, ok: out.ok, text: out.text.slice(0, 400), guarded: false, refused: false, approval: 'asked' })
+  }
+  try {
+    const { out, guarded, refused, approval } = await execute(spec, input, { origin: deps.origin, taint, confirm: deps.confirm, onStep: deps.onStep, log: deps.log, stopped: deps.stopped }, undefined, deps.gate)
+    return finish(out, { name, input, ok: out.ok, text: out.text.slice(0, 400), guarded, refused, approval })
+  } catch (err) {
+    const out = { ok: false, text: (err as Error).message || String(err) }
+    finish(out, { name, input, ok: false, text: out.text.slice(0, 400), guarded: false, refused: false, approval: 'auto' })
+    throw err
+  }
 }

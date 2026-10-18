@@ -273,6 +273,82 @@ export interface SetupState {
   learn?: LearnSetupState
   /** scheduled jobs, the heartbeat and the morning brief; missing from an older main process */
   schedule?: ScheduleSetupState
+  /** permission levels, the kill switch, shell commands, where secrets are kept; missing from an older main process */
+  safety?: SafetySetupState
+  /** the spending meter and the monthly budget; missing from an older main process */
+  spend?: SpendSetupState
+}
+
+export type PermLevel = 'allow' | 'ask' | 'never'
+export type PermOriginId = 'voice' | 'typed' | 'phone' | 'schedule' | 'heartbeat'
+
+export interface SafetySetupState {
+  tools: {
+    name: string
+    /** a few words on what it does */
+    about: string
+    /** the default level at the desk */
+    defaultLevel: PermLevel
+    /** the user's level everywhere, or null for the default */
+    level: PermLevel | null
+    /** the user's levels for single origins */
+    byOrigin: Partial<Record<PermOriginId, PermLevel>>
+    risky: boolean
+    kind: 'built-in' | 'skill' | 'mcp'
+  }[]
+  origins: { id: PermOriginId; label: string; floor: 'ask' | 'never' | null }[]
+  /** apps she never works, whatever is set */
+  denyApps: string[]
+  stopShortcut: string
+  /** the shortcut could not be registered (another app has it) */
+  stopShortcutTaken: boolean
+  halted: boolean
+  shell: boolean
+  /** where the API keys and tokens are kept */
+  secrets: { store: 'keychain' | 'file'; name: string; count: number }
+}
+
+export interface SpendSetupState {
+  today: number
+  month: number
+  monthName: string
+  budget: number
+  state: 'none' | 'ok' | 'warn' | 'over'
+  byOrigin: { id: string; label: string; cost: number }[]
+  calls: number
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }
+  unpriced: number
+  /** the user said to go past the budget this month */
+  overridden: boolean
+}
+
+/** One row of the Activity window. */
+export interface ActivityRow {
+  id: string
+  at: number
+  origin: string
+  tool: string
+  /** the main argument, short */
+  detail: string
+  ok: boolean
+  result: string
+  /** "on its own", "after your yes", "you said no" … */
+  approval: string
+  why: string
+  /** what Undo would do, when it can */
+  undo: string | null
+  /** why it can't be undone, when that is worth saying ("a sent message can't be taken back") */
+  noUndo: string | null
+  undone: boolean
+  /** a look, not a change (hidden unless "show everything") */
+  looking: boolean
+}
+
+export interface ActivityView {
+  day: string
+  rows: ActivityRow[]
+  halted: boolean
+  spend: string
 }
 
 export interface ScheduleSetupState {
@@ -465,6 +541,17 @@ export interface DeskmateApi {
   voices?(): Promise<{ voices: string[]; live: boolean }>
   /** characters were added or removed */
   onCharactersChanged?(cb: () => void): void
+  /** Setup → Permissions and safety */
+  setPermission?(tool: string, level: PermLevel | null, origin?: PermOriginId): Promise<SafetySetupState>
+  setOriginFloor?(origin: PermOriginId, floor: 'ask' | 'never' | null): Promise<SafetySetupState>
+  setSafety?(patch: { shell?: boolean; stopShortcut?: string }): Promise<SafetySetupState>
+  stopEverything?(): Promise<void>
+  /** Setup → Spending */
+  setBudget?(dollars: number): Promise<SpendSetupState>
+  /** the Activity window */
+  openActivity?(): void
+  onActivity?(cb: (view: ActivityView) => void): void
+  activityUndo?(id: string): Promise<{ ok: boolean; text: string }>
   /** plan card window */
   onPlan?(cb: (plan: Plan | null) => void): void
   planAction?(action: PlanAction): void

@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { guessSection, type MemoryFiles, type MemorySection } from './memfiles.ts'
+import { looksSecret, redact } from './secrets.ts'
 
 export interface Fact {
   text: string
@@ -102,7 +103,7 @@ export class Memory {
     if (this.archiveDir && !/^\[[^]*\]$/.test(text.trim())) {
       try {
         mkdirSync(this.archiveDir, { recursive: true })
-        appendFileSync(join(this.archiveDir, `${day(ts)}.jsonl`), `${JSON.stringify({ at: ts, role, text: text.slice(0, 2000) })}\n`)
+        appendFileSync(join(this.archiveDir, `${day(ts)}.jsonl`), `${JSON.stringify({ at: ts, role, text: redact(text.slice(0, 2000)) })}\n`)
       } catch (err) {
         console.warn('[memory] archive:', (err as Error).message)
       }
@@ -116,6 +117,11 @@ export class Memory {
     for (const item of items) {
       const text = item.text.trim()
       if (!text) continue
+      // Keys and passwords never go into her memory, whichever brain picked the fact.
+      if (looksSecret(text)) {
+        out.push({ ok: false, text: 'Not kept: it holds a key, token or password.' })
+        continue
+      }
       if (this.files && item.importance >= 3) {
         out.push(this.files.add(text, item.section ?? guessSection(text)))
         continue

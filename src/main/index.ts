@@ -1,12 +1,21 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, screen, shell, systemPreferences, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, safeStorage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
-import { callClaude, ClaudeError, replyText, toClaudeError } from './anthropic'
-import { runAgentTurn, runOneTool } from './core'
+import { callClaude, ClaudeError, replyText, setClaudeMeter, toClaudeError } from './anthropic'
+import { runAgentTurn, runOneTool, type CallEvent } from './core'
+import { setGeminiMeter } from './gemini'
+import { ActivityLog, approvalText, describeRecent, LOOKING, type ActivityEntry } from './activity'
+import { ActivityWindow } from './activitywin'
+import { cleanPrefs, makeGate, ORIGIN_LABELS, PERM_ORIGINS, resolve as resolvePermission, withFloor, withLevel, type Level, type PermOrigin } from './permissions'
+import { redact, registerSecret, splitSecrets, type SecretBox } from './secrets'
+import { checkArgs, checkCommand, safeEnv } from './shellsafe'
+import { anthropicUsage, budgetState, dollars, geminiUsage, SPEND_LABELS, SPEND_ORIGINS, SpendMeter, spendOrigin, withSpendOrigin, type Price, type SpendOrigin } from './spend'
+import { canUndo, moveFile, protectedPath, trashFile, undoFile, undoLabel, type Undo } from './undo'
+import { DENY_APPS } from './checks'
 import { fastRoute, FILEISH, RE_FIND } from './fastpath'
 import { McpHub } from './mcp'
 import { buildTools, type Origin, type ToolCtx, type ToolOutcome, type ToolSpec, type WorkerHost } from './tools'
@@ -52,11 +61,11 @@ import { PlanCard } from './planwin'
 import { runComputerTask } from './computer'
 import { Hands, HandsError, type DesktopHands } from './hands'
 import { WinHands } from './hands-win'
-import { loadSkills, matchSkill, runSkill, skillsForPlanner, type Skill, type SkillMatch } from './skills'
+import { loadSkills, matchSkill, runSkill, skillsForPlanner, skillTool, type Skill, type SkillMatch } from './skills'
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch, type ActivityView, type SafetySetupState, type SpendSetupState } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -143,7 +152,31 @@ async function serveCharacterFile(request: Request): Promise<Response> {
   return new Response(res.body, { status: res.status, headers })
 }
 
-const settings = new Settings(join(app.getPath('userData'), 'settings.json'))
+// Nothing key-shaped reaches the console or the log files it is copied to.
+for (const level of ['log', 'warn', 'error', 'info'] as const) {
+  const original = console[level].bind(console)
+  console[level] = (...args: unknown[]): void => original(...args.map((a) => (typeof a === 'string' ? redact(a) : a instanceof Error ? redact(a.stack ?? a.message) : a)))
+}
+
+/** The OS keeps the key that encrypts her secrets: Electron safeStorage, the login Keychain on macOS. DESKMATE_SECRETS=file
+ * keeps them in settings.json instead (test instances, so they never touch the real Keychain). */
+function secretBox(): SecretBox | null {
+  if (process.env.DESKMATE_SECRETS?.trim().toLowerCase() === 'file') return null
+  return {
+    name: process.platform === 'darwin' ? 'macOS Keychain' : process.platform === 'win32' ? 'Windows credential store' : 'system keyring',
+    available: () => {
+      try {
+        return safeStorage.isEncryptionAvailable()
+      } catch {
+        return false
+      }
+    },
+    encrypt: (plain) => safeStorage.encryptString(plain),
+    decrypt: (data) => safeStorage.decryptString(data)
+  }
+}
+const settings = new Settings(join(app.getPath('userData'), 'settings.json'), { box: secretBox() })
+registerSecret(process.env.ANTHROPIC_API_KEY, process.env.GEMINI_API_KEY, process.env.GOOGLE_API_KEY, process.env.DESKMATE_TELEGRAM_TOKEN)
 let characters = listCharacters()
 if (characters.length === 0) throw new Error('no characters found under character/<id>/character.json')
 const requested = process.env.DESKMATE_CHARACTER?.trim() || settings.get().activeCharacter || 'mika'
@@ -390,7 +423,9 @@ function shortcutText(accelerator: string): string {
   const mac = process.platform === 'darwin'
   return accelerator
     .replace('CommandOrControl', mac ? '⌘' : 'Ctrl')
+    .replace(/\bControl\b/, mac ? '⌃' : 'Ctrl')
     .replace('Shift', mac ? '⇧' : 'Shift')
+    .replace(/\bEscape\b/, mac ? '⎋' : 'Esc')
     .replace(/\b(?:Alt|Option)\b/, mac ? '⌥' : 'Alt')
     .replace(/\+/g, mac ? '' : '+')
 }
@@ -447,6 +482,11 @@ function buildTrayMenu(): Menu {
     { type: 'separator' },
     { label: win?.isVisible() ? 'Hide her' : 'Show her', click: toggleWindow },
     { label: `Command bar${commandShortcut ? `  ${shortcutText(commandShortcut)}` : ''}`, click: () => bar.show() },
+    halted
+      ? { label: 'Resume everything', toolTip: 'Scheduled jobs, the heartbeat and your chat apps start again', click: () => void resumeEverything() }
+      : { label: `Stop everything${stopShortcut ? `  ${shortcutText(stopShortcut)}` : ''}`, toolTip: 'Stops what she is doing, plans, scheduled runs, the heartbeat and chat apps; asks about Claude Code jobs', click: () => void stopEverything('tray') },
+    { label: 'What she did today…', click: () => activityWin.show() },
+    { label: spendLine(), enabled: budgetState(spend.totals().month, budget()) !== 'none' || spend.totals().calls > 0, toolTip: 'Setup → Spending for the breakdown and a monthly budget', click: () => openSetup('spend') },
     ...(plan && plan.status !== 'done' && plan.status !== 'stopped'
       ? [
           {
@@ -1083,6 +1123,10 @@ async function deliver(reply: Reply, source: ReplyPayload['source'], ready?: Aud
 
 async function observe(manual = false): Promise<void> {
   if (observing) return
+  await withSpendOrigin(manual ? 'chat' : 'background', () => look(manual))
+}
+
+async function look(manual: boolean): Promise<void> {
   const cooldown = brain.cooldownSeconds()
   if (cooldown > 0) {
     status(`Gemini quota exhausted · looks paused for ${Math.ceil(cooldown / 60)} min`)
@@ -1179,8 +1223,10 @@ async function report(task: TaskReport): Promise<Reply> {
   return reply
 }
 
-function yesNo(text: string): 'yes' | 'no' | null {
+function yesNo(text: string): 'yes' | 'no' | 'always' | null {
   const t = text.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').trim()
+  // "Yes, always" / "always allow this": a yes, and that tool stops asking from here (Setup → Permissions).
+  if (/^(?:(?:yes|yeah|yep|sure|ok|okay)\s+)?always(?:\s+allow(?:\s+(?:this|that|it))?)?(?:\s+(?:from now on|please))?$|^(?:don't|do not|never) ask (?:me )?(?:again|about this again)$/.test(t)) return 'always'
   if (/^(?:yes|yeah|yep|yup|sure|ok|okay|go|go ahead|do it|send it|send|please|yes please|confirm|affirmative|run it|ship it|click it|type it)\b/.test(t)) return 'yes'
   if (/^(?:no|nope|nah|don't|do not|cancel|stop|never mind|nevermind|forget it|wait|hold on|not now)\b/.test(t)) return 'no'
   return null
@@ -1394,7 +1440,7 @@ async function runBrowse(goal: string, acknowledged: boolean): Promise<Reply> {
   const logPath = join(USER_DATA, 'tasks', `browse-${Date.now().toString(36)}.log`)
   const log = (line: string): void => {
     try {
-      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${redact(line)}\n`)
     } catch {
       // not her problem
     }
@@ -1513,7 +1559,7 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
   const logPath = join(USER_DATA, 'tasks', `app-${req.app}-${Date.now().toString(36)}.log`)
   const log = (line: string): void => {
     try {
-      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${redact(line)}\n`)
     } catch {
       // not her problem
     }
@@ -1588,7 +1634,7 @@ function taskLogger(prefix: string): (line: string) => void {
   const logPath = join(USER_DATA, 'tasks', `${prefix}-${Date.now().toString(36)}.log`)
   return (line: string): void => {
     try {
-      appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
+      appendFileSync(logPath, `[${new Date().toISOString()}] ${redact(line)}\n`)
     } catch {
       // not her problem
     }
@@ -2210,7 +2256,9 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
         await channels.photo(readFileSync(file))
         return sayPlain('There you go.', 'happy')
       }
+      const before = (await clipboard.has('text/plain').catch(() => false)) ? await clipboard.readText().catch(() => null) : null
       const file = await portrait()
+      noteAction('selfie', { file }, 'Copied a picture of her to the clipboard.', before !== null ? { kind: 'clipboard', previous: before } : { kind: 'none', why: 'the clipboard held a picture or a file before, not text' })
       return sayPlain(`Copied a picture of me, paste it anywhere. It's also in Pictures, Deskmate folder.`, 'happy').then((r) => {
         console.log(`[portrait] ${file}`)
         return r
@@ -2223,13 +2271,22 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     await setListening(!listening)
     return QUIET
   }
+  // The kill switch by voice, and "resume" after it; they beat everything else, a question waiting included.
+  const bare = stripName(text).toLowerCase().replace(/[.!?]+$/, '').trim()
+  if (/^(?:stop everything|stop it all|stop all of it|emergency stop|kill switch|halt everything|\/stopall)$/.test(bare)) {
+    void stopEverything('voice')
+    return QUIET
+  }
+  if (halted && /^(?:resume|resume everything|carry on|start again|you can (?:resume|carry on)|turn (?:it|everything) back on|\/resume)$/.test(bare)) return resumeEverything()
   // Something is waiting on a yes or no.
   if (pending) {
     const answer = yesNo(stripName(text))
     if (pending.kind === 'confirm') {
       const p = pending
       pending = null
-      p.resolve(answer === 'yes')
+      const allowed = answer === 'always' ? alwaysAllow() : null
+      p.resolve(answer === 'yes' || answer === 'always')
+      if (allowed) status(`${allowed} won't ask again from here · Setup → Permissions to change it`)
       if (answer) return QUIET
       // Not an answer: that is a no for the risky action, and a normal message otherwise.
     } else if (pending.kind === 'skill') {
@@ -2242,7 +2299,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     } else if (Date.now() - pending.at > 90_000) {
       pending = null
     } else {
-      if (answer === 'yes') {
+      if (answer === 'yes' || answer === 'always') {
         const p = pending
         pending = null
         return startJob(p.call, p.project, false)
@@ -2254,6 +2311,14 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
       // Anything else is a new message; the question lapses.
       pending = null
     }
+  }
+  // "Undo that", "what did you just do?": the activity log.
+  if (/^(?:undo|undo that|undo it|undo the last (?:thing|one|action)|take (?:that|it) back|put it back|\/undo)$/.test(bare)) return undoLast()
+  if (/^(?:what (?:did|have) you just (?:do|done)|what did you do just now|what was that you (?:just )?did|what have you done just now|\/activity)$/.test(bare)) {
+    const recent = actions.recent(8).filter((e) => Date.now() - e.at < 30 * 60_000)
+    const lines = describeRecent(recent.length ? recent : actions.recent(3))
+    if (bare === '/activity') activityWin.show()
+    return report({ kind: 'day', phase: 'status', title: 'just now', detail: lines })
   }
   // "stop" while something runs always means stop that.
   if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (planRunning || acting || browsing || agent.running().length)) return cancelJob()
@@ -2799,7 +2864,11 @@ let agentBusy = false
 function confirmFor(policy: 'always' | 'voice' | 'never', ctx: ToolCtx): boolean {
   // The guard already asked about this exact call (a scheduled run): no second read-back.
   if (ctx.approved) return false
-  return ctx.mustConfirm || policy === 'always' || (policy === 'voice' && ctx.origin === 'voice')
+  // The guard after untrusted text, or the tool's level is ask (Setup → Permissions): the read-back happens.
+  if (ctx.mustConfirm || ctx.level === 'ask') return true
+  // The user set this tool to allow themselves: no read-back.
+  if (ctx.trusted) return false
+  return policy === 'always' || (policy === 'voice' && ctx.origin === 'voice')
 }
 
 const done = (text: string, say = text): ToolOutcome => ({ ok: true, text, say })
@@ -2837,6 +2906,69 @@ async function appRoutine(req: AppRequest, ctx: ToolCtx): Promise<ToolOutcome> {
 /** The workers, for the agent core and the shortcuts. Each one returns facts for her brain and a plain line. */
 const workerHost: WorkerHost = {
   sendToMe: (a, ctx) => sendToMe(a, ctx),
+  async moveFile(a) {
+    const home = homedir()
+    const from = a.from.replace(/^~(?=\/|$)/, home)
+    const to = a.to.replace(/^~(?=\/|$)/, home)
+    const r = moveFile(from, to, { extra: [USER_DATA] })
+    if (r.ok) journal.add('file', r.text)
+    return r.ok ? { ok: true, text: r.text, say: `Moved ${basename(from)}.`, undo: r.undo } : failed(r.text)
+  },
+  async trashFile(a) {
+    const path = a.path.replace(/^~(?=\/|$)/, homedir())
+    let r = process.platform === 'darwin' ? trashFile(path, join(homedir(), '.Trash'), { extra: [USER_DATA] }) : null
+    // Another disk, or not a Mac: Finder's (or the desktop's) own Trash, without an undo of hers.
+    if (!r || (!r.ok && r.crossDevice)) {
+      const why = protectedPath(path, homedir(), [USER_DATA])
+      if (why) return failed(`Not trashed: ${why}.`)
+      if (!existsSync(path)) return failed(`Not trashed: ${path} does not exist.`)
+      try {
+        await shell.trashItem(path)
+      } catch (err) {
+        return failed(`Not trashed: ${(err as Error).message}`)
+      }
+      journal.add('file', `trashed ${path}`)
+      return { ok: true, text: `Moved ${basename(path)} to the Trash.`, say: `${basename(path)} is in the Trash.`, undo: { kind: 'none', why: "it is in that disk's Trash; Finder's Put Back restores it" } }
+    }
+    if (!r.ok) return failed(r.text)
+    journal.add('file', r.text)
+    return { ok: true, text: r.text, say: `${basename(path)} is in the Trash. Say "undo that" to put it back.`, undo: r.undo }
+  },
+  async runCommand(a, ctx) {
+    if (!settings.get().shell) return failed('Terminal commands are off. The user can turn them on in Setup → Permissions and safety; tell them.', "Running commands is switched off. Turn it on in Setup if you want me to.")
+    const verdict = checkCommand(a.command)
+    if (!verdict.ok) {
+      journal.add('safety', `refused a command: ${a.command.slice(0, 120)} (${verdict.why})`)
+      return failed(`Refused, not run: ${verdict.why}. Do not try another way; tell the user.`, `I won't run that: ${verdict.why}.`)
+    }
+    const project = a.folder ? projects.resolve(a.folder) : null
+    if (a.folder && !project) return failed(`No project called ${a.folder}. Known: ${projects.list().slice(0, 12).map((p) => p.name).join(', ') || 'none'}.`)
+    const cwd = project?.path ?? join(USER_DATA, 'shell')
+    mkdirSync(cwd, { recursive: true })
+    status(`running · ${a.command.slice(0, 40)}`)
+    const out = await new Promise<{ ok: boolean; text: string }>((resolve) => {
+      const child = execFile('/bin/zsh', ['-c', a.command], { cwd, timeout: 120_000, maxBuffer: 1024 * 1024, env: safeEnv() }, (err, stdout, stderr) => {
+        const text = `${stdout}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 8000)
+        resolve({ ok: !err, text: err ? `${err.message.split('\n')[0]}\n${text}` : text || '(no output)' })
+      })
+      const stopper = setInterval(() => ctx.stopped() && child.kill('SIGTERM'), 500)
+      child.on('exit', () => clearInterval(stopper))
+    })
+    journal.add('shell', `${out.ok ? 'ran' : 'failed'}: ${a.command.slice(0, 160)} (in ${basename(cwd)})`)
+    return { ok: out.ok, text: untrusted('shell', redact(out.text), a.command.slice(0, 80)), untrusted: 'shell' }
+  },
+  async recentActions() {
+    return done(describeRecent(actions.recent(12)), '')
+  },
+  async undo(a) {
+    const e = findUndoable(a.what)
+    if (!e) {
+      const last = actions.recent(1)[0]
+      return failed(last?.undo?.kind === 'none' ? `Can't undo the last thing: ${last.undo.why}.` : 'Nothing I did lately can be undone.')
+    }
+    const r = await performUndo(e)
+    return r.ok ? done(r.text) : failed(r.text)
+  },
   sendMessage: (a, ctx) => appRoutine({ app: a.app, action: 'message', to: a.to, text: a.text, photo: a.photo }, ctx),
   openChat: (a, ctx) => appRoutine({ app: a.app, action: 'open', to: a.to, text: '' }, ctx),
   async spotify(a, ctx) {
@@ -2919,8 +3051,16 @@ const workerHost: WorkerHost = {
     return { ok: r.ok, text: r.line || 'Done.', say: r.quiet ? '' : r.line }
   },
   async open(a) {
+    // What it opens decides what undo means: a site she opened is a tab to close; an app that was not running is one to quit.
+    const target = a.target.trim().replace(/^(?:the |my )/i, '').replace(/\s+(?:app)$/i, '')
+    const site = /^(?:https?:\/\/|www\.)/i.test(target) || /^[\w-]+\.(?:com|org|net|io|dev|app|ai|co|uk|ie|de|fr)(?:\/|$)/i.test(target)
+    const appLike = !site && !projects.resolve(target) && !existsSync(target.replace(/^~(?=\/|$)/, homedir())) && /^[\w .&'-]{2,40}$/.test(target)
+    const wasRunning = appLike ? await appRunning(target) : true
     const r = await openTarget(a.target)
-    return { ok: r.ok, text: r.line, say: r.line }
+    let undo: Undo | undefined
+    if (r.ok && site) undo = { kind: 'close-tab', url: /^https?:/i.test(target) ? target : `https://${target}` }
+    else if (r.ok && appLike && !wasRunning && (await appRunning(target))) undo = { kind: 'quit-app', app: target }
+    return { ok: r.ok, text: r.line, say: r.line, ...(undo ? { undo } : {}) }
   },
   async findFile(a) {
     const hit = await findAndReveal(a.query)
@@ -2957,7 +3097,7 @@ const workerHost: WorkerHost = {
     journal.add('reminder', `set: ${r.text} ${whenText(r.at, now)}${r.repeat ? ` (${r.repeat})` : ''}`)
     refreshTray()
     const line = setLine(r, now)
-    return done(line, line)
+    return { ...done(line, line), undo: { kind: 'reminder-remove', ids: [r.id] } }
   },
   async listReminders() {
     const line = listLine(reminderStore.list(), Date.now())
@@ -2970,7 +3110,7 @@ const workerHost: WorkerHost = {
     journal.add('reminder', `cancelled: ${hits.map((r) => r.text).join('; ')}`)
     refreshTray()
     const line = hits.length > 1 ? `Cancelled all ${hits.length}.` : `Cancelled the reminder to ${hits[0].text}.`
-    return done(line, line)
+    return { ...done(line, line), undo: { kind: 'reminder-restore', reminders: hits } }
   },
   async makePlan(a) {
     const r = await planFor(a.goal)
@@ -2985,7 +3125,7 @@ const workerHost: WorkerHost = {
     refreshTray()
     setupChanged()
     const line = scheduledLine(job, Date.now())
-    return done(useAgentCore() ? line : `${line} (Without Claude as my brain I can only remind you when it comes round.)`, line)
+    return { ...done(useAgentCore() ? line : `${line} (Without Claude as my brain I can only remind you when it comes round.)`, line), undo: { kind: 'job-remove', id: job.id } }
   },
   async listJobs() {
     const line = jobsLine(scheduleStore.list(), scheduleStore.waiting(), Date.now())
@@ -3081,6 +3221,8 @@ const workerHost: WorkerHost = {
     if (!SKILL_CODE && g.source === 'user') return failed('Skill scripts are off. They run only when Deskmate is started with DESKMATE_SKILL_CODE=1; tell the user.', "Skill scripts are off on this Mac.")
     const p = g.scripts.includes(a.script) ? guidePath(g, a.script) : null
     if (!p) return failed(`${a.script} is not one of the ${g.name} skill's scripts: ${g.scripts.join(', ') || 'none'}.`)
+    const verdict = checkArgs(a.args)
+    if (!verdict.ok) return failed(`Refused, not run: its arguments ${verdict.why}. Tell the user.`, `I won't run that: ${verdict.why}.`)
     // The user says yes to a skill's scripts once; a change to any of them asks again.
     const hash = scriptsHash(g)
     const allowed = settings.get().skillScripts ?? {}
@@ -3102,7 +3244,7 @@ const workerHost: WorkerHost = {
             : [p, a.args, {}]
     status(`skill · ${g.name} · ${basename(a.script)}`)
     const out = await new Promise<{ ok: boolean; text: string }>((resolve) => {
-      execFile(cmd, args, { cwd: g.dir, timeout: 120_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH, HOME: homedir(), LANG: process.env.LANG ?? 'en_US.UTF-8', ...env } }, (err, stdout, stderr) => {
+      execFile(cmd, args, { cwd: g.dir, timeout: 120_000, maxBuffer: 1024 * 1024, env: { ...safeEnv(), ...env } }, (err, stdout, stderr) => {
         const text = `${stdout}${stderr ? `\n${stderr}` : ''}`.trim().slice(0, 8000)
         resolve({ ok: !err, text: err ? `${err.message}\n${text}` : text || '(no output)' })
       })
@@ -3128,7 +3270,7 @@ function currentTools(): ToolSpec[] {
     skills: appHands.available ? skills : [],
     guides: { any: guides.some((g) => !g.routine), scripts: guides.some((g) => g.scripts.length > 0 && (SKILL_CODE || g.source === 'bundled')) },
     external: mcp.tools(),
-    has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available, channel: channels.active }
+    has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available, channel: channels.active, shell: Boolean(settings.get().shell) }
   })
 }
 
@@ -3155,6 +3297,10 @@ function turnContext(): string | undefined {
  * hand the message to the older routing (no Claude brain, or Claude unreachable before anything was done).
  */
 async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<Reply | null> {
+  return withSpendOrigin(channels.activeChannel ? 'channel' : 'chat', () => agentDispatchIn(text, opts))
+}
+
+async function agentDispatchIn(text: string, opts: { voice?: boolean }): Promise<Reply | null> {
   const from = channels.activeChannel
   const origin: Origin = from ? 'phone' : opts.voice ? 'voice' : 'typed'
   const said = stripName(text)
@@ -3167,7 +3313,7 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     refreshTray()
     console.log(`[agent] shortcut (${fast.why}): ${fast.tool} ${JSON.stringify(fast.input).slice(0, 120)}`)
     try {
-      const { out, record } = await runOneTool(tools, fast.tool, fast.input, { origin, confirm, onStep: status, log: taskLogger('shortcut'), stopped: () => actStop || quitting })
+      const { out, record } = await runOneTool(tools, fast.tool, fast.input, { origin, confirm, onStep: status, log: taskLogger('shortcut'), stopped: () => actStop || quitting, ...callHooks(origin, said) })
       memory.addTurn('user', text)
       // As after an agent turn: the history says what was done, so the next turn knows (names only).
       memory.addTurn('user', `[you used: ${fast.tool} (${record.refused ? 'the user said no' : out.ok ? 'done' : 'not done'})]`)
@@ -3224,7 +3370,8 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
         onSay: (line) => {
           if (line) void sayPlain(line)
         },
-        maxRounds: AGENT_ROUNDS
+        maxRounds: AGENT_ROUNDS,
+        ...callHooks(origin, said)
       }
     )
     console.log(`[agent] ${result.rounds} round(s)${result.calls.length ? `: ${result.calls.map((c) => `${c.name}${c.ok ? '' : ' ✗'}`).join(', ')}` : ''}${result.tainted.length ? ` (read ${result.tainted.join(', ')})` : ''}`)
@@ -3243,7 +3390,9 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     // Nothing done yet and Claude is just unreachable: the older routing (and a local model, when there is one) answers.
     if (modelCalls <= 1 && (e.code === 'rate' || e.code === 'overloaded' || e.code === 'network')) return null
     const say =
-      e.code === 'auth'
+      e.code === 'budget'
+        ? "I've hit your monthly budget, so I stopped there. Raise it in Setup under Spending, or say yes next time I ask."
+        : e.code === 'auth'
         ? 'My Anthropic key stopped working. Fix it in Setup, from my menu.'
         : e.code === 'refusal'
           ? "Mm, I'm not touching that one."
@@ -3255,6 +3404,443 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     status(listening ? listeningStatus() : 'idle')
   }
 }
+
+// ---- trust: permission levels per tool and origin, the activity log and undo, the spending meter and the kill switch
+// (permissions.ts, activity.ts, undo.ts, spend.ts, docs/SAFETY.md)
+
+/** DESKMATE_CONFIRM_SENDS / _JOBS stay the base the default levels follow. */
+const permissionGate = makeGate(() => cleanPrefs(settings.get().permissions), { sends: CONFIRM_SENDS, jobs: process.env.DESKMATE_CONFIRM_JOBS?.trim() ? CONFIRM_JOBS : null })
+/** The call running now, so "yes, always" knows which tool and origin it allows. */
+let currentCall: { name: string; origin: PermOrigin } | null = null
+const actions = new ActivityLog(join(USER_DATA, 'activity'))
+const activityWin = new ActivityWindow(PRELOAD, loadPage, () => activityView())
+
+/** What can never be undone, said plainly in the activity log. */
+const NO_UNDO: Record<string, string> = {
+  send_message: "a sent message can't be taken back",
+  send_to_me: "a sent file can't be taken back",
+  ask_claude_app: 'the Claude app already has the prompt',
+  claude_code: "Claude Code's changes are in the project; git can take them back",
+  run_command: "a command's effects can't be taken back",
+  run_skill_script: "a script's effects can't be taken back",
+  use_computer: "what she did in the app can't be taken back",
+  browse: "what she did in Chrome can't be taken back",
+  change_job: "a changed or deleted job can't be put back"
+}
+
+/** The permission gate and the activity hooks for one turn or shortcut: `why` is the request it is for. */
+function callHooks(origin: Origin, why: string): { gate: typeof permissionGate; onToolStart: (name: string) => void; onCall: (e: CallEvent) => void } {
+  return {
+    gate: permissionGate,
+    onToolStart: (name) => {
+      currentCall = { name, origin }
+    },
+    onCall: (e) => {
+      currentCall = null
+      const external = e.name.includes('__')
+      const undo: Undo | undefined = e.outcome.undo ?? (NO_UNDO[e.name] ? { kind: 'none', why: NO_UNDO[e.name] } : external ? { kind: 'none', why: "a tool server's changes can't be taken back here" } : undefined)
+      actions.add({ at: e.at, origin: e.origin, tool: e.name, args: e.input, ok: e.ok, result: e.text, approval: e.approval ?? 'auto', why, ms: e.ms, ...(undo && e.ok ? { undo } : {}) })
+      activityWin.refresh()
+    }
+  }
+}
+
+/** "Yes, always": that tool asks no more from where it was asked (the injection guard still does). */
+function alwaysAllow(): string | null {
+  const c = currentCall
+  if (!c) return null
+  settings.set({ permissions: withLevel(cleanPrefs(settings.get().permissions), c.name, 'allow', c.origin) })
+  journal.add('safety', `always allow ${c.name} from ${ORIGIN_LABELS[c.origin].toLowerCase()} (your "yes, always")`)
+  console.log(`[safety] ${c.name} is now allow from ${c.origin}`)
+  setupChanged()
+  return c.name
+}
+
+/** A non-tool change she made (a selfie on the clipboard), in the activity log with its undo. */
+function noteAction(tool: string, args: Record<string, unknown>, result: string, undo?: Undo): void {
+  actions.add({ at: Date.now(), origin: channels.activeChannel ? 'phone' : 'typed', tool, args, ok: true, result, approval: 'auto', why: '', ms: 0, ...(undo ? { undo } : {}) })
+  activityWin.refresh()
+}
+
+function appRunning(name: string): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false)
+  return new Promise((resolve) =>
+    execFile('osascript', ['-e', 'on run argv', '-e', 'return application (item 1 of argv) is running', '-e', 'end run', name], { timeout: 5000 }, (err, stdout) => resolve(!err && String(stdout).trim() === 'true'))
+  )
+}
+
+function quitApp(name: string): Promise<boolean> {
+  return new Promise((resolve) => execFile('osascript', ['-e', 'on run argv', '-e', 'tell application (item 1 of argv) to quit', '-e', 'end run', name], { timeout: 10_000 }, (err) => resolve(!err)))
+}
+
+/** Takes one logged action back, when that is honest. */
+async function performUndo(e: ActivityEntry): Promise<{ ok: boolean; text: string }> {
+  const u = e.undo
+  if (!u || u.kind === 'none') return { ok: false, text: u?.kind === 'none' ? `I can't undo that: ${u.why}.` : "That one can't be undone." }
+  if (e.undone) return { ok: false, text: 'I already undid that.' }
+  let r: { ok: boolean; text: string }
+  try {
+    switch (u.kind) {
+      case 'trash':
+      case 'move':
+        r = undoFile(u)
+        break
+      case 'quit-app':
+        r = (await quitApp(u.app)) ? { ok: true, text: `Quit ${u.app}.` } : { ok: false, text: `${u.app} would not quit.` }
+        break
+      case 'close-tab':
+        r = (await chrome.closeTabWithUrl(u.url).catch(() => false)) ? { ok: true, text: 'Closed the tab I opened.' } : { ok: false, text: 'That tab is not open in Chrome any more.' }
+        break
+      case 'clipboard':
+        await clipboard.writeText(u.previous)
+        r = { ok: true, text: 'Put your old clipboard back.' }
+        break
+      case 'reminder-remove': {
+        const gone = u.ids.map((id) => reminderStore.remove(id)).filter(Boolean)
+        r = gone.length ? { ok: true, text: gone.length > 1 ? `Removed the ${gone.length} reminders.` : 'Removed that reminder.' } : { ok: false, text: 'That reminder has already gone.' }
+        refreshTray()
+        break
+      }
+      case 'reminder-restore': {
+        const now = Date.now()
+        const back = (u.reminders as Reminder[]).filter((x) => x.repeat || x.at > now)
+        for (const x of back) reminderStore.add({ text: x.text, at: x.at, timer: x.timer, ...(x.ms ? { ms: x.ms } : {}), ...(x.repeat ? { repeat: x.repeat } : {}) })
+        r = back.length ? { ok: true, text: back.length > 1 ? `Put ${back.length} reminders back.` : `Put the reminder to ${back[0].text} back.` } : { ok: false, text: 'Its time has passed, so there is nothing to put back.' }
+        refreshTray()
+        break
+      }
+      case 'job-remove': {
+        const job = scheduleStore.get(u.id)
+        if (job) scheduleStore.remove(u.id)
+        r = job ? { ok: true, text: `Deleted the scheduled job "${job.label}".` } : { ok: false, text: 'That job has already gone.' }
+        refreshTray()
+        setupChanged()
+        break
+      }
+    }
+  } catch (err) {
+    r = { ok: false, text: `Couldn't undo it: ${(err as Error).message}` }
+  }
+  if (r.ok) {
+    actions.markUndone(e)
+    journal.add('undo', `${e.tool}: ${r.text}`)
+  }
+  activityWin.refresh()
+  return r
+}
+
+/** "Undo that": the newest thing that can be undone; or why the last thing can't be. */
+async function undoLast(): Promise<Reply> {
+  const e = actions.lastUndoable()
+  if (!e) {
+    const last = actions.recent(1)[0]
+    return sayPlain(last?.undo?.kind === 'none' ? `I can't undo that: ${last.undo.why}.` : "There's nothing I did lately that I can undo.", 'sad')
+  }
+  const r = await performUndo(e)
+  return sayPlain(r.text, r.ok ? 'happy' : 'sad')
+}
+
+/** Finds the entry "undo the resume move" names: the newest undoable one whose words match. */
+function findUndoable(what: string): ActivityEntry | null {
+  if (!what.trim()) return actions.lastUndoable()
+  const words = what.toLowerCase().split(/\W+/).filter((w) => w.length > 2 && !['the', 'that', 'undo', 'you', 'did'].includes(w))
+  const all = actions.recent(60).filter((e) => canUndo(e.undo) && !e.undone && e.ok).reverse()
+  return all.find((e) => words.some((w) => `${e.tool} ${JSON.stringify(e.args)} ${e.result}`.toLowerCase().includes(w))) ?? all[0] ?? null
+}
+
+function activityView(): ActivityView {
+  const rows = actions
+    .read(0)
+    .reverse()
+    .map((e) => {
+      const main = Object.values(e.args).find((v) => typeof v === 'string' && v.trim()) as string | undefined
+      return {
+        id: e.id,
+        at: e.at,
+        origin: e.origin === 'heartbeat' ? 'heartbeat' : ORIGIN_LABELS[e.origin as PermOrigin] ?? e.origin,
+        tool: e.tool,
+        detail: (main ?? '').slice(0, 120),
+        ok: e.ok,
+        result: e.result,
+        approval: approvalText(e.approval),
+        why: e.why,
+        undo: canUndo(e.undo) && !e.undone && e.ok ? undoLabel(e.undo) : null,
+        noUndo: e.undo?.kind === 'none' ? e.undo.why : null,
+        undone: Boolean(e.undone),
+        looking: LOOKING.has(e.tool)
+      }
+    })
+  return { day: new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }), rows, halted, spend: spendLine() }
+}
+
+ipcMain.on('activity:open', () => activityWin.show())
+ipcMain.handle('activity:undo', async (_event, id: string) => {
+  const e = actions.find(String(id))
+  if (!e) return { ok: false, text: 'That is not in the log.' }
+  const r = await performUndo(e)
+  status(r.text)
+  return r
+})
+
+// The spending meter: every Claude and Gemini call counted, by where it came from; a monthly budget.
+const PRICES_FILE = join(USER_DATA, 'prices.json')
+function priceOverrides(): Record<string, Price> {
+  try {
+    return existsSync(PRICES_FILE) ? (JSON.parse(readFileSync(PRICES_FILE, 'utf8')) as Record<string, Price>) : {}
+  } catch (err) {
+    console.warn('[spend] prices.json ignored:', (err as Error).message)
+    return {}
+  }
+}
+const spend = new SpendMeter(join(USER_DATA, 'spend'), { table: priceOverrides() })
+let budgetAsk: Promise<boolean> | null = null
+
+/** The monthly budget in dollars (Setup → Spending; DESKMATE_BUDGET when nothing is set there); 0 is none. */
+function budget(): number {
+  const set = settings.get().spend?.budget
+  const n = typeof set === 'number' ? set : Number(process.env.DESKMATE_BUDGET) || 0
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function spendLine(): string {
+  const t = spend.totals()
+  const b = budget()
+  return `Spent today ${dollars(t.today)} · this month ${dollars(t.month)}${b ? ` of ${dollars(b)}` : ''}`
+}
+
+/** Before a call: at 100% of the budget she stops and asks (at the desk or in a chat app); jobs on their own stop. */
+async function budgetGate(): Promise<void> {
+  const b = budget()
+  if (!b) return
+  const month = spend.monthKey()
+  const t = spend.totals()
+  if (budgetState(t.month, b) !== 'over' || settings.get().spend?.overMonth === month) return
+  const origin = spendOrigin()
+  if (origin !== 'chat' && origin !== 'channel') {
+    console.log(`[spend] ${origin} call not made: the ${dollars(b)} budget is used up`)
+    throw new ClaudeError(`the monthly budget of ${dollars(b)} is used up (Setup → Spending)`, 'budget')
+  }
+  budgetAsk ??= ask(`You've spent ${dollars(t.month)} this month, your whole ${dollars(b)} budget. Should I keep going anyway?`, 90_000).then((yes) => {
+    budgetAsk = null
+    if (yes) {
+      settings.set({ spend: { ...settings.get().spend, overMonth: month } })
+      journal.add('spend', `went past the ${dollars(b)} budget for ${month} (your yes)`)
+      refreshTray()
+      setupChanged()
+    }
+    return yes === true
+  })
+  if (!(await budgetAsk)) throw new ClaudeError(`the monthly budget of ${dollars(b)} is used up`, 'budget')
+}
+
+/** After a call: count it, and say once a month when 80% is gone. */
+function counted(): void {
+  const b = budget()
+  refreshTraySoon()
+  if (!b) return
+  const month = spend.monthKey()
+  const t = spend.totals()
+  const state = budgetState(t.month, b)
+  if ((state === 'warn' || state === 'over') && settings.get().spend?.warnedMonth !== month) {
+    settings.set({ spend: { ...settings.get().spend, warnedMonth: month } })
+    const line = `Heads up: I've used ${dollars(t.month)} of your ${dollars(b)} budget this month. At the limit I'll stop and ask.`
+    journal.add('spend', line)
+    notices.post({ kind: 'job', key: `spend:${month}`, text: line, brief: 'budget at 80%', log: false })
+  }
+  setupChanged()
+}
+
+let trayTimer: NodeJS.Timeout | null = null
+function refreshTraySoon(): void {
+  if (trayTimer) return
+  trayTimer = setTimeout(() => {
+    trayTimer = null
+    refreshTray()
+  }, 1500)
+  trayTimer.unref()
+}
+
+setClaudeMeter({
+  before: () => budgetGate(),
+  after: (model, usage) => {
+    spend.record(model, anthropicUsage(usage))
+    counted()
+  }
+})
+setGeminiMeter({
+  before: async () => {
+    try {
+      await budgetGate()
+    } catch (err) {
+      throw new Error(`budget: ${(err as Error).message}`)
+    }
+  },
+  after: (model, usage) => {
+    spend.record(model, geminiUsage(usage))
+    counted()
+  }
+})
+
+function spendState(): SpendSetupState {
+  const t = spend.totals()
+  const b = budget()
+  return {
+    today: t.today,
+    month: t.month,
+    monthName: new Date().toLocaleDateString(undefined, { month: 'long' }),
+    budget: b,
+    state: budgetState(t.month, b),
+    byOrigin: SPEND_ORIGINS.map((o) => ({ id: o, label: SPEND_LABELS[o], cost: t.byOrigin[o] })),
+    calls: t.calls,
+    tokens: t.tokens,
+    unpriced: t.unpriced,
+    overridden: settings.get().spend?.overMonth === spend.monthKey()
+  }
+}
+
+ipcMain.handle('setup:budget', (_event, n: unknown) => {
+  const v = Math.max(0, Math.min(100_000, Number(n) || 0))
+  settings.set({ spend: { ...settings.get().spend, budget: v, ...(v ? {} : { overMonth: undefined, warnedMonth: undefined }) } })
+  journal.add('spend', v ? `monthly budget set to ${dollars(v)}` : 'monthly budget removed')
+  refreshTray()
+  return spendState()
+})
+
+// The kill switch: a global shortcut, a tray item and "stop everything" stop the turn, plans, scheduled runs, the
+// heartbeat and the chat apps; Claude Code jobs stop after a yes. "Resume" turns them back on.
+let halted = false
+let haltedChannels: ChannelId[] = []
+const STOP_SHORTCUT_DEFAULT = 'Control+Alt+Escape'
+let stopShortcut: string | null = null
+let stopShortcutTaken = false
+
+function wantedStopShortcut(): string {
+  return settings.get().stopShortcut?.trim() || process.env.DESKMATE_STOP_SHORTCUT?.trim() || STOP_SHORTCUT_DEFAULT
+}
+
+function registerStopShortcut(): void {
+  if (stopShortcut) globalShortcut.unregister(stopShortcut)
+  const acc = wantedStopShortcut()
+  let ok = false
+  try {
+    ok = globalShortcut.register(acc, () => void stopEverything('shortcut'))
+  } catch (err) {
+    console.warn(`[safety] ${acc} is not a shortcut: ${(err as Error).message}`)
+  }
+  stopShortcut = ok ? acc : null
+  stopShortcutTaken = !ok
+  if (!ok) console.warn(`[safety] could not register the stop shortcut ${acc}`)
+}
+
+async function stopEverything(from: 'shortcut' | 'tray' | 'voice' | 'setup'): Promise<void> {
+  const again = halted
+  halted = true
+  actStop = true
+  browseStop = true
+  if (pending?.kind === 'confirm') pending.resolve(false)
+  pending = null
+  const stoppedPlan = Boolean(plan && plan.status === 'running')
+  if (planRunning || stoppedPlan) stopPlan()
+  if (!again) {
+    haltedChannels = CHANNEL_IDS.filter((id) => channels.state(id)?.running)
+    for (const id of haltedChannels) channels.stop(id)
+  }
+  console.log(`[safety] stop everything (${from})${haltedChannels.length ? `; chat apps off: ${haltedChannels.join(', ')}` : ''}`)
+  journal.add('safety', `stopped everything (${from === 'shortcut' ? 'the shortcut' : from === 'tray' ? 'the tray' : from === 'voice' ? 'you said so' : 'Setup'})`)
+  refreshTray()
+  setupChanged()
+  activityWin.refresh()
+  status('⏹ stopped everything · say "resume" to turn it back on')
+  const jobs = agent.running()
+  await sayPlain(again ? 'Everything is already stopped. Say "resume" when you want me back.' : `Stopped. Nothing runs on its own until you say "resume".`, 'surprised')
+  if (jobs.length && !again) {
+    const yes = await ask(`Claude Code still has ${jobs.length === 1 ? `a job running in ${basename(jobs[0].cwd)}` : `${jobs.length} jobs running`}. Stop ${jobs.length === 1 ? 'it' : 'them'} too?`)
+    if (yes) {
+      for (const t of jobs) agent.cancel(t.id)
+      journal.add('safety', `stopped ${jobs.length} Claude Code job(s) (your yes)`)
+      refreshTray()
+      await sayPlain(jobs.length === 1 ? 'Claude Code stopped too.' : 'All the Claude Code jobs stopped too.')
+    }
+  }
+}
+
+async function resumeEverything(): Promise<Reply> {
+  if (!halted) return sayPlain("Nothing's stopped.")
+  halted = false
+  actStop = false
+  browseStop = false
+  for (const id of haltedChannels) if (channelWanted(id)) startChannel(id)
+  haltedChannels = []
+  journal.add('safety', 'resumed')
+  refreshTray()
+  setupChanged()
+  activityWin.refresh()
+  status('idle')
+  return sayPlain("I'm back on: scheduled jobs, the heartbeat and your chat apps are running again.", 'happy')
+}
+
+ipcMain.handle('safety:stop', () => stopEverything('setup'))
+
+/** Setup → Permissions and safety. */
+function safetyState(): SafetySetupState {
+  const prefs = cleanPrefs(settings.get().permissions)
+  const ext = new Set(mcp.tools().map((t) => t.name))
+  const skillNames = new Set(skills.map((s) => skillTool(s).name))
+  const tools = buildTools(workerHost, { skills, guides: { any: true, scripts: true }, external: mcp.tools(), has: { computer: true, chrome: true, claudeCode: true, apps: true, channel: true, shell: true } })
+  return {
+    tools: tools.map((t) => {
+      const risk = typeof t.risk === 'function' ? null : (t.risk ?? null)
+      const risky = typeof t.risk === 'function' || Boolean(t.risk)
+      const byOrigin: Partial<Record<PermOrigin, Level>> = {}
+      for (const o of PERM_ORIGINS) {
+        const l = prefs.origins?.[o]?.tools?.[t.name]
+        if (l) byOrigin[o] = l
+      }
+      return {
+        name: t.name,
+        about: t.description.replace(/^\[[^\]]+\]\s*/, '').split(/(?<=\.)\s/)[0].slice(0, 140),
+        defaultLevel: resolvePermission(undefined, { name: t.name, risk }, 'typed', { sends: CONFIRM_SENDS, jobs: process.env.DESKMATE_CONFIRM_JOBS?.trim() ? CONFIRM_JOBS : null }).level,
+        level: prefs.tools?.[t.name] ?? null,
+        byOrigin,
+        risky,
+        kind: ext.has(t.name) ? 'mcp' : skillNames.has(t.name) ? 'skill' : 'built-in'
+      }
+    }),
+    origins: PERM_ORIGINS.map((o) => ({ id: o, label: ORIGIN_LABELS[o], floor: prefs.origins?.[o]?.risky ?? null })),
+    denyApps: [...DENY_APPS],
+    stopShortcut: wantedStopShortcut(),
+    stopShortcutTaken,
+    halted,
+    shell: Boolean(settings.get().shell),
+    secrets: { store: settings.store, name: settings.store === 'keychain' ? (secretBox()?.name ?? 'Keychain') : 'settings.json (mode 0600)', count: Object.keys(splitSecrets(settings.get() as Record<string, unknown>).secrets).length }
+  }
+}
+
+ipcMain.handle('setup:permission', (_event, tool: string, level: Level | null, origin?: PermOrigin) => {
+  const l = level === 'allow' || level === 'ask' || level === 'never' ? level : null
+  const o = origin && PERM_ORIGINS.includes(origin) ? origin : undefined
+  settings.set({ permissions: withLevel(cleanPrefs(settings.get().permissions), String(tool), l, o) })
+  journal.add('safety', `${String(tool)}: ${l ?? 'default'}${o ? ` from ${ORIGIN_LABELS[o].toLowerCase()}` : ''}`)
+  return safetyState()
+})
+ipcMain.handle('setup:floor', (_event, origin: PermOrigin, floor: 'ask' | 'never' | null) => {
+  if (!PERM_ORIGINS.includes(origin)) return safetyState()
+  settings.set({ permissions: withFloor(cleanPrefs(settings.get().permissions), origin, floor === 'ask' || floor === 'never' ? floor : null) })
+  journal.add('safety', `risky tools from ${ORIGIN_LABELS[origin].toLowerCase()}: ${floor ?? 'as each is set'}`)
+  return safetyState()
+})
+ipcMain.handle('setup:safety', (_event, patch: { shell?: unknown; stopShortcut?: unknown }) => {
+  if (typeof patch?.shell === 'boolean') {
+    settings.set({ shell: patch.shell })
+    journal.add('safety', `terminal commands ${patch.shell ? 'on' : 'off'}`)
+  }
+  if (typeof patch?.stopShortcut === 'string') {
+    settings.set({ stopShortcut: patch.stopShortcut.trim().slice(0, 60) || undefined })
+    if (app.isReady()) registerStopShortcut()
+  }
+  refreshTray()
+  return safetyState()
+})
 
 // ---- scheduled jobs (schedule.ts, scheduler.ts), the heartbeat (heartbeat.ts) and the morning brief (brief.ts)
 
@@ -3312,13 +3898,14 @@ const scheduleStore = new ScheduleStore(join(USER_DATA, 'schedule.json'), (job, 
 const scheduler = new Scheduler({
   store: scheduleStore,
   canRun: () => useAgentCore(),
-  runTurn: (job, askFn, lateMs) => runJobTurn(job, askFn, lateMs),
+  halted: () => halted,
+  runTurn: (job, askFn, lateMs) => withSpendOrigin('schedule', () => runJobTurn(job, askFn, lateMs)),
   async makePlan(job) {
     const r = await planFor(job.task)
     return { ok: r.ok, line: r.line }
   },
   async runTool(name, input) {
-    const { out } = await runOneTool(currentTools(), name, input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting })
+    const { out } = await runOneTool(currentTools(), name, input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting, ...callHooks('schedule', 'a step a scheduled job left for your yes') })
     refreshTray()
     return { ok: out.ok, line: out.say ?? (out.untrusted ? (out.ok ? 'Done.' : "That didn't work.") : out.text) }
   },
@@ -3370,7 +3957,8 @@ async function runJobTurn(job: Job, askFn: Ask, lateMs: number): Promise<RunResu
         onStep: (line) => status(line),
         log,
         stopped: () => actStop || quitting,
-        maxRounds: AGENT_ROUNDS
+        maxRounds: AGENT_ROUNDS,
+        ...callHooks('schedule', `scheduled: ${job.task}`)
       }
     )
     console.log(`[schedule] "${job.label}": ${r.rounds} round(s)${r.calls.length ? `: ${r.calls.map((c) => `${c.name}${c.deferred ? ' (waits)' : c.ok ? '' : ' ✗'}`).join(', ')}` : ''}`)
@@ -3435,7 +4023,7 @@ function jobAction(id: string, action: JobSetupAction): void {
   } else if (action === 'approve' || action === 'drop') {
     const w = scheduleStore.takeWaiting(id)
     if (w && action === 'approve') {
-      void runOneTool(currentTools(), w.tool, w.input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting }).then(({ out }) => {
+      void runOneTool(currentTools(), w.tool, w.input, { origin: 'typed', approved: true, confirm, onStep: status, log: taskLogger('schedule'), stopped: () => actStop || quitting, ...callHooks('schedule', `${w.label} (your yes in Setup)`) }).then(({ out }) => {
         journal.add('schedule', `${out.ok ? 'done' : 'failed'} after your yes: ${w.what}`)
         void sayPlain(out.say ?? (out.ok ? 'Done.' : "That didn't work."), out.ok ? 'happy' : 'sad')
         setupChanged()
@@ -3503,7 +4091,11 @@ async function beatSnapshot(): Promise<string> {
 
 /** One heartbeat: skipped for free when nothing could need them, else one small call; silent unless something does. */
 async function heartbeat(force = false): Promise<void> {
-  if (beating) return
+  if (beating || halted) return
+  await withSpendOrigin('heartbeat', () => beat(force))
+}
+
+async function beat(force: boolean): Promise<void> {
   const list = heartbeatItems(heartbeatText())
   const reason = skipReason({
     minutes: force ? Math.max(1, HEARTBEAT_MINUTES) : HEARTBEAT_MINUTES,
@@ -3573,6 +4165,7 @@ function setBrief(patch: { on?: boolean; after?: string }): void {
 }
 
 async function maybeBrief(force = false): Promise<void> {
+  if (halted && !force) return
   const prefs = briefPrefs(settings.get().brief)
   const now = new Date()
   if (briefing || (!force && !briefDue(prefs, settings.get().brief?.lastDay, now))) return
@@ -3656,6 +4249,10 @@ const LEARN_SKILLS = !/^(0|false|no|off)$/i.test(process.env.DESKMATE_LEARN_SKIL
 /** After a long task that worked, or one done by following a skill, she writes down how (one more Claude call). */
 async function learnFrom(request: string, result: Awaited<ReturnType<typeof runAgentTurn>>, claude: NonNullable<Brain['claudeForAgent']>): Promise<void> {
   if (!LEARN_SKILLS) return
+  await withSpendOrigin('background', () => learnIn(request, result, claude))
+}
+
+async function learnIn(request: string, result: Awaited<ReturnType<typeof runAgentTurn>>, claude: NonNullable<Brain['claudeForAgent']>): Promise<void> {
   const plan = learnPlan(result, guides)
   if (!plan) return
   try {
@@ -4398,7 +4995,7 @@ async function channelAction(id: ChannelId, action: ChannelAction, data: Record<
 let setupWin: BrowserWindow | null = null
 let setupStartMode: string = brain.mode
 
-function openSetup(section?: 'characters' | 'remote'): void {
+function openSetup(section?: 'characters' | 'remote' | 'spend' | 'safety'): void {
   if (setupWin && !setupWin.isDestroyed()) {
     setupWin.show()
     setupWin.focus()
@@ -4471,7 +5068,9 @@ async function setupState(): Promise<SetupState> {
     notices: noticeState(),
     mcp: mcpState(),
     learn: learnState(),
-    schedule: scheduleState()
+    schedule: scheduleState(),
+    safety: safetyState(),
+    spend: spendState()
   }
 }
 
@@ -4624,6 +5223,9 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn('[bar] shortcut:', (err as Error).message)
   }
+  registerStopShortcut()
+  if (stopShortcut) console.log(`[safety] ${stopShortcut} stops everything`)
+  if (settings.migrated) console.log(`[safety] secrets kept in the ${settings.store === 'keychain' ? 'Keychain' : 'settings file'}`)
   createWindow()
   body.rememberHome()
   if (/^(1|true|yes|on)$/i.test(process.env.DESKMATE_WANDER?.trim() || '')) body.wander(true, () => !acting && !browsing && !herSpeaking)
@@ -4717,6 +5319,7 @@ app.on('before-quit', () => {
   bar.destroy()
   body.destroy()
   planCard.destroy()
+  activityWin.destroy()
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })

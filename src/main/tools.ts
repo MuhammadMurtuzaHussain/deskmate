@@ -3,6 +3,8 @@ import { AVATAR_COMMANDS, type AvatarCommand } from '../shared/types.ts'
 import { SECTIONS, type MemorySection } from './memfiles.ts'
 import { isMessagingApp, skillTool, type Skill } from './skills.ts'
 import type { Risk, Taint, UntrustedSource } from './untrusted.ts'
+import type { Undo } from './undo.ts'
+import { looksSecret } from './secrets.ts'
 
 /**
  * Everything her hands can do, as tools for one brain. Each worker that used to sit behind its own regex (app
@@ -26,6 +28,10 @@ export interface ToolOutcome {
   /** the result holds text from somewhere other than the user (it is wrapped already) */
   untrusted?: UntrustedSource
   image?: ToolImage
+  /** how to take it back, when that can honestly be done (activity.ts); a send says it cannot */
+  undo?: Undo
+  /** the tool's own read-back got a no (it did not run) */
+  refused?: boolean
 }
 
 /** schedule: a scheduled job running on its own (scheduler.ts); nobody just asked, and the user may be away */
@@ -39,6 +45,10 @@ export interface ToolCtx {
   mustConfirm: boolean
   /** the user already said yes to this exact call (the guard asked in a scheduled run): no read-back needed */
   approved?: boolean
+  /** the permission level for this call (permissions.ts): ask means a read-back must happen */
+  level?: 'allow' | 'ask'
+  /** the user set this tool to allow themselves: her own read-back is off for it (the guard still applies) */
+  trusted?: boolean
   confirm(question: string): Promise<boolean>
   onStep(text: string): void
   log(line: string): void
@@ -90,6 +100,16 @@ export interface WorkerHost {
   runSkillScript(a: { name: string; script: string; args: string[] }, ctx: ToolCtx): Promise<ToolOutcome>
   /** a screenshot or a file, to the chat app the message came from (channels/hub.ts) */
   sendToMe(a: { what: 'screenshot' | 'file'; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** move or rename a file or folder (never overwriting); undo moves it back */
+  moveFile(a: { from: string; to: string }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** put a file or folder in the Trash; undo puts it back */
+  trashFile(a: { path: string }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** a terminal command, through the deny-list, in a scratch or project folder (only when the user turned it on) */
+  runCommand(a: { command: string; folder: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** what she did lately, from the activity log */
+  recentActions(ctx: ToolCtx): Promise<ToolOutcome>
+  /** take back the last thing she did that can be taken back (or one named by words from it) */
+  undo(a: { what: string }, ctx: ToolCtx): Promise<ToolOutcome>
 }
 
 export type PastKind = 'any' | 'chat' | 'did' | 'plans'
@@ -160,12 +180,12 @@ export interface ToolsOptions {
   guides?: { any: boolean; scripts: boolean }
   external?: ExternalTool[]
   /** workers this computer can use right now; a missing one is left out of the list */
-  has?: Partial<Record<'computer' | 'chrome' | 'claudeCode' | 'apps' | 'channel', boolean>>
+  has?: Partial<Record<'computer' | 'chrome' | 'claudeCode' | 'apps' | 'channel' | 'shell', boolean>>
 }
 
 /** The tool list for one brain, in a fixed order (it is part of the cached prompt prefix). */
 export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[] {
-  const has = { computer: true, chrome: true, claudeCode: true, apps: true, channel: false, ...opts.has }
+  const has = { computer: true, chrome: true, claudeCode: true, apps: true, channel: false, shell: false, ...opts.has }
   const tools: ToolSpec[] = []
   const add = (t: Omit<ToolSpec, 'strict'> & { strict?: boolean }): void => {
     tools.push({ strict: true, ...t })
@@ -243,7 +263,14 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
       name: 'browser_tab',
       description: 'Quick Chrome verbs on the front tab: next_tab, prev_tab, close_tab, back, forward, reload, scroll_down, scroll_up, search (a web search for "text"), find_on_page ("text"), click (the link or button labelled "text"). "text" is "" when the verb needs none.',
       input_schema: schema({ verb: { type: 'string', enum: ['next_tab', 'prev_tab', 'close_tab', 'back', 'forward', 'reload', 'scroll_down', 'scroll_up', 'search', 'find_on_page', 'click'] }, text: str }),
-      risk: (i) => (i.verb === 'click' && /\b(send|post|delete|remove|buy|pay|purchase|checkout|order|transfer|subscribe|confirm)\b/i.test(s(i.text)) ? 'external' : null),
+      risk: (i) => {
+        if (i.verb !== 'click') return null
+        const label = s(i.text)
+        if (/\b(buy|pay|purchase|checkout|check out|order|transfer|donate|subscribe)\b/i.test(label)) return 'purchase'
+        if (/\b(delete|remove|trash|erase)\b/i.test(label)) return 'delete'
+        if (/\b(send|post|publish|reply|share|invite)\b/i.test(label)) return 'send'
+        return /\b(confirm|submit|accept|agree)\b/i.test(label) ? 'external' : null
+      },
       describe: (i) => `click "${s(i.text)}" in Chrome`,
       run: (i, ctx) => host.browserTab({ verb: i.verb as BrowserVerb, text: s(i.text) }, ctx)
     })
@@ -276,6 +303,50 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
       run: (_i, ctx) => host.seeScreen(ctx)
     })
   }
+  add({
+    name: 'move_file',
+    description:
+      'Move or rename a file or folder on this Mac: from is its full path (from find_file), to is the new full path or a folder to move it into. Never overwrites; your own files only (not the system, hidden folders, or a whole top-level folder). It can be undone.',
+    input_schema: schema({ from: str, to: str }),
+    risk: 'external',
+    describe: (i) => `move ${s(i.from)} to ${s(i.to)}`,
+    run: (i, ctx) => host.moveFile({ from: s(i.from), to: s(i.to) }, ctx)
+  })
+  add({
+    name: 'trash_file',
+    description: 'Put a file or folder in the Trash (not deleted for good: "undo that" puts it back). path is its full path, from find_file. Your own files only.',
+    input_schema: schema({ path: str }),
+    risk: 'delete',
+    describe: (i) => `put ${s(i.path)} in the Trash`,
+    run: (i, ctx) => host.trashFile({ path: s(i.path) }, ctx)
+  })
+  if (has.shell) {
+    add({
+      name: 'run_command',
+      description:
+        'Run one terminal command on this Mac (zsh) and get its output, for quick checks and small jobs the user asks for ("how much disk is free", "convert this file with ffmpeg"). folder: the project folder they named, or null for a scratch folder. Not for coding work in a project (that is claude_code). Never sudo, never deleting outside the folder, never keys or passwords: those are refused.',
+      input_schema: schema({ command: str, folder: nullable(str) }),
+      risk: 'shell',
+      slow: true,
+      describe: (i) => `run \`${s(i.command).slice(0, 120)}\`${i.folder ? ` in ${s(i.folder)}` : ''}`,
+      run: (i, ctx) => host.runCommand({ command: s(i.command), folder: i.folder ? s(i.folder) : null }, ctx)
+    })
+  }
+  add({
+    name: 'recent_actions',
+    description: 'What you did on this computer lately, from your activity log: each tool call with its time, how it went, who said yes, and whether it can be undone. For "what did you just do?".',
+    input_schema: schema({}),
+    run: (_i, ctx) => host.recentActions(ctx)
+  })
+  add({
+    name: 'undo',
+    description:
+      'Take back something you did: "what" is "" for the last thing that can be undone, or a few words naming it ("the resume move"). Undo puts trashed files back, moves files back, closes an app or tab you opened, restores the clipboard, and removes or restores reminders and jobs. Sent messages and finished Claude Code jobs cannot be undone; say so.',
+    input_schema: schema({ what: str }),
+    risk: 'external',
+    describe: (i) => (s(i.what) ? `undo "${s(i.what)}"` : 'undo the last thing I did'),
+    run: (i, ctx) => host.undo({ what: s(i.what) }, ctx)
+  })
   add({
     name: 'set_reminder',
     description:
@@ -413,19 +484,22 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
   // Memory writes come only from the user: a fact picked up while reading someone else's text could be planted there.
   const fromUser = (ctx: ToolCtx): ToolOutcome | null =>
     ctx.taint.tainted ? { ok: false, text: 'Not changed: this turn read untrusted text, and your memory only takes what the user tells you.' } : null
+  // Keys and passwords never go into her notes (they are shown to the model every turn and kept in plain files).
+  const noSecret = (text: unknown): ToolOutcome | null =>
+    looksSecret(s(text)) ? { ok: false, text: 'Not kept: that holds a key, token or password, and your notes never keep secrets. Tell the user it belongs in Setup, not in your memory.' } : null
   add({
     name: 'remember',
     description:
       'Keep something about the user for later conversations. importance: 1–2 small talk (fades in days), 3 useful, 4 important, 5 defining; 3 and up go into your notes (USER.md / MEMORY.md, shown to you every turn). section: who (about them), preferences (likes, habits, how they want things done), people (who they message and who those people are), projects (what they work on, where), facts (other things that stay true), lessons (what worked or failed when you did something for them, app quirks). One short fact in plain words. Only for things worth keeping.',
     input_schema: schema({ fact: str, importance: { type: 'integer', enum: [1, 2, 3, 4, 5] }, section: { type: 'string', enum: SECTIONS.map((x) => x.id) } }),
-    run: async (i, ctx) => fromUser(ctx) ?? host.remember({ fact: s(i.fact), importance: Number(i.importance) || 2, section: (SECTIONS.some((x) => x.id === i.section) ? i.section : 'facts') as MemorySection }, ctx)
+    run: async (i, ctx) => fromUser(ctx) ?? noSecret(i.fact) ?? host.remember({ fact: s(i.fact), importance: Number(i.importance) || 2, section: (SECTIONS.some((x) => x.id === i.section) ? i.section : 'facts') as MemorySection }, ctx)
   })
   add({
     name: 'update_memory',
     description: 'Change one of your notes that is wrong, out of date, or says the same as another: "old" is a few words from the note as it is now, "new" the whole note as it should read (merge two notes by updating one and forgetting the other).',
     input_schema: schema({ old: str, new: str }),
     strict: false,
-    run: async (i, ctx) => fromUser(ctx) ?? host.updateMemory({ old: s(i.old), new: s(i.new) }, ctx)
+    run: async (i, ctx) => fromUser(ctx) ?? noSecret(i.new) ?? host.updateMemory({ old: s(i.old), new: s(i.new) }, ctx)
   })
   add({
     name: 'forget',
