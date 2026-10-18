@@ -24,6 +24,8 @@ npm run dev              # her window, with the renderer hot-reloading
 | `npm run build` | the hands helper (macOS) and the app into `out/` |
 | `npm start` | runs the built app |
 | `npm run dist` | installers for your OS into `release/` |
+| `npm run dist:mac` | the universal macOS DMG + zip, then the packaging smoke test (`npm run smoke:package`) |
+| `npm run pack` | just the .app, for a quick look (`release/mac-arm64/Deskmate.app`) |
 
 CI runs typecheck and tests on macOS, Windows and Ubuntu for every pull request.
 
@@ -119,3 +121,5 @@ Live2D Free Material License; screenshots in `docs/` use only those.
 ## Code of conduct
 
 Everyone in the project's spaces follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Releases (tags, signing, notarization, the Homebrew tap): [docs/RELEASING.md](docs/RELEASING.md).

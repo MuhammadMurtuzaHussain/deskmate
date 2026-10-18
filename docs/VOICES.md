@@ -21,7 +21,7 @@ That's all: Kokoro is the default voice. To pick a preset (and turn on her ears 
 DESKMATE_TTS=local
 DESKMATE_TTS_VOICE=af_heart     # af_bella, af_nicole, af_sarah, bf_emma, … see tts-local/server.py
 ```
-Deskmate starts the server itself when the app launches (set `DESKMATE_TTS_AUTOSTART=0` to run `tts-local/run.sh` yourself). For the installed app, run `setup.sh` from a source checkout and point `DESKMATE_TTS_URL` at it, or create the venv under your user-data folder as `tts-local/.venv`. Windows: `setup.sh` is a bash script; use Git Bash or WSL, or run the Kokoro-FastAPI Docker image and set `DESKMATE_TTS_URL`.
+Deskmate starts the server itself when the app launches (set `DESKMATE_TTS_AUTOSTART=0` to run `tts-local/run.sh` yourself). In the installed app, Setup (or the first-run tour) → **Her voice** → **Install the voice** runs the same script with a progress bar and keeps the venv under your user-data folder as `tts-local/.venv` (the app's own folder stays untouched, so its signature stays valid); `DESKMATE_TTS_VENV=<folder>` does the same from a terminal. Windows: `setup.sh` is a bash script; use Git Bash or WSL, or run the Kokoro-FastAPI Docker image and set `DESKMATE_TTS_URL`.
 
 Samples of each preset are in `docs/voice-samples/`.
 

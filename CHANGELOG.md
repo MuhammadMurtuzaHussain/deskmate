@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased: trust her near your Mac ([docs/SAFETY.md](docs/SAFETY.md))
+## 1.0.0-rc.1: the v1.0 release candidate
+
+Everything since 0.6.0, ready to install in five minutes: one download for every Mac, a tour that sets her up, and
+updates that install themselves once builds are signed.
+
+### Install in five minutes
+
+**One app for every Mac**
+- A universal DMG (Apple silicon and Intel) built by `npm run dist:mac` that runs from /Applications: the app-control helper, all five shipped characters, the skills and the Kokoro scripts are inside, and a packaging smoke test checks each build for them (`scripts/smoke-package.cjs`).
+- Apps opened from Finder start with a short PATH; Homebrew and `~/.local/bin` are added, so Ollama, Python, `claude` and `signal-cli` are found as they are in a terminal.
+- Unsigned builds are now ad-hoc signed, so Apple silicon Macs ask "open anyway?" instead of calling the app damaged.
+
+**Signing and notarization, ready to switch on** ([docs/RELEASING.md](docs/RELEASING.md))
+- With a Developer ID certificate (`CSC_LINK`) the Mac build gets the hardened runtime and its entitlements (microphone, Apple Events, Calendars, JIT; no camera), the helper included; with Apple credentials (`APPLE_ID` + app-specific password + team, or an App Store Connect API key) it is notarized. Nothing set: ad-hoc, as before.
+
+**Updates**
+- Signed Mac builds, the Windows installer and the AppImage download new releases in the background and install them when she quits; the tray offers **Restart to update**. Unsigned Mac builds (which macOS will not let update themselves), the portable exe and the .deb keep the "Update available" tray item that opens the release page. `DESKMATE_UPDATE_CHECK=0` turns both off; `DESKMATE_UPDATE_AUTO=0` only tells. A release candidate sees the next release candidate.
+
+**A first-run tour** (re-run it from the tray → **Welcome tour…**)
+- Her brain (Claude, Ollama or Gemini), a character, her voice (**Install the voice** runs the Kokoro setup with a progress bar, or keep the system voice), each macOS permission with a live check, a reason, **Allow** and **Open System Settings** (Accessibility, Screen Recording, Microphone, Automation for Messages and Spotify, Calendar, and Full Disk Access for iMessage), then three things to try.
+
+**Distribution**
+- A Homebrew cask template for a tap (`packaging/homebrew/`), a release workflow that builds macOS, Windows and Linux on a tag and drafts the release with these notes, and a rewritten quick start.
+
+### Trust her near your Mac ([docs/SAFETY.md](docs/SAFETY.md))
 
 **Permission levels**
 - Every tool (built-in, skill, MCP) has a level: allow, ask or never. Reading is allow; sending messages, deleting, buying, running commands, Claude Code jobs and files leaving the Mac ask; DENY_APPS stay never. `DESKMATE_CONFIRM_SENDS` / `_JOBS` still set the base.
@@ -30,7 +54,7 @@
 - `test/safety.test.ts`: permission resolution and the gate in the agent core, redaction, the settings migration with a fake keychain, the activity log, undo of a trash and a move, the price table and budget decisions, the deny-list. 13 new eval tasks (permissions, a phone floor, undo, activity, a refused and an allowed command, the kill switch mid-turn, a key she must not remember). Claude Haiku 5.5 at effort low: 11/11 new agent tasks live (after one fix), 74/76 overall on replay; the misses are the older `remind-hourly` and `slack-then-text`.
 - A tool switched off is named in the turn, so she does not do its job another way (the first live run skipped a song with `use_computer` while Spotify was set to never).
 
-## Unreleased: reach her from the chat apps you already use
+### Reach her from the chat apps you already use
 
 **Chat apps** ([docs/CHANNELS.md](docs/CHANNELS.md))
 - One channel layer for every app (`src/main/channels/`): each connects out and turns what arrives into the same message, and one hub decides who may talk to her, routes the message through the same agent turn, read-backs ("yes" answers them), scheduled-run questions and results, and sends her lines, steps, pictures and files back to the chat they came from. The Telegram remote now runs on it.
@@ -53,7 +77,7 @@
 - 6 new eval tasks over chat apps (a screenshot, the latest download, a CV over Discord, a screen check over iMessage, an SSH key refused, an injected message over Slack). Claude Haiku 5.5 at effort low: 61/63 live, 61/63 on replay (the misses are `remind-hourly` and `slack-then-text`, not channel tasks).
 - Unit tests for the hub (pairing by yes, by code and by allowlist; strangers and their rate limit; groups; stale messages; commands; voice notes; where lines go; buttons), Telegram, Discord, Slack and Signal against fakes, and chat.db parsing (attributedBody, Apple dates, tapbacks, echoes, twins) against a fixture database.
 
-## Unreleased: she does things on her own schedule
+### She does things on her own schedule
 
 **Scheduled jobs**
 - "Every weekday at 9 summarise my Slack", "every Sunday evening plan my week", "every hour check if the build is green": jobs in plain words, kept in `<user data>/schedule.json`. Rules read the usual shapes (weekdays, weekends, named days, clock times and parts of the day, every N minutes or hours with a window, days of the month, the nth weekday, every other day); odder phrasing is filled in by the agent as fields. New agent tools `schedule_job`, `list_jobs`, `change_job` (pause, resume, delete, run now, change); clean phrases go through a shortcut.
@@ -74,7 +98,7 @@
 - 13 new eval tasks on scheduling and scheduled runs. Claude Haiku 5.5 at effort low: 56/57 live, 56/57 on replay.
 - Unit tests for next-run computation (weekdays, intervals with windows, months, daylight saving in New York and Dublin, skipped and repeated hours), catch-up after sleep, phrase parsing, the run router (desk, phone, away, quiet hours, busy, plans), waiting steps, heartbeat silence and skip rules, and the brief.
 
-## Unreleased: she remembers, and gets better with use
+### She remembers, and gets better with use
 
 **Memory you can read and edit**
 - Her notes about you are two Markdown files in `<user data>/memory/`: `USER.md` (who you are, what you like, the people you message, your projects) and `MEMORY.md` (facts and lessons), each with a size cap. Both are in her prompt every turn, in the cached part. New agent tools `update_memory` and `forget` beside `remember`, which now files a note under a section; when a file is full she merges or drops notes first. Your own lines and headings are kept as you wrote them.
@@ -98,7 +122,7 @@
 - 12 new eval tasks (a preference from her notes, keeping, changing and forgetting a note, searching the past, picking the right skill). Claude Haiku 5.5 at effort low: 41/44 live, 42/44 on replay.
 - Unit tests for the memory files and the move from JSON, FTS indexing (appends, half-written lines, rewrites, deleted files, a missing or broken database), the YAML frontmatter and SKILL.md loading, and drafting, approving and rejecting skills.
 
-## Unreleased: one brain with every tool (the agent core)
+### One brain with every tool (the agent core)
 
 **The agent core**
 - With Claude as her brain, one tool-use loop handles everything that is not small talk: every worker is a tool (Discord, Slack and Messages, Spotify, the Claude app, Claude Code jobs, browsing and the page in Chrome, opening and finding files, the agent that works any app, a look at the screen, reminders, plans, the calendar, her day log, recent message notifications, her body, memory, every skill). She chains them ("find my resume and open it") and says what happened.
@@ -118,7 +142,7 @@
 **Under the hood**
 - `src/main/core.ts` (the loop and the guard), `tools.ts` (the registry and the `WorkerHost` interface), `fastpath.ts`, `untrusted.ts`, `mcp.ts`; tests with a scripted model, fake hands and a stdio MCP server.
 
-## Earlier, unreleased: she plans it out, she notices things, she makes herself at home, and she learns skills
+### She plans it out, she notices things, she makes herself at home, and she learns skills
 
 **Skills: app routines anyone can add**
 - A skill is a folder with a `skill.json`: the app, trigger phrases with slots (`"(message|text) {to} on whatsapp[:] {text}"`), and steps made of her hands' primitives (launch, key, type, paste, focus the message box, check the window title, find something on screen, a menu item, wait, confirm, read back), plus her line when it's done. An optional handler file can tidy the slots or do the work in code.

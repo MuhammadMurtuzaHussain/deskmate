@@ -92,13 +92,22 @@ What she never does, and how to report a problem: [SECURITY.md](SECURITY.md).
 
 ## Install
 
-Grab the latest build from [Releases](https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest):
+**macOS** (Apple silicon or Intel, macOS 13+): download **`Deskmate-<version>-mac-universal.dmg`** from
+[Releases](https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest), open it, drag Deskmate to Applications.
+Or with Homebrew (once the tap is up, [docs/HOMEBREW.md](docs/HOMEBREW.md)):
+
+```bash
+brew install --cask muhammadmurtuzahussain/deskmate/deskmate
+```
+
+Until releases are notarized, macOS asks once before opening her: System Settings → Privacy & Security → **Open
+Anyway** (or right-click → Open on macOS 14 and earlier).
 
 | OS | file | note |
 |---|---|---|
-| macOS (Apple Silicon / Intel) | `Deskmate-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Unsigned for now: on first launch right-click → Open, or `xattr -dr com.apple.quarantine /Applications/Deskmate.app`. |
-| Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` or `-portable.exe` | Unsigned: SmartScreen → More info → Run anyway. App control on Windows is experimental. |
-| Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. The tray needs `libayatana-appindicator` on GNOME. |
+| macOS | `Deskmate-x.y.z-mac-universal.dmg` | one app for both chips; signed builds update themselves |
+| Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` or `-portable.exe` | Unsigned: SmartScreen → More info → Run anyway. The installer updates itself. App control on Windows is experimental. |
+| Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage (it updates itself). The tray needs `libayatana-appindicator` on GNOME. |
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
@@ -106,27 +115,40 @@ Grab the latest build from [Releases](https://github.com/MuhammadMurtuzaHussain/
 | Chat apps from the phone: Telegram, Discord, Slack | ✓ | ✓ | ✓ |
 | … iMessage | ✓ | – | – |
 | … Signal (through signal-cli) | ✓ | – | ✓ |
-| Command bar, plans | ✓ | ✓ | ✓ |
+| Command bar, plans, schedules, MCP servers | ✓ | ✓ | ✓ |
 | App control (routines, skills, the agent) | ✓ | experimental | – |
 | Chrome driving, notification banners, calendar, sitting on windows | ✓ | – | – |
 
 ## Quickstart
 
-1. **Open Deskmate.** She appears in the bottom-right corner and a setup window opens.
-2. **Give her a brain.** Paste an [Anthropic API key](https://console.anthropic.com/settings/keys) (best at doing
-   things; the agent needs it), pick a local [Ollama](https://ollama.com) model (free, private), or paste a free
+Open Deskmate. She appears in the bottom-right corner, and a short tour walks you through the rest (about five
+minutes; run it again any time from the menu-bar icon → **Welcome tour…**):
+
+1. **Her brain.** Paste an [Anthropic API key](https://console.anthropic.com/settings/keys) (the full agent: she works
+   any app step by step), pick a local [Ollama](https://ollama.com) model (free, private), or paste a free
    [Gemini key](https://aistudio.google.com/apikey).
-3. **Let her see and act.** Allow Screen Recording, and Accessibility when she asks, so her hands can press keys.
-4. **Ask her something.** Type in her panel or press ⌥Space:
+2. **Pick her.** Five characters ship (Live2D and VRM); add your own later.
+3. **Her voice.** **Install the voice** sets up Kokoro (speech) and Whisper (ears) on your Mac with a progress bar,
+   about a 1 GB download; needs Python 3.10–3.12 (`brew install python@3.12`). Or keep the system voice.
+4. **What macOS lets her do.** Accessibility, Screen Recording and Microphone make her useful; Automation (Messages,
+   Spotify), Calendar and Full Disk Access (iMessage) are for the features that use them. Each row says why, checks
+   itself live, and has **Allow** and **Open System Settings**.
+5. **Try me.** Three example requests, or your own:
 
    ```
    remind me in 20 minutes to stretch
    tell sam on discord I'm running late
    make a plan to clean up my downloads and tell me what you moved
+   every weekday at 9 summarise my Slack
    ask claude to fix the failing tests in deskmate
    ```
 
-Everything in the setup window can be changed later from the menu-bar icon → **Setup…**.
+After that: ⌥Space opens the command bar over any app, and everything in the tour (and much more: chat apps, MCP
+servers, schedules, permissions, a spending budget) is in the menu-bar icon → **Setup…**.
+
+**Updates.** Signed builds download new releases in the background and install them when she quits (tray → **Restart
+to update**). Unsigned builds show **Update available** in the tray, which opens the release page.
+`DESKMATE_UPDATE_CHECK=0` turns the check off. Releasing and signing: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Skills
 
@@ -180,8 +202,8 @@ Reaching her from your phone's chat apps: [docs/CHANNELS.md](docs/CHANNELS.md).
 
 ## Privacy
 
-With Ollama and the local voice, nothing leaves your machine except the update check (one request to GitHub's
-releases API with the app version; `DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs, chat
+With Ollama and the local voice, nothing leaves your machine except the update check (a request to GitHub Releases
+with the app version, and on signed builds the download of a newer version; `DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs, chat
 text, screenshots (when she looks, or you ask about the screen) and spoken lines go to those services under your own
 keys. Speech is transcribed on your machine. A Claude Code job sends your instruction and what Claude reads in that
 folder to Anthropic, as running `claude` yourself would. With a chat app on, your messages and her replies pass
@@ -217,8 +239,8 @@ cp .env.example .env     # optional: brain, voice, shortcuts
 npm run dev
 ```
 
-`npm test` runs the unit tests, `npm run typecheck` the types, `npm run dist` builds installers for your OS into
-`release/`. Testing alongside your own copy, writing skills and the code layout: [CONTRIBUTING.md](CONTRIBUTING.md).
+`npm test` runs the unit tests, `npm run typecheck` the types, `npm run dist:mac` (or `dist:win`, `dist:linux`)
+builds installers into `release/` and checks what went into them. Testing alongside your own copy, writing skills and the code layout: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
@@ -243,7 +265,8 @@ It started as a reverse-engineering exercise of a commercial companion app:
 
 - Skills: more of them, a gallery, and recording a skill by showing her once (she already writes them after long tasks)
 - Windows hands out of experimental (needs testers with a PC), Linux hands
-- Signed and notarized macOS builds, signed Windows builds
+- Signed and notarized macOS builds (ready to switch on: [docs/RELEASING.md](docs/RELEASING.md)), signed Windows builds
+- Homebrew's main cask repository, once builds are notarized
 - A shell tool with spoken approval
 - Local voice cloning as an option
 - More of the settings in the setup window (voice provider, wake word, shortcuts)

@@ -124,6 +124,9 @@
 
   .pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px }
   .pill { font-size: 14px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px }
+  .brew { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--muted); font-size: 15px }
+  .brew code { background: #100d19; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; color: #d9d4ea; font-size: 14px; overflow-wrap: anywhere }
+  .tag { display: inline-block; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px }
 
   .cta-band { text-align: center; padding: 90px 0; background: radial-gradient(700px 300px at 50% 0%, rgba(177, 140, 255, 0.22), transparent 70%) }
   .cta-band .ctas { justify-content: center }
@@ -144,6 +147,7 @@
     <nav aria-label="Main">
       <ul>
         <li class="hide-sm"><a href="#does">What she does</a></li>
+        <li class="hide-sm"><a href="#v1">v1.0</a></li>
         <li class="hide-sm"><a href="#safety">Safety</a></li>
         <li class="hide-sm"><a href="#skills">Skills</a></li>
         <li><a href="#install">Install</a></li>
@@ -156,14 +160,14 @@
 <main id="main">
   <div class="hero" id="top">
     <div class="wrap">
-      <span class="eyebrow">Open source · MIT · local first</span>
+      <span class="eyebrow">v1.0 · Open source · MIT · local first</span>
       <h1>An agent with a <em>face.</em></h1>
       <p class="lede">Deskmate is an AI agent that lives on your desktop as a Live2D or 3D character. Talk to her and she works your apps, plans bigger jobs, hands code to Claude Code, and asks before anything goes out.</p>
       <div class="ctas">
-        <a class="btn primary" href="https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest">Download for macOS, Windows, Linux</a>
+        <a class="btn primary" href="https://github.com/MuhammadMurtuzaHussain/deskmate/releases/latest">Download for Mac (Apple silicon and Intel)</a>
         <a class="btn ghost" href="https://github.com/MuhammadMurtuzaHussain/deskmate">View on GitHub</a>
       </div>
-      <p class="meta">Free. Runs fully offline with Ollama, Whisper and Kokoro, or on Claude or Gemini with your own key.</p>
+      <p class="meta">Free. Also for Windows and Linux. Runs fully offline with Ollama, Whisper and Kokoro, or on Claude or Gemini with your own key.</p>
       <div class="shot-hero">
         <img src="../hero.png" width="1980" height="1230" alt="Victoria, a 3D character, standing on the desktop and saying: Here's the plan, 3 steps. Beside her, a plan card waiting for a go, and an editor showing a skill recipe for WhatsApp.">
       </div>
@@ -180,12 +184,30 @@
         <div class="card"><div class="icon" aria-hidden="true">🛠️</div><h3>Puts Claude Code to work</h3><p>She runs the job in the right folder, follows it, dozes on your terminal while it runs, and tells you what came back.</p><span class="say">"Ask Claude to fix the failing tests."</span></div>
         <div class="card"><div class="icon" aria-hidden="true">🔔</div><h3>Notices things</h3><p>A job done, a message from Sam, a meeting in ten minutes, the reminders you asked for. Quiet hours hold it all for later.</p><span class="say">"Remind me at 6 to call mum."</span></div>
         <div class="card"><div class="icon" aria-hidden="true">🎙️</div><h3>Talks and listens</h3><p>Whisper hears you and Kokoro answers, lip-synced, on your machine. Or press ⌥Space and type.</p><span class="say">"Victoria, what's this error?"</span></div>
-        <div class="card"><div class="icon" aria-hidden="true">📱</div><h3>Answers your phone</h3><p>Text her through your own Telegram bot. Her "send it?" questions come back as Yes and No buttons.</p><span class="say">"What's on my screen?"</span></div>
+        <div class="card"><div class="icon" aria-hidden="true">📱</div><h3>Answers your phone</h3><p>Text her from Telegram, Discord, iMessage, Slack or Signal. Only you can reach her, and her "send it?" questions come back to the chat.</p><span class="say">"Send me the PDF I just downloaded."</span></div>
       </div>
     </div>
   </section>
 
-  <section class="alt">
+  <section class="alt" id="v1">
+    <div class="wrap">
+      <h2>What's in 1.0</h2>
+      <p class="sub">A real agent under the face, and the safety rails to leave it running.</p>
+      <div class="grid">
+        <div class="card"><span class="tag">Agent</span><h3>One brain, every tool</h3><p>With Claude she runs a tool loop over everything she can do: your apps, Chrome, files, plans, Claude Code, reminders. Untrusted text from web pages and messages can't make her send, delete or pay without asking.</p></div>
+        <div class="card"><span class="tag">MCP</span><h3>Tool servers</h3><p>Add any Model Context Protocol server in one file (GitHub, a database, your own) and its tools join hers, behind the same permission levels and read-backs.</p></div>
+        <div class="card"><span class="tag">Memory</span><h3>Remembers you, in plain text</h3><p>What she knows about you lives in USER.md and MEMORY.md, files you can open and edit. "What did I ask you about the dentist?" searches everything you two said and did.</p></div>
+        <div class="card"><span class="tag">Skills</span><h3>SKILL.md, the open format</h3><p>Skills written for OpenClaw or Hermes work here. After a long task that worked she writes one herself, and keeps it only on your yes.</p></div>
+        <div class="card"><span class="tag">Schedules</span><h3>Works on her own time</h3><p>"Every weekday at 9 summarise my Slack." A heartbeat checks a short list and stays quiet unless something needs you; a morning brief sums up the day.</p></div>
+        <div class="card"><span class="tag">Chat apps</span><h3>Reach her from your phone</h3><p>Telegram, Discord, iMessage, Slack and Signal, paired to you alone. Voice notes, screenshots and files, after a yes.</p></div>
+        <div class="card"><span class="tag">Safety</span><h3>Permissions, undo, a budget</h3><p>Allow, ask or never per tool and per origin; an activity log with undo; a spending meter with a monthly budget; keys in the Keychain; a kill switch on Control-Option-Escape.</p></div>
+        <div class="card"><span class="tag">Setup</span><h3>Five minutes to running</h3><p>One download for every Mac. A short tour picks her brain, her look and her voice, and walks through each macOS permission with a live check.</p></div>
+        <div class="card"><span class="tag">Updates</span><h3>Keeps herself current</h3><p>Signed builds download new versions in the background and install them when she quits. Or turn the check off; nothing else phones home.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <div class="wrap">
       <div class="row">
         <div class="text">
@@ -213,7 +235,7 @@
     </div>
   </section>
 
-  <section id="safety">
+  <section class="alt" id="safety">
     <div class="wrap">
       <h2>An agent you can leave on.</h2>
       <p class="sub">The rules live in the code that presses the keys, not in a prompt a model could talk its way around.</p>
@@ -228,12 +250,12 @@
     </div>
   </section>
 
-  <section class="alt" id="skills">
+  <section id="skills">
     <div class="wrap">
       <div class="row">
         <div class="text">
           <h2>Teach her a new app in one file.</h2>
-          <p>A skill is a small JSON recipe: the app, the phrases that trigger it, and the steps. Drop it in your skills folder and she can do it by voice, the Claude agent gets it as a tool, and plans can use it as a step.</p>
+          <p>Two kinds. Instructions in the open SKILL.md format, the same as OpenClaw and Hermes. Or an app routine: a small JSON recipe with the app, the phrases that trigger it, and the steps. Drop either in your skills folder and she can do it by voice, the agent gets it as a tool, and plans can use it as a step.</p>
           <p>Bundled: WhatsApp message, Telegram message, Notes new note. <a href="https://github.com/MuhammadMurtuzaHussain/deskmate/blob/main/docs/SKILLS.md">Write your own →</a></p>
         </div>
 <pre class="code" aria-label="Example skill.json for a new note in Apple Notes">{
@@ -255,7 +277,7 @@
     </div>
   </section>
 
-  <section id="compare">
+  <section class="alt" id="compare">
     <div class="wrap">
       <h2>How it compares</h2>
       <p class="sub">An honest look. Each of these is good at something different.</p>
@@ -265,7 +287,7 @@
           <tbody>
             <tr><th scope="row">Lives</th><td class="us">on your desktop, as a character</td><td>a terminal, or a chat app you message</td><td>a phone app, a chat window, or a pet on screen</td></tr>
             <tr><th scope="row">Does things</th><td class="us">native app control, Chrome, Claude Code, plans</td><td>shell, files, browser, many integrations</td><td>mostly no</td></tr>
-            <tr><th scope="row">Extending it</th><td class="us">JSON skills, characters</td><td>large plugin and skill ecosystems</td><td>closed</td></tr>
+            <tr><th scope="row">Extending it</th><td class="us">SKILL.md skills, MCP servers, app routines, characters</td><td>large plugin and skill ecosystems</td><td>closed</td></tr>
             <tr><th scope="row">Asks before sending</th><td class="us">built into the hands</td><td>depends on the setup</td><td>n/a</td></tr>
             <tr><th scope="row">Fully local</th><td class="us">yes</td><td>yes, with a local model</td><td>usually cloud</td></tr>
           </tbody>
@@ -275,18 +297,19 @@
     </div>
   </section>
 
-  <section class="alt" id="install">
+  <section id="install">
     <div class="wrap">
       <h2>Up and running in five minutes</h2>
       <p class="sub">macOS is the full experience. App control on Windows is experimental; on Linux she talks, plans, reminds and runs Claude Code.</p>
       <ol class="steps">
-        <li><b>Download</b> the latest release for your OS and open it. She appears in the corner.</li>
-        <li><b>Give her a brain</b> in the setup window: a local Ollama model, an Anthropic key for the full agent, or a free Gemini key.</li>
-        <li><b>Let her act:</b> allow Screen Recording and Accessibility when she asks.</li>
-        <li><b>Ask her something.</b> "Remind me in 20 minutes to stretch." "Make a plan to clean up my downloads."</li>
+        <li><b>Download</b> the DMG (one app for Apple silicon and Intel), drag Deskmate to Applications and open her.</li>
+        <li><b>Follow the tour:</b> a brain (a local Ollama model, an Anthropic key for the full agent, or a free Gemini key), a character, her voice.</li>
+        <li><b>Let her act:</b> the tour shows each macOS permission, why she needs it, and whether it's on yet.</li>
+        <li><b>Try her.</b> "Remind me in 20 minutes to stretch." "Every weekday at 9 summarise my Slack."</li>
       </ol>
+      <div class="brew"><span>Or with Homebrew:</span><code>brew install --cask muhammadmurtuzahussain/deskmate/deskmate</code></div>
       <div class="pills" aria-label="Runs with">
-        <span class="pill">Live2D</span><span class="pill">VRM</span><span class="pill">MMD</span><span class="pill">Ollama</span><span class="pill">Claude</span><span class="pill">Gemini</span><span class="pill">Claude Code</span><span class="pill">Whisper</span><span class="pill">Kokoro</span><span class="pill">Telegram</span>
+        <span class="pill">Live2D</span><span class="pill">VRM</span><span class="pill">MMD</span><span class="pill">Ollama</span><span class="pill">Claude</span><span class="pill">Gemini</span><span class="pill">Claude Code</span><span class="pill">Whisper</span><span class="pill">Kokoro</span><span class="pill">MCP</span><span class="pill">SKILL.md</span><span class="pill">Telegram</span><span class="pill">Discord</span><span class="pill">iMessage</span><span class="pill">Slack</span><span class="pill">Signal</span>
       </div>
     </div>
   </section>

@@ -107,3 +107,32 @@ test('signing: ad-hoc without a certificate; Developer ID with one; notarized on
   assert.equal(signingPlan({ CSC_LINK: 'cert.p12', APPLE_API_KEY: '/k.p8', APPLE_API_KEY_ID: 'KEYID', APPLE_API_ISSUER: 'issuer' }).notarize, true)
   assert.equal(signingPlan({ APPLE_ID: 'me@example.com', APPLE_APP_SPECIFIC_PASSWORD: 'made-up', APPLE_TEAM_ID: 'ABCDE12345' }).notarize, false, 'no certificate, no notarization')
 })
+
+const { sectionFor, notes } = require('../scripts/release-notes.cjs')
+const { fillCask } = require('../scripts/update-cask.cjs')
+
+test('release notes: the version\'s CHANGELOG section, without its heading, plus install lines', () => {
+  const log = '# Changelog\n\n## 1.0.0-rc.2: second try\n\nFixed it.\n\n### Details\n- a\n\n## 1.0.0-rc.1\n\nFirst.\n\n## 0.6.0: old\n\nOld.\n'
+  assert.equal(sectionFor(log, '1.0.0-rc.2'), 'Fixed it.\n\n### Details\n- a')
+  assert.equal(sectionFor(log, 'v1.0.0-rc.1'), 'First.')
+  assert.equal(sectionFor(log, '1.0.0-rc'), null, 'a prefix is not a match')
+  assert.equal(sectionFor(log, '1.0.0'), null)
+  assert.match(notes(log, '1.0.0-rc.1'), /^First\.\n\n### Install\n/)
+  assert.match(notes(log, '1.0.0-rc.1'), /Deskmate-1\.0\.0-rc\.1-mac-universal\.dmg/)
+  assert.equal(notes(log, '2.0.0'), null)
+})
+
+test('the real CHANGELOG has a section for package.json\'s version', () => {
+  const { readFileSync } = require('node:fs')
+  const version = require('../package.json').version
+  const body = sectionFor(readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8'), version)
+  assert.ok(body && body.length > 200, `CHANGELOG.md needs a "## ${version}" section`)
+})
+
+test('the cask gets the version and the DMG checksum', () => {
+  const cask = 'cask "deskmate" do\n  version "1.0.0-rc.1"\n  sha256 "' + '0'.repeat(64) + '"\nend\n'
+  const sha = 'ab'.repeat(32)
+  assert.equal(fillCask(cask, '1.0.0', sha), `cask "deskmate" do\n  version "1.0.0"\n  sha256 "${sha}"\nend\n`)
+  assert.throws(() => fillCask(cask, 'latest', sha), /not a version/)
+  assert.throws(() => fillCask(cask, '1.0.0', 'xyz'), /not a sha256/)
+})
