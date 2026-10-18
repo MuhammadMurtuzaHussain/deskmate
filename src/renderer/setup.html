@@ -66,25 +66,9 @@
 
     <section id="remote" class="hidden">
       <div class="head"><h2>4 · From your phone <span class="dim">(optional)</span></h2><span class="chip" id="remote-chip">…</span></div>
-      <div class="hint">Send her messages from anywhere through a Telegram bot of your own: in Telegram, message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code>, and paste the token it gives you here.</div>
-      <form id="telegram" class="row" autocomplete="off">
-        <input id="telegram-token" type="password" placeholder="paste your bot token (123456:ABC…)" />
-        <button type="submit">Check and use</button>
-      </form>
-      <div id="remote-request" class="pair hidden">
-        <div><b id="remote-request-name"></b><span>wants to control her from their phone. Code on the phone: <b id="remote-request-code"></b></span></div>
-        <button id="remote-allow" class="primary">Allow</button>
-        <button id="remote-refuse">Refuse</button>
-      </div>
-      <div id="remote-paired" class="pair hidden">
-        <div><b id="remote-paired-name"></b><span>can send her messages from their phone.</span></div>
-        <button id="remote-forget">Forget this phone</button>
-      </div>
-      <div class="row hint" id="remote-row">
-        <span id="remote-text" class="grow"></span>
-        <button id="remote-toggle" class="link"></button>
-      </div>
-      <div class="msg" id="remote-msg"></div>
+      <div class="hint">Message her from the chat apps you already use. Each one is off until you set it up, and only you can reach her through it: anyone else gets one short "not paired" line (bots) or nothing at all (iMessage, Signal). Anything that sends, deletes, buys or runs something asks you on the phone first. More in docs/CHANNELS.md.</div>
+      <div id="channel-list" class="channels"></div>
+      <label class="toggle"><input type="checkbox" id="voice-replies" /><div><b>Answer voice notes with a voice note</b><span id="voice-replies-note">she always answers in text; this adds her voice (Kokoro) when you sent one</span></div></label>
     </section>
 
     <section id="notices" class="hidden">

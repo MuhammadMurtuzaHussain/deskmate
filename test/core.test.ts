@@ -124,8 +124,8 @@ test('the phone remote: the turn starts untrusted, so cancelling reminders asks'
   const r = await runAgentTurn(turnInput('cancel all my reminders', 'phone'), deps(host, model))
   assert.deepEqual(r.tainted, ['phone'])
   assert.equal(host.calls.length, 0)
-  assert.match(host.asked[0], /message from the phone remote.*cancel all your reminders\. Go ahead\?/)
-  assert.match(JSON.stringify(model.requests[0].messages.at(-1)), /Telegram remote/)
+  assert.match(host.asked[0], /message sent from your phone.*cancel all your reminders\. Go ahead\?/)
+  assert.match(JSON.stringify(model.requests[0].messages.at(-1)), /through Telegram/)
 })
 
 test('an unknown tool and a throwing tool come back as errors, and the loop has a limit', async () => {

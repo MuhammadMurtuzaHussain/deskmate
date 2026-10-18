@@ -10,6 +10,7 @@ import { describeGuide, findGuide, guideIndex, loadGuides, type Guide } from '..
 import type { Skill } from '../../src/main/skills.ts'
 import type { ChatApp, JobAction, PastKind, ScheduleInput, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
 import { untrusted } from '../../src/main/untrusted.ts'
+import { blockedPath, fileQuery, kindOf } from '../../src/main/channels/sendfile.ts'
 
 export interface FakeWorld {
   /** chat names each app knows; a name not here is "not found" */
@@ -35,6 +36,8 @@ export interface FakeWorld {
   guides?: { name: string; description: string; body: string }[]
   /** scheduled jobs already set up, in words ("every weekday at 9") */
   jobs?: { task: string; when: string }[]
+  /** what is in ~/Downloads, oldest first */
+  downloads?: { name: string; path: string }[]
 }
 
 export interface HostCall {
@@ -341,6 +344,25 @@ export class FakeHost implements WorkerHost {
   async runSkillScript(a: { name: string; script: string; args: string[] }, ctx: ToolCtx): Promise<ToolOutcome> {
     this.rec('run_skill_script', a, ctx)
     return { ok: true, text: untrusted('skill', `ran ${a.script} ${a.args.join(' ')}`), untrusted: 'skill' }
+  }
+
+  async sendToMe(a: { what: 'screenshot' | 'file'; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('send_to_me', a, ctx)
+    if (a.what === 'screenshot') return this.ok('Sent a screenshot of the screen to their phone.', "Here's your screen.")
+    const desc = a.file ?? ''
+    let hit: { name: string; path: string } | undefined
+    if (/download/i.test(desc) || /\/Downloads\//.test(desc)) {
+      const exts = kindOf(desc)
+      hit = [...(this.world.downloads ?? [])].reverse().find((f) => (desc.startsWith('/') ? f.path === desc : !exts || exts.includes(f.name.toLowerCase().split('.').pop() ?? '')))
+    } else {
+      const q = fileQuery(desc).toLowerCase()
+      hit = (this.world.files ?? []).find((f) => f.path === desc) ?? (this.world.files ?? []).find((f) => q.split(' ').every((w) => f.name.toLowerCase().includes(w)))
+    }
+    if (!hit) return { ok: false, text: `Not sent: nothing matches "${desc}".` }
+    const blocked = blockedPath(hit.path)
+    if (blocked) return { ok: false, text: `Not sent: ${blocked}.` }
+    if (!(await ctx.confirm(`Send ${hit.name} (1.2 MB) to you on Telegram?`))) return { ok: false, text: 'The user said no; not sent.', say: 'Okay, not sent.' }
+    return this.ok(`Sent ${hit.name} (${hit.path}) to their phone.`, `Sent ${hit.name}.`)
   }
 
   async runSkill(skill: Skill, slots: Record<string, string>, ctx: ToolCtx): Promise<ToolOutcome> {

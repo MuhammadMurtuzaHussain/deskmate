@@ -1,4 +1,4 @@
-import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, RemoteAction, ScheduleSetupState, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, DraftAction, JobSetupAction, LearnSetupState, McpSetupState, NoticePrefs, NoticeState, PermissionKind, ChannelKey, ChannelSetup, ScheduleSetupState, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -119,47 +119,233 @@ function render(state: SetupState): void {
   }
 }
 
-const remoteMsg = $<HTMLDivElement>('remote-msg')
-function remoteMessage(text: string, kind: 'good' | 'bad' | '' = ''): void {
-  remoteMsg.textContent = text
-  remoteMsg.className = `msg${kind ? ` ${kind}` : ''}`
+// ---- From your phone: one card per chat app, built once and updated in place (so what you type survives a refresh)
+
+interface Field {
+  key: string
+  placeholder: string
+  secret?: boolean
+  multi?: boolean
+}
+
+const CHANNEL_HELP: Record<ChannelKey, { how: string; fields: Field[] }> = {
+  telegram: {
+    how: 'In Telegram, message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code>, and paste the token it gives you. Then send <code>/start</code> to your bot and say yes here.',
+    fields: [{ key: 'token', placeholder: 'bot token (123456:ABC…)', secret: true }]
+  },
+  discord: {
+    how: 'At <a href="https://discord.com/developers/applications" target="_blank">discord.com/developers</a>: New Application → Bot → Reset Token, and paste it. Installation → turn on User Install and open the install link, so you can DM the bot. Then press Pair and DM it the code.',
+    fields: [{ key: 'token', placeholder: 'bot token', secret: true }]
+  },
+  imessage: {
+    how: 'Your own phone number and Apple ID email (and any other number of yours), one per line. Text yourself from your iPhone to reach her; she answers in that chat. Nobody else is ever answered. Needs Full Disk Access to read Messages.',
+    fields: [{ key: 'handles', placeholder: '+15551234567\nyou@icloud.com', multi: true }]
+  },
+  slack: {
+    how: 'At <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a>: Create New App → From a manifest (docs/CHANNELS.md has one), install it to your workspace, and paste the Bot token (xoxb-…) and an App-Level token with connections:write (xapp-…). Then press Pair and DM the app the code.',
+    fields: [
+      { key: 'bot', placeholder: 'bot token (xoxb-…)', secret: true },
+      { key: 'app', placeholder: 'app-level token (xapp-…)', secret: true }
+    ]
+  },
+  signal: {
+    how: 'Needs <a href="https://github.com/AsamK/signal-cli" target="_blank">signal-cli</a> (<code>brew install signal-cli</code>), linked to your account as a second device: <code>signal-cli link -n Deskmate</code>, then scan the code in Signal → Settings → Linked devices. Message yourself (Note to Self) to reach her.',
+    fields: [
+      { key: 'number', placeholder: 'your Signal number (+15551234567)' },
+      { key: 'handles', placeholder: 'other numbers of yours (optional), one per line', multi: true }
+    ]
+  },
+  whatsapp: { how: '', fields: [] }
+}
+
+interface ChannelCard {
+  root: HTMLDetailsElement
+  chip: HTMLSpanElement
+  who: HTMLSpanElement
+  state: HTMLDivElement
+  inputs: Record<string, HTMLInputElement | HTMLTextAreaElement>
+  toggle: HTMLButtonElement
+  pair: HTMLButtonElement
+  forget: HTMLButtonElement
+  msg: HTMLDivElement
+  filled: boolean
+}
+
+const channelCards = new Map<ChannelKey, ChannelCard>()
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag)
+  if (cls) e.className = cls
+  if (text) e.textContent = text
+  return e
+}
+
+function channelMessage(card: ChannelCard, text: string, kind: 'good' | 'bad' | '' = ''): void {
+  card.msg.textContent = text
+  card.msg.className = `msg${kind ? ` ${kind}` : ''}`
+}
+
+function buildCard(c: ChannelSetup): ChannelCard {
+  const root = el('details', `chan${c.available ? '' : ' na'}`)
+  const summary = el('summary')
+  const title = el('b', '', c.label)
+  const who = el('span', 'who')
+  const chipEl = el('span', 'chip', '…')
+  summary.append(title, who, chipEl)
+  root.append(summary)
+  const body = el('div', 'body')
+  root.append(body)
+  const help = CHANNEL_HELP[c.id]
+  const card: ChannelCard = { root, chip: chipEl, who, state: el('div'), inputs: {}, toggle: el('button', 'link'), pair: el('button'), forget: el('button'), msg: el('div', 'msg'), filled: false }
+  if (!c.available) {
+    body.append(el('div', 'hint', c.why ?? 'Not available.'))
+    summary.addEventListener('click', (e) => e.preventDefault())
+    return card
+  }
+  const how = el('div', 'hint')
+  how.innerHTML = help.how
+  body.append(how)
+  const form = el('form', 'sub flat')
+  form.autocomplete = 'off'
+  for (const f of help.fields) {
+    const input = f.multi ? el('textarea') : el('input')
+    if (input instanceof HTMLInputElement) input.type = f.secret ? 'password' : 'text'
+    input.placeholder = f.placeholder
+    input.spellcheck = false
+    card.inputs[f.key] = input
+    form.append(input)
+  }
+  const save = el('button', '', 'Check and use')
+  save.type = 'submit'
+  const row = el('div', 'row')
+  row.append(save)
+  form.append(row)
+  body.append(form)
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const data: Record<string, string> = {}
+    for (const [k, input] of Object.entries(card.inputs)) data[k] = input.value.trim()
+    if (help.fields.some((f) => f.secret) && Object.entries(data).every(([k, v]) => !v || !help.fields.find((f) => f.key === k)?.secret)) {
+      channelMessage(card, 'Paste the token first.', 'bad')
+      return
+    }
+    channelMessage(card, `Checking with ${c.label}…`)
+    save.disabled = true
+    const r = await api.channel?.(c.id, 'save', data)
+    save.disabled = false
+    if (r?.ok) for (const f of help.fields) if (f.secret) card.inputs[f.key].value = ''
+    channelMessage(card, r?.ok ? `That works${r.account ? `: ${r.account}` : ''}. ${c.pairing === 'code' ? 'Press Pair and send the code from the app.' : c.pairing === 'ask' ? 'Send /start to your bot.' : 'Message yourself to reach her.'}` : (r?.error ?? 'That did not work.'), r?.ok ? 'good' : 'bad')
+    await refresh()
+  })
+  body.append(card.state)
+  const actions = el('div', 'row hint')
+  const spacer = el('span', 'grow')
+  card.pair.textContent = 'Pair'
+  card.forget.textContent = 'Forget'
+  actions.append(spacer, card.pair, card.forget, card.toggle)
+  body.append(actions, card.msg)
+  card.toggle.addEventListener('click', async () => {
+    await api.channel?.(c.id, card.toggle.dataset.action === 'on' ? 'on' : 'off')
+    channelMessage(card, '')
+    await refresh()
+  })
+  card.pair.addEventListener('click', async () => {
+    const r = await api.channel?.(c.id, 'pair')
+    if (!r?.ok) channelMessage(card, r?.error ?? 'Could not start pairing.', 'bad')
+    await refresh()
+  })
+  card.forget.addEventListener('click', async () => {
+    await api.channel?.(c.id, 'forget')
+    channelMessage(card, c.pairing === 'ask' ? 'Forgotten. A /start asks here again.' : 'Forgotten. Pair again with a new code.')
+    await refresh()
+  })
+  return card
+}
+
+function updateCard(card: ChannelCard, c: ChannelSetup): void {
+  if (!c.available) {
+    chip(card.chip, 'not available')
+    return
+  }
+  // Start open where something needs doing.
+  if (!card.filled) {
+    card.root.open = Boolean(c.request || c.code || c.blocker || c.error)
+    if (card.inputs.handles && c.handles) card.inputs.handles.value = c.handles.join('\n')
+    if (card.inputs.number && c.number) card.inputs.number.value = c.number
+    card.filled = true
+  }
+  if (c.request || c.code) card.root.open = true
+  for (const f of CHANNEL_HELP[c.id].fields) {
+    if (f.secret) card.inputs[f.key].placeholder = c.configured ? (c.fromEnv ? 'using the token from .env; paste one to replace it' : 'saved; paste a new one to replace it') : f.placeholder
+  }
+  const paired = Boolean(c.owner) || (c.pairing === 'allowlist' && c.configured)
+  if (c.error) chip(card.chip, 'stopped', 'bad')
+  else if (!c.configured) chip(card.chip, 'not set up')
+  else if (!c.on) chip(card.chip, 'off')
+  else if (c.request) chip(card.chip, 'asking you', 'bad')
+  else if (c.code) chip(card.chip, 'pairing', 'bad')
+  else if (paired) chip(card.chip, 'on', 'ok')
+  else chip(card.chip, 'not paired', 'bad')
+  card.who.textContent = c.owner ? c.owner : c.account ?? ''
+  card.state.replaceChildren()
+  if (c.blocker) card.state.append(el('div', 'msg bad', c.blocker))
+  if (c.error) card.state.append(el('div', 'msg bad', c.error))
+  if (c.request) {
+    const row = el('div', 'pair')
+    const text = el('div')
+    text.append(el('b', '', c.request.name), el('span', '', `wants to control her from ${c.label}. Code on the phone: ${c.request.code}`))
+    const allow = el('button', 'primary', 'Allow')
+    const refuse = el('button', '', 'Refuse')
+    allow.addEventListener('click', async () => (await api.channel?.(c.id, 'allow'), refresh()))
+    refuse.addEventListener('click', async () => (await api.channel?.(c.id, 'refuse'), refresh()))
+    row.append(text, allow, refuse)
+    card.state.append(row)
+  }
+  if (c.code) {
+    const row = el('div', 'pair')
+    const text = el('div')
+    const mins = Math.max(1, Math.round((c.code.until - Date.now()) / 60_000))
+    text.append(el('span', 'code', c.code.code), el('span', '', `DM this to ${c.account ?? 'the bot'} in ${c.label} in the next ${mins} min.`))
+    const cancel = el('button', '', 'Cancel')
+    cancel.addEventListener('click', async () => (await api.channel?.(c.id, 'pair-cancel'), refresh()))
+    row.append(text, cancel)
+    card.state.append(row)
+  } else if (c.on && !c.owner && c.pairing !== 'allowlist' && !c.request) {
+    card.state.append(el('div', 'hint', c.pairing === 'ask' ? `Send /start to ${c.account ?? 'your bot'} in Telegram; she asks here before it can control her.` : `Press Pair, then DM ${c.account ?? 'the bot'} the code.`))
+  } else if (c.on && c.owner) {
+    card.state.append(el('div', 'hint', `${c.owner} can message her through ${c.label}. Everyone else is ignored.`))
+  }
+  card.pair.classList.toggle('hidden', !(c.on && c.pairing === 'code' && !c.owner && !c.code))
+  card.forget.classList.toggle('hidden', !(c.owner && c.pairing !== 'allowlist'))
+  card.toggle.classList.toggle('hidden', !c.configured)
+  card.toggle.textContent = c.on ? 'Turn off' : 'Turn on'
+  card.toggle.dataset.action = c.on ? 'off' : 'on'
 }
 
 function renderRemote(state: SetupState): void {
-  const r = state.remote
-  // An older main process (development hot reload) has no phone remote.
-  $<HTMLElement>('remote').classList.toggle('hidden', !r || !api.useTelegram)
-  if (!r) return
-  const bot = r.bot ? `@${r.bot}` : 'your bot'
-  const remoteChip = $<HTMLSpanElement>('remote-chip')
-  if (r.error) chip(remoteChip, 'token rejected', 'bad')
-  else if (!r.token) chip(remoteChip, 'not set up')
-  else if (!r.on) chip(remoteChip, 'off')
-  else if (r.paired) chip(remoteChip, 'paired', 'ok')
-  else if (r.request) chip(remoteChip, 'asking you', 'bad')
-  else chip(remoteChip, 'waiting for /start', 'bad')
-  $<HTMLInputElement>('telegram-token').placeholder = r.token
-    ? r.fromEnv
-      ? 'using the token from .env; paste one to replace it'
-      : 'a token is saved; paste a new one to replace it'
-    : 'paste your bot token (123456:ABC…)'
-  $<HTMLDivElement>('remote-request').classList.toggle('hidden', !r.request)
-  if (r.request) {
-    $<HTMLElement>('remote-request-name').textContent = r.request.name
-    $<HTMLElement>('remote-request-code').textContent = r.request.code
+  const ch = state.channels
+  // An older main process (development hot reload) has no chat apps.
+  $<HTMLElement>('remote').classList.toggle('hidden', !ch || !api.channel)
+  if (!ch) return
+  const list = $<HTMLDivElement>('channel-list')
+  for (const c of ch.list) {
+    let card = channelCards.get(c.id)
+    if (!card) {
+      card = buildCard(c)
+      channelCards.set(c.id, card)
+      list.append(card.root)
+    }
+    updateCard(card, c)
   }
-  $<HTMLDivElement>('remote-paired').classList.toggle('hidden', !r.paired)
-  if (r.paired) $<HTMLElement>('remote-paired-name').textContent = r.paired
-  const text = $<HTMLSpanElement>('remote-text')
-  const toggle = $<HTMLButtonElement>('remote-toggle')
-  $<HTMLDivElement>('remote-row').classList.toggle('hidden', !r.token)
-  if (r.error) text.textContent = r.error
-  else if (!r.on) text.textContent = 'The phone remote is off; messages to the bot wait in Telegram.'
-  else if (r.request) text.textContent = 'Check the code matches the one on the phone, then allow it (or say yes to her).'
-  else if (r.paired) text.textContent = `Message ${bot} in Telegram. Only this account can; everyone else is ignored.`
-  else text.textContent = `On your phone, open ${bot} in Telegram and send /start. She asks here before it can control her.`
-  toggle.textContent = r.on ? 'Turn off' : 'Turn on'
-  toggle.dataset.action = r.on ? 'off' : 'on'
+  const on = ch.list.filter((c) => c.on)
+  const remoteChip = $<HTMLSpanElement>('remote-chip')
+  if (ch.list.some((c) => c.request || c.error)) chip(remoteChip, 'needs you', 'bad')
+  else if (on.length) chip(remoteChip, on.map((c) => c.label).join(', '), 'ok')
+  else chip(remoteChip, 'off')
+  $<HTMLInputElement>('voice-replies').checked = ch.voiceReplies
+  $<HTMLSpanElement>('voice-replies-note').textContent = ch.stt
+    ? 'she always answers in text; this adds her voice (Kokoro) when you sent a voice note'
+    : 'voice notes need her local speech-to-text (tts-local, docs/VOICES.md); it is not running now'
 }
 
 // ---- What she tells you about
@@ -559,39 +745,11 @@ useClaude.addEventListener('click', async () => {
 
 $<HTMLButtonElement>('recheck').addEventListener('click', () => void refresh())
 
-$<HTMLFormElement>('telegram').addEventListener('submit', async (e) => {
-  e.preventDefault()
-  const input = $<HTMLInputElement>('telegram-token')
-  const token = input.value.trim()
-  if (!token || !api.useTelegram) return
-  remoteMessage('Asking Telegram…')
-  const result = await api.useTelegram(token)
-  if (result.ok) input.value = ''
-  remoteMessage(
-    result.ok ? `That works. On your phone, open @${result.bot} in Telegram and send /start.` : (result.error ?? 'That did not work.'),
-    result.ok ? 'good' : 'bad'
-  )
+$<HTMLInputElement>('voice-replies').addEventListener('change', async (e) => {
+  await api.channel?.('telegram', 'voice-replies', { on: String((e.currentTarget as HTMLInputElement).checked) })
   await refresh()
 })
-
-const remoteAction = (id: string, action: RemoteAction): void => {
-  $<HTMLButtonElement>(id).addEventListener('click', async () => {
-    await api.remote?.(action)
-    if (action === 'allow') remoteMessage('Paired. Message her from your phone.', 'good')
-    else if (action === 'refuse') remoteMessage('Refused. That account was told no.')
-    else if (action === 'forget') remoteMessage('Forgotten. A /start from your phone asks here again.')
-    await refresh()
-  })
-}
-remoteAction('remote-allow', 'allow')
-remoteAction('remote-refuse', 'refuse')
-remoteAction('remote-forget', 'forget')
-$<HTMLButtonElement>('remote-toggle').addEventListener('click', async (e) => {
-  await api.remote?.((e.currentTarget as HTMLButtonElement).dataset.action as RemoteAction)
-  remoteMessage('')
-  await refresh()
-})
-// A pairing request comes in from Telegram while this window is open.
+// A pairing request comes in from a chat app while this window is open.
 api.onSetupChanged?.(() => void refresh())
 
 for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {

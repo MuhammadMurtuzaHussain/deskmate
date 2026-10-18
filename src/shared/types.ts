@@ -263,20 +263,8 @@ export interface SetupState {
   voice: { provider: 'local' | 'elevenlabs' | 'system'; localServer: boolean }
   /** granted / denied / not-determined / restricted / unknown, as macOS reports them; keys is null without the helper */
   permissions: { microphone: string; screen: string; keys: boolean | null }
-  /** phone remote (Telegram); missing from an older main process */
-  remote?: {
-    token: boolean
-    /** the token comes from DESKMATE_TELEGRAM_TOKEN in .env */
-    fromEnv: boolean
-    /** the bot's @name, once Telegram answered */
-    bot: string | null
-    on: boolean
-    /** who controls her from their phone */
-    paired: string | null
-    /** a /start waiting for a yes on the Mac */
-    request: { name: string; code: string } | null
-    error: string | null
-  }
+  /** the chat apps she can be reached through; missing from an older main process */
+  channels?: ChannelsSetupState
   /** what she tells you about on her own; missing from an older main process */
   notices?: NoticeState
   /** tool servers from <user data>/mcp.json; missing from an older main process */
@@ -321,7 +309,49 @@ export interface McpSetupState {
   agentCore: boolean
 }
 
-export type RemoteAction = 'allow' | 'refuse' | 'forget' | 'on' | 'off'
+export type ChannelKey = 'telegram' | 'discord' | 'imessage' | 'slack' | 'signal' | 'whatsapp'
+
+/** One chat app in Setup. */
+export interface ChannelSetup {
+  id: ChannelKey
+  label: string
+  /** false when it cannot be used here (WhatsApp; iMessage off a Mac); why says so */
+  available: boolean
+  why?: string
+  /** has what it needs to start (a token, a number, a handle) */
+  configured: boolean
+  /** the token comes from .env */
+  fromEnv?: boolean
+  on: boolean
+  /** ask: /start and a yes here; code: send the code shown here; allowlist: the handles listed here */
+  pairing: 'ask' | 'code' | 'allowlist'
+  /** her account there ("@my_bot") once connected */
+  account: string | null
+  /** who controls her from there */
+  owner: string | null
+  /** a /start waiting for a yes here */
+  request: { name: string; code: string } | null
+  /** the open pairing code and when it stops working */
+  code: { code: string; until: number } | null
+  /** allowlist channels: the handles that count as the user */
+  handles?: string[]
+  /** Signal: the user's number */
+  number?: string
+  /** what the Mac has to allow or have first (Full Disk Access, signal-cli) */
+  blocker?: string | null
+  error: string | null
+}
+
+export interface ChannelsSetupState {
+  list: ChannelSetup[]
+  /** a voice note gets a voice note back (Kokoro) */
+  voiceReplies: boolean
+  /** the local speech-to-text is up, so voice notes can be heard */
+  stt: boolean
+}
+
+/** save: tokens, handles or a number (in data), checked and stored, and the channel switched on */
+export type ChannelAction = 'save' | 'on' | 'off' | 'pair' | 'pair-cancel' | 'allow' | 'refuse' | 'forget' | 'voice-replies'
 
 /** What she comes to tell you about on her own (Setup → "What she tells you about"; saved in settings.json). */
 export interface NoticePrefs {
@@ -403,9 +433,8 @@ export interface DeskmateApi {
   /** a stretch, a yawn, a glance at the pointer */
   onGesture?(cb: (gesture: Gesture) => void): void
   reportAnchors?(anchors: Anchors): void
-  /** phone remote: checks a bot token with Telegram and turns the remote on with it */
-  useTelegram?(token: string): Promise<{ ok: boolean; error?: string; bot?: string }>
-  remote?(action: RemoteAction): Promise<void>
+  /** Setup → chat apps: save a channel's tokens or handles, switch it, pair it */
+  channel?(id: ChannelKey, action: ChannelAction, data?: Record<string, string>): Promise<{ ok: boolean; error?: string; account?: string; code?: string }>
   /** saves part of "What she tells you about" */
   setNotices?(patch: Partial<NoticePrefs>): Promise<NoticeState>
   /** asks macOS for read access to the calendars */

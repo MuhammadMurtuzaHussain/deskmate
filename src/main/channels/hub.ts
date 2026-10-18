@@ -123,10 +123,13 @@ export class ChannelHub {
   private readonly opts: HubOptions
   private readonly states = new Map<ChannelId, State>()
   private readonly allow: Partial<Record<ChannelId, string[]>>
+  /** each channel's owner, kept across remove() and add() (a channel is rebuilt when its token changes) */
+  private readonly owners: Partial<Record<ChannelId, Owner | null>>
 
   constructor(opts: HubOptions) {
     this.opts = opts
     this.allow = { ...(opts.allowlist ?? {}) }
+    this.owners = { ...(opts.owners ?? {}) }
   }
 
   // ---- channels
@@ -136,7 +139,7 @@ export class ChannelHub {
     this.remove(channel.id)
     this.states.set(channel.id, {
       channel,
-      owner: this.opts.owners?.[channel.id] ?? null,
+      owner: this.owners[channel.id] ?? null,
       lastChat: null,
       request: null,
       code: null,
@@ -251,8 +254,14 @@ export class ChannelHub {
   /** Forgets a channel's owner; the next one has to pair again. */
   unpair(id: ChannelId): void {
     const s = this.states.get(id)
-    if (!s) return
-    const was = s.owner
+    const stored = this.owners[id] ?? null
+    this.owners[id] = null
+    if (!s) {
+      if (stored) this.opts.onPaired(id, null)
+      this.changed()
+      return
+    }
+    const was = s.owner ?? stored
     s.owner = null
     s.lastChat = null
     s.refused.clear()
@@ -580,6 +589,7 @@ export class ChannelHub {
 
   private setOwner(s: State, owner: Owner): void {
     s.owner = owner
+    this.owners[s.channel.id] = owner
     s.lastUsed = this.now()
     this.opts.onPaired(s.channel.id, owner)
     this.log(s.channel.id, `paired with ${owner.name}`)

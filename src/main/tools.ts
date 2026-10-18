@@ -88,6 +88,8 @@ export interface WorkerHost {
   readSkill(a: { name: string; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
   /** one of a skill's scripts (only with DESKMATE_SKILL_CODE=1 and the user's yes for that skill) */
   runSkillScript(a: { name: string; script: string; args: string[] }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** a screenshot or a file, to the chat app the message came from (channels/hub.ts) */
+  sendToMe(a: { what: 'screenshot' | 'file'; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
 }
 
 export type PastKind = 'any' | 'chat' | 'did' | 'plans'
@@ -158,12 +160,12 @@ export interface ToolsOptions {
   guides?: { any: boolean; scripts: boolean }
   external?: ExternalTool[]
   /** workers this computer can use right now; a missing one is left out of the list */
-  has?: Partial<Record<'computer' | 'chrome' | 'claudeCode' | 'apps', boolean>>
+  has?: Partial<Record<'computer' | 'chrome' | 'claudeCode' | 'apps' | 'channel', boolean>>
 }
 
 /** The tool list for one brain, in a fixed order (it is part of the cached prompt prefix). */
 export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[] {
-  const has = { computer: true, chrome: true, claudeCode: true, apps: true, ...opts.has }
+  const has = { computer: true, chrome: true, claudeCode: true, apps: true, channel: false, ...opts.has }
   const tools: ToolSpec[] = []
   const add = (t: Omit<ToolSpec, 'strict'> & { strict?: boolean }): void => {
     tools.push({ strict: true, ...t })
@@ -444,6 +446,18 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
         ctx
       )
   })
+  if (has.channel) {
+    add({
+      name: 'send_to_me',
+      description:
+        'Send the user something from this computer in the chat app they are writing from (only for a message that came from their phone): what "screenshot" is the screen right now; what "file" is a file, with "file" its full path when you know it (from find_file) or what they called it ("the PDF I just downloaded", "my resume"). A file is read back to them before it goes. Not for sending to anyone else: that is send_message.',
+      input_schema: schema({ what: { type: 'string', enum: ['screenshot', 'file'] }, file: nullable(str) }),
+      risk: (i) => (i.what === 'file' ? 'send' : null),
+      selfConfirm: true,
+      describe: (i) => (i.what === 'file' ? `send you the file "${s(i.file)}"` : 'send you a screenshot'),
+      run: (i, ctx) => host.sendToMe({ what: i.what === 'file' ? 'file' : 'screenshot', file: i.file ? s(i.file) : null }, ctx)
+    })
+  }
   if (opts.guides?.any) {
     add({
       name: 'read_skill',

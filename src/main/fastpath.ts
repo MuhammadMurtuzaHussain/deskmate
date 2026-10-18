@@ -111,13 +111,18 @@ function scheduleCall(text: string, now: Date): FastCall | null {
 }
 
 /** The shortcut for this message, or null when the agent should read it. */
-export function fastRoute(raw: string, opts: { skills?: Skill[]; now?: Date } = {}): FastCall | null {
+export function fastRoute(raw: string, opts: { skills?: Skill[]; now?: Date; channel?: boolean } = {}): FastCall | null {
   const call = shortcut(raw, opts)
   if (!call || raw.trim().startsWith('/')) return call
   return needsNotes(call, raw) ? null : call
 }
 
-function shortcut(raw: string, opts: { skills?: Skill[]; now?: Date }): FastCall | null {
+/** From the phone: "send me a screenshot", "show me my screen". */
+const RE_SEND_SCREEN = /^(?:(?:can you |could you |please )?(?:send|give|show|text) me (?:a |the )?(?:screen ?shot|screen ?cap|picture of (?:my|the) screen|(?:my|the) screen|what(?:'s| is) on (?:my|the) screen))(?: (?:now|please))?[.!?]*$/i
+/** From the phone: "send me the PDF I just downloaded", "send me my resume". */
+const RE_SEND_FILE = /^(?:(?:can you |could you |please )?(?:send|give|text) me) ((?:the|my|that|this) .+?)[.!?]*$/i
+
+function shortcut(raw: string, opts: { skills?: Skill[]; now?: Date; channel?: boolean }): FastCall | null {
   const text = raw.replace(/\s+/g, ' ').trim()
   if (!text) return null
   const now = opts.now ?? new Date()
@@ -126,6 +131,13 @@ function shortcut(raw: string, opts: { skills?: Skill[]; now?: Date }): FastCall
   // A skill names its app in its trigger, so it is never ambiguous ("message sam on whatsapp: running late").
   const hit = opts.skills?.length ? matchSkill(opts.skills, text) : null
   if (hit) return { tool: skillToolName(hit.skill), input: hit.slots, why: `skill ${hit.skill.name}` }
+
+  // Asked from a chat app: a screenshot or a file goes back there (a file is read back first).
+  if (opts.channel && !slash && !COMPOUND.test(text)) {
+    if (RE_SEND_SCREEN.test(text)) return { tool: 'send_to_me', input: { what: 'screenshot', file: null }, why: 'send screenshot' }
+    const file = RE_SEND_FILE.exec(text)
+    if (file && FILEISH.test(file[1]) && !/\b(?:screen|link|url|address|number|message|text|summary|list)\b/i.test(file[1])) return { tool: 'send_to_me', input: { what: 'file', file: file[1] }, why: 'send file' }
+  }
 
   if (!slash) {
     const job = scheduleCall(text, now)

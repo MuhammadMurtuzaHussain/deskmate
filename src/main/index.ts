@@ -11,7 +11,7 @@ import { fastRoute, FILEISH, RE_FIND } from './fastpath'
 import { McpHub } from './mcp'
 import { buildTools, type Origin, type ToolCtx, type ToolOutcome, type ToolSpec, type WorkerHost } from './tools'
 import { untrusted } from './untrusted'
-import { APP_PLAN_SCHEMA, APP_PLAN_SYSTEM, APPS, fromPlan, handsMessage, parseAppRequest, runApp, type AppRequest } from './apps'
+import { APP_PLAN_SCHEMA, APP_PLAN_SYSTEM, APPS, fromPlan, handsMessage, parseAppRequest, runApp, sendToMessagesChat, type AppRequest } from './apps'
 import { ACKNOWLEDGEMENTS, Brain, type Stimulus, type TaskReport } from './brain'
 import { browse } from './browse'
 import * as chrome from './chrome'
@@ -22,9 +22,17 @@ import { MemoryFiles } from './memfiles'
 import { describeHits, PastIndex, type PastCategory } from './past'
 import { describeGuide, findGuide, guideIndex, guidePath, loadGuides, scriptsHash, type Guide } from './skillmd'
 import { draftAnswer, draftFromTurn, draftLine, learnPlan, SkillDrafts, type Draft } from './learn'
-import { checkToken, outsidePhone, PhoneRemote, TelegramApi, type PairRequest } from './remote'
+import { CHANNEL_IDS, CHANNEL_LABELS, mimeFor, type Channel, type ChannelId, type OutFile } from './channels/channel'
+import { DiscordApi, DiscordChannel, checkDiscordToken } from './channels/discord'
+import { ChannelHub, outsideChannels, type Owner, type PairRequest } from './channels/hub'
+import { CHAT_DB, ChatDb, IMessageChannel, chatDbAccess } from './channels/imessage'
+import { megabytes, resolveFile } from './channels/sendfile'
+import { SignalChannel, findSignalCli } from './channels/signal'
+import { SlackApi, SlackChannel, checkSlackTokens } from './channels/slack'
+import { TelegramApi, TelegramChannel, checkTelegramToken } from './channels/telegram'
+import { WHATSAPP_REASON } from './channels/whatsapp'
 import { mentionedProject, Projects, type Project } from './projects'
-import { Settings } from './settings'
+import { Settings, type SettingsData } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
@@ -48,7 +56,7 @@ import { loadSkills, matchSkill, runSkill, skillsForPlanner, type Skill, type Sk
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type ChannelAction, type ChannelSetup, type ChannelsSetupState, type Reply, type ReplyPayload, type ScheduleSetupState, type JobSetupAction, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -293,15 +301,38 @@ type Pending =
   | { kind: 'skill'; at: number; name: string }
 let pending: Pending | null = null
 
-// Her phone remote (a Telegram bot), when it is set up and on; see the "phone remote" section below.
-let remote: PhoneRemote | null = null
-/** the bot's @name once getMe answered; the error when the token stopped working */
-let remoteBot: string | null = null
-let remoteError: string | null = null
+// The chat apps she can be reached through; see the "chat apps" section below.
+const channels: ChannelHub = new ChannelHub({
+  owners: Object.fromEntries(CHANNEL_IDS.map((id) => [id, storedOwner(id)])),
+  allowlist: { imessage: channelPrefs().imessage?.handles ?? [], signal: channelPrefs().signal?.handles ?? [] },
+  askToPair,
+  onPaired: (id, owner) => {
+    saveOwner(id, owner)
+    console.log(owner ? `[channels] ${id}: paired with ${owner.name}` : `[channels] ${id}: unpaired`)
+    status(owner ? `${CHANNEL_LABELS[id]} paired · ${owner.name}` : `${CHANNEL_LABELS[id]} unpaired`)
+  },
+  onMessage: channelMessage,
+  // Voice notes go through the same local Whisper as the microphone; nothing leaves the Mac for them.
+  transcribe: async (audio, mime) => cleanTranscript(await transcribe(audio, mime)),
+  speak: async (text) => {
+    if (!channelPrefs().voiceReplies) return null
+    const audio = await synthesize(text, character.voice).catch(() => null)
+    if (!audio) return null
+    const ext = audio.mime.includes('mpeg') ? 'mp3' : audio.mime.includes('ogg') ? 'ogg' : 'wav'
+    return { name: `${character.name}.${ext}`, bytes: audio.bytes, mime: audio.mime }
+  },
+  onFatal: (id, message) => status(`${CHANNEL_LABELS[id]}: ${message}`),
+  onChange: () => {
+    refreshTray()
+    setupChanged()
+  },
+  log: (line) => console.log(`[channels] ${line}`)
+})
+
 /** answers the open pairing question (her read-back on the Mac, or Allow / Refuse in Setup) */
 let pairAnswer: ((yes: boolean) => void) | null = null
-/** Claude Code jobs started from the phone: their end is reported there too */
-const phoneJobs = new Set<string>()
+/** Claude Code jobs started from a chat app: their end is reported there too */
+const phoneJobs = new Map<string, ChannelId>()
 
 function switchCharacter(id: string): void {
   if (!characters.some((c) => c.id === id)) return
@@ -486,7 +517,7 @@ function buildTrayMenu(): Menu {
     ...(appHands.available && appTrusted === false
       ? [{ label: 'Let her use your apps (Accessibility)…', toolTip: 'Discord, Slack and Claude app control need Accessibility', click: askForAccessibility }]
       : []),
-    remoteMenuItem(),
+    channelsMenu(),
     {
       label: 'Character',
       submenu: characters.map((c) => ({
@@ -713,7 +744,7 @@ const IDLE_STATUS = /^(?:idle|…|not listening|listening ·)/
 function status(text: string): void {
   win?.webContents.send('status', text)
   bar.status(text)
-  if (!IDLE_STATUS.test(text)) remote?.status(text)
+  if (!IDLE_STATUS.test(text)) channels.status(text)
 }
 
 /**
@@ -1043,8 +1074,8 @@ async function deliver(reply: Reply, source: ReplyPayload['source'], ready?: Aud
   if (!reply.speak || !reply.say) return
   console.log(`[say:${source}] ${reply.say.slice(0, 90)}`)
   bar.line(reply.say)
-  // Work that came from the phone gets her lines there; while she waits on a yes, with Yes / No buttons.
-  if (source !== 'observe' && source !== 'touch') remote?.say(reply.say, { ask: Boolean(pending) })
+  // Work that came from a chat app gets her lines there; while she waits on a yes, with Yes / No buttons.
+  if (source !== 'observe' && source !== 'touch') channels.say(reply.say, { ask: Boolean(pending) })
   const audio = ready !== undefined ? ready : await synthesize(reply.say, character.voice)
   const payload: ReplyPayload = { reply, audio, source }
   win.webContents.send('reply', payload)
@@ -1086,7 +1117,7 @@ async function setWatching(on: boolean): Promise<boolean> {
   if (on) {
     watcher?.start()
     // A timer started from a phone message would otherwise send every look to the phone.
-    watchTimer = outsidePhone(() => setInterval(() => void observe(), watchIntervalSec * 1000))
+    watchTimer = outsideChannels(() => setInterval(() => void observe(), watchIntervalSec * 1000))
     status(`watching${watchDir ? ` ${watchDir}` : ''} · every ${watchIntervalSec}s`)
     void observe()
   } else {
@@ -1217,7 +1248,7 @@ async function startJob(call: ToolCall, project: Project, acknowledged: boolean)
     return sayPlain(`I couldn't start Claude: ${(err as Error).message}`, 'sad')
   }
   console.log(`[hands] job ${task.id} in ${project.path}: ${task.title}`)
-  if (remote?.active) phoneJobs.add(task.id)
+  if (channels.activeChannel) phoneJobs.set(task.id, channels.activeChannel)
   status(`Claude · ${task.title} · starting…`)
   refreshTray()
   if (acknowledged) return QUIET
@@ -2162,7 +2193,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   }
   if (/^(?:\/(?:selfie|portrait)|(?:take|send|give me|show me) (?:a |an )?(?:selfie|photo of you(?:rself)?|picture of you(?:rself)?|pic of you(?:rself)?))[.!]?$/i.test(stripName(text))) {
     try {
-      if (remote?.active) {
+      if (channels.active) {
         // From the phone: the picture goes there. If she is hidden, she shows herself for the moment it takes.
         const hidden = !win.isVisible()
         if (hidden) {
@@ -2176,7 +2207,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
           if (hidden) win.hide()
         }
         console.log(`[portrait] ${file} (to the phone)`)
-        await remote.photo(readFileSync(file))
+        await channels.photo(readFileSync(file))
         return sayPlain('There you go.', 'happy')
       }
       const file = await portrait()
@@ -2358,8 +2389,10 @@ agent.on('end', (task: Task) => {
     else await report({ phase: 'failed', title: task.title, folder, detail: task.error })
   }
   // A job started from the phone reports there, however long it took: they asked from there.
-  if (phoneJobs.delete(task.id) && remote) {
-    void remote.run(tell)
+  const askedFrom = phoneJobs.get(task.id)
+  phoneJobs.delete(task.id)
+  if (askedFrom && channels.state(askedFrom)?.running) {
+    void channels.run(askedFrom, tell)
     return
   }
   const speak = async (): Promise<void> => {
@@ -2478,8 +2511,8 @@ const notices = new NoticeCenter({
       if (n.speak) await n.speak()
       else await sayPlain(n.text)
     }
-    // With the phone remote on, what she tells you on her own goes to the phone too.
-    if (remote?.paired) await remote.run(speak)
+    // With a chat app paired and on, what she tells you on her own goes there too (the one used last).
+    if (channels.reachable()) await channels.runPreferred(speak)
     else await speak()
   },
   show: (text) => status(text),
@@ -2803,6 +2836,7 @@ async function appRoutine(req: AppRequest, ctx: ToolCtx): Promise<ToolOutcome> {
 
 /** The workers, for the agent core and the shortcuts. Each one returns facts for her brain and a plain line. */
 const workerHost: WorkerHost = {
+  sendToMe: (a, ctx) => sendToMe(a, ctx),
   sendMessage: (a, ctx) => appRoutine({ app: a.app, action: 'message', to: a.to, text: a.text, photo: a.photo }, ctx),
   openChat: (a, ctx) => appRoutine({ app: a.app, action: 'open', to: a.to, text: '' }, ctx),
   async spotify(a, ctx) {
@@ -2836,7 +2870,7 @@ const workerHost: WorkerHost = {
       return failed(`I couldn't start Claude: ${(err as Error).message}`)
     }
     console.log(`[hands] job ${task.id} in ${project.path}: ${task.title}`)
-    if (remote?.active) phoneJobs.add(task.id)
+    if (channels.activeChannel) phoneJobs.set(task.id, channels.activeChannel)
     status(`Claude · ${task.title} · starting…`)
     refreshTray()
     return done(`Started a Claude Code job in ${project.name}: "${task.title}". It runs in the background and you will hear when it is done.`, `On it: Claude's working in ${project.name}.`)
@@ -3094,7 +3128,7 @@ function currentTools(): ToolSpec[] {
     skills: appHands.available ? skills : [],
     guides: { any: guides.some((g) => !g.routine), scripts: guides.some((g) => g.scripts.length > 0 && (SKILL_CODE || g.source === 'bundled')) },
     external: mcp.tools(),
-    has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available }
+    has: { computer: Boolean(brain.claudeForAgent) && appHands.available, chrome: chrome.chromeAvailable(), claudeCode: hands, apps: process.platform === 'darwin' || appHands.available, channel: channels.active }
   })
 }
 
@@ -3121,10 +3155,11 @@ function turnContext(): string | undefined {
  * hand the message to the older routing (no Claude brain, or Claude unreachable before anything was done).
  */
 async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<Reply | null> {
-  const origin: Origin = remote?.active ? 'phone' : opts.voice ? 'voice' : 'typed'
+  const from = channels.activeChannel
+  const origin: Origin = from ? 'phone' : opts.voice ? 'voice' : 'typed'
   const said = stripName(text)
   const tools = currentTools()
-  const fast = fastRoute(said, { skills: appHands.available ? skills : [] })
+  const fast = fastRoute(said, { skills: appHands.available ? skills : [], channel: Boolean(from) })
   if (fast && tools.some((t) => t.name === fast.tool)) {
     if (agentBusy || acting) return sayPlain("I'm already doing something. Say \"stop\" first.", 'annoyed')
     acting = true
@@ -3173,7 +3208,8 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
         history: memory.recentTurns(12).map((t) => ({ role: t.role === 'assistant' ? 'assistant' : 'user', text: t.text })),
         now: new Date(),
         screenshot,
-        context: turnContext()
+        context: turnContext(),
+        channel: from ? CHANNEL_LABELS[from] : undefined
       },
       {
         model: async (req) => {
@@ -3257,7 +3293,7 @@ function userPresent(): boolean {
 }
 
 function phoneReady(): boolean {
-  return Boolean(remote?.paired && remote.running)
+  return channels.reachable()
 }
 
 /** She is in the middle of something with the user. */
@@ -3305,10 +3341,9 @@ const scheduler = new Scheduler({
     setupChanged()
   },
   async toPhone(line) {
-    const r = remote
-    if (r) await r.run(async () => r.say(line))
+    await channels.runPreferred(async () => channels.say(line))
   },
-  ask: (question, where) => (where === 'phone' && remote ? remote.run(() => ask(question, PHONE_ASK_MS)) : ask(question)),
+  ask: (question, where) => (where === 'phone' && channels.reachable() ? channels.runPreferred(() => ask(question, PHONE_ASK_MS)) : ask(question)),
   log: (kind, text) => journal.add(kind, text),
   console: (line) => console.log(line)
 })
@@ -3972,100 +4007,173 @@ ipcMain.on('plan:action', (_event, action: PlanAction) => {
 })
 ipcMain.on('plan:height', (_event, px: number) => planCard.setHeight(Number(px)))
 
-// ---- phone remote: a Telegram bot brings the paired phone's messages into her chat path
+// ---- chat apps (channels/): Telegram, Discord, iMessage, Slack and Signal bring the owner's messages into her chat
+// path, and take her lines, pictures and files back. The hub keeps the rules (who may talk to her) the same for all.
 
 /** Setup's token wins over DESKMATE_TELEGRAM_TOKEN in .env, like her brain. */
 function telegramToken(): string {
   return settings.get().telegramToken?.trim() || process.env.DESKMATE_TELEGRAM_TOKEN?.trim() || ''
 }
 
-/** Only for testing against a fake Bot API; the real one is the default. */
+// Only for testing against fake APIs and a fixture Messages database; the real ones are the default.
 const TELEGRAM_API_URL = process.env.DESKMATE_TELEGRAM_API_URL?.trim() || undefined
+const DISCORD_API_URL = process.env.DESKMATE_DISCORD_API_URL?.trim() || undefined
+const SLACK_API_URL = process.env.DESKMATE_SLACK_API_URL?.trim() || undefined
+const CHAT_DB_PATH = process.env.DESKMATE_CHAT_DB?.trim() || CHAT_DB
 
 function setupChanged(): void {
   if (setupWin && !setupWin.isDestroyed()) setupWin.webContents.send('setup:changed')
 }
 
-function remoteMenuItem(): Electron.MenuItemConstructorOptions {
-  if (!telegramToken()) return { label: 'Phone remote: set up…', toolTip: 'Send her messages from your phone, through a Telegram bot', click: () => openSetup() }
-  const paired = settings.get().remotePaired
-  return {
-    label: `Phone remote: ${remote ? 'on' : 'off'}`,
-    type: 'checkbox',
-    checked: Boolean(remote),
-    toolTip: remoteError ?? (paired ? `Paired with ${paired.name}` : `Send /start to ${remoteBot ? `@${remoteBot}` : 'your bot'} in Telegram to pair your phone`),
-    click: () => setRemote(!remote)
+type ChannelPrefs = NonNullable<SettingsData['channels']>
+
+function channelPrefs(): ChannelPrefs {
+  return settings.get().channels ?? {}
+}
+
+function setChannelPrefs<K extends keyof ChannelPrefs>(id: K, patch: ChannelPrefs[K]): void {
+  const all = channelPrefs()
+  const was = all[id]
+  settings.set({ channels: { ...all, [id]: typeof patch === 'object' && patch !== null ? { ...(typeof was === 'object' ? was : {}), ...patch } : patch } })
+}
+
+function storedOwner(id: ChannelId): Owner | null {
+  if (id === 'telegram') {
+    const p = settings.get().remotePaired
+    return p ? { chat: String(p.chatId), id: String(p.userId), name: p.name } : null
+  }
+  if (id === 'discord' || id === 'slack') return channelPrefs()[id]?.owner ?? null
+  return null
+}
+
+function saveOwner(id: ChannelId, owner: Owner | null): void {
+  if (id === 'telegram') settings.set({ remotePaired: owner ? { chatId: Number(owner.chat), userId: Number(owner.id), name: owner.name } : undefined })
+  else if (id === 'discord' || id === 'slack') setChannelPrefs(id, { owner: owner ?? undefined })
+}
+
+/** Set up enough to start: a token, a number, a handle. */
+function channelConfigured(id: ChannelId): boolean {
+  const p = channelPrefs()
+  switch (id) {
+    case 'telegram':
+      return Boolean(telegramToken())
+    case 'discord':
+      return Boolean(p.discord?.token)
+    case 'slack':
+      return Boolean(p.slack?.botToken && p.slack?.appToken)
+    case 'imessage':
+      return process.platform === 'darwin' && Boolean(p.imessage?.handles?.length)
+    case 'signal':
+      return Boolean(p.signal?.account)
+    case 'whatsapp':
+      return false
   }
 }
 
-function remoteStatusLine(): string {
-  const paired = settings.get().remotePaired
-  if (paired) return `phone remote on · ${paired.name}`
-  return `phone remote on · send /start to ${remoteBot ? `@${remoteBot}` : 'your bot'} in Telegram`
+/** Switched on (Telegram is on by default once it has a token; the others are off until switched on). */
+function channelWanted(id: ChannelId): boolean {
+  if (id === 'telegram') return settings.get().remoteEnabled !== false
+  if (id === 'whatsapp') return false
+  return channelPrefs()[id]?.on === true
 }
 
-function setRemote(on: boolean): void {
-  settings.set({ remoteEnabled: on })
-  if (on) startRemote()
-  else stopRemote()
-  status(on ? remoteStatusLine() : 'phone remote off')
-}
-
-function stopRemote(): void {
-  remote?.stop()
-  remote = null
-  pairAnswer?.(false)
-  refreshTray()
-  setupChanged()
-}
-
-function startRemote(): void {
-  remote?.stop()
-  remote = null
-  pairAnswer?.(false)
-  remoteError = null
-  const token = telegramToken()
-  if (token && settings.get().remoteEnabled !== false) {
-    const api = new TelegramApi(token, { base: TELEGRAM_API_URL })
-    const r = new PhoneRemote({
-      api,
-      paired: settings.get().remotePaired ?? null,
-      askToPair,
-      onPaired: (paired) => {
-        settings.set({ remotePaired: paired ?? undefined })
-        console.log(paired ? `[remote] paired with ${paired.name}` : '[remote] unpaired')
-        status(paired ? `phone paired · ${paired.name}` : 'phone unpaired')
-        refreshTray()
-        setupChanged()
-      },
-      onMessage: phoneMessage,
-      onFatal: (message) => {
-        if (remote === r) remote = null
-        remoteError = message
-        status(message)
-        refreshTray()
-        setupChanged()
-      },
-      log: (line) => console.log(`[remote] ${line}`)
-    })
-    remote = r
-    r.start()
-    void api.getMe().then(
-      (me) => {
-        remoteBot = me.username ?? null
-        const paired = settings.get().remotePaired
-        console.log(`[remote] polling @${remoteBot ?? '?'}; ${paired ? `paired with ${paired.name}` : 'not paired yet: the first /start asks here'}`)
-        refreshTray()
-        setupChanged()
-      },
-      (err) => console.warn(`[remote] getMe: ${(err as Error).message}`)
-    )
+function makeChannel(id: ChannelId): Channel | null {
+  const p = channelPrefs()
+  switch (id) {
+    case 'telegram':
+      return new TelegramChannel(new TelegramApi(telegramToken(), { base: TELEGRAM_API_URL }))
+    case 'discord':
+      return new DiscordChannel(new DiscordApi(p.discord?.token ?? '', { base: DISCORD_API_URL }))
+    case 'slack':
+      return new SlackChannel(new SlackApi(p.slack?.botToken ?? '', p.slack?.appToken ?? '', { base: SLACK_API_URL }))
+    case 'imessage':
+      return new IMessageChannel({ db: new ChatDb(CHAT_DB_PATH), handles: () => channels.allowlist('imessage'), send: sendIMessage, access: () => chatDbAccess(CHAT_DB_PATH) })
+    case 'signal':
+      return new SignalChannel({ account: p.signal?.account ?? '', handles: () => channels.allowlist('signal'), cli: p.signal?.cli })
+    case 'whatsapp':
+      return null
   }
-  refreshTray()
-  setupChanged()
 }
 
-/** A /start while no phone is paired: she reads it back on the Mac, and Setup shows Allow / Refuse. Either answers. */
+/** iMessage's way out: the Messages AppleScript, into the chat the message came from. A file goes from Pictures,
+ * where Messages may read it, and is removed a while after. */
+async function sendIMessage(chat: string, text: string, file?: OutFile): Promise<void> {
+  let path = ''
+  if (file) {
+    const dir = join(app.getPath('pictures'), 'Deskmate', 'sent')
+    mkdirSync(dir, { recursive: true })
+    path = join(dir, `${Date.now()}-${basename(file.name) || 'file'}`)
+    writeFileSync(path, file.bytes)
+    setTimeout(() => rmSync(path, { force: true }), 10 * 60_000).unref()
+  }
+  await sendToMessagesChat(chat, text, path)
+}
+
+function startChannel(id: ChannelId): void {
+  channels.remove(id)
+  if (!channelConfigured(id) || !channelWanted(id)) return
+  const ch = makeChannel(id)
+  if (!ch) return
+  channels.add(ch)
+  channels.start(id)
+}
+
+function startChannels(): void {
+  for (const id of CHANNEL_IDS) startChannel(id)
+}
+
+function setChannel(id: ChannelId, on: boolean): void {
+  if (id === 'telegram') settings.set({ remoteEnabled: on })
+  else if (id !== 'whatsapp') setChannelPrefs(id, { on })
+  if (on) startChannel(id)
+  else {
+    channels.stop(id)
+    if (channels.pairRequest(id)) pairAnswer?.(false)
+  }
+  status(on ? channelStatusLine(id) : `${CHANNEL_LABELS[id]} off`)
+}
+
+/** "Discord on · DM @deskmate the code in Setup to pair" */
+function channelStatusLine(id: ChannelId): string {
+  const label = CHANNEL_LABELS[id]
+  const st = channels.state(id)
+  if (!st?.running) return st?.error ? `${label}: ${st.error}` : `${label} off`
+  if (st.owner) return `${label} on · ${st.owner}`
+  if (id === 'telegram') return `${label} on · send /start to ${st.account ?? 'your bot'} to pair your phone`
+  if (id === 'discord' || id === 'slack') return `${label} on · pair it in Setup (a code to send ${st.account ?? 'the bot'})`
+  return `${label} on · message yourself to reach her`
+}
+
+function channelsMenu(): Electron.MenuItemConstructorOptions {
+  const items: Electron.MenuItemConstructorOptions[] = CHANNEL_IDS.map((id) => {
+    const label = CHANNEL_LABELS[id]
+    if (id === 'whatsapp') return { label: 'WhatsApp: not available', enabled: false, toolTip: WHATSAPP_REASON }
+    if (id === 'imessage' && process.platform !== 'darwin') return { label: 'iMessage: Mac only', enabled: false }
+    if (!channelConfigured(id)) return { label: `${label}: set up…`, click: () => openSetup('remote') }
+    const st = channels.state(id)
+    const on = Boolean(st?.running)
+    const who = on ? (st?.owner ? ` · ${st.owner}` : channels.hasOwner(id) ? '' : ' · not paired') : ''
+    return { label: `${label}: ${on ? 'on' : 'off'}${who}`, type: 'checkbox', checked: on, toolTip: st?.error ?? channelStatusLine(id), click: () => setChannel(id, !on) }
+  })
+  items.push(
+    { type: 'separator' },
+    {
+      label: 'Answer voice notes with a voice note',
+      type: 'checkbox',
+      checked: Boolean(channelPrefs().voiceReplies),
+      click: () => {
+        setChannelPrefs('voiceReplies', !channelPrefs().voiceReplies)
+        refreshTray()
+        setupChanged()
+      }
+    },
+    { label: 'Set up chat apps…', click: () => openSetup('remote') }
+  )
+  const n = CHANNEL_IDS.filter((id) => channels.state(id)?.running).length
+  return { label: n ? `Chat apps (${n} on)` : 'Chat apps', submenu: items }
+}
+
+/** A /start while nobody is paired: she reads it back on the Mac, and Setup shows Allow / Refuse. Either answers. */
 function askToPair(req: PairRequest): Promise<boolean> {
   pairAnswer?.(false)
   return new Promise((resolve) => {
@@ -4083,23 +4191,199 @@ function askToPair(req: PairRequest): Promise<boolean> {
       resolve(yes)
     }
     pairAnswer = finish
-    console.log(`[remote] ${req.name} (chat ${req.chatId}) asks to pair; code ${req.code}`)
+    const label = CHANNEL_LABELS[req.channel]
+    console.log(`[channels] ${req.channel}: ${req.name} asks to pair; code ${req.code}`)
     const spoken = req.code.split('').join(' ')
-    void confirm(`Someone on Telegram, ${req.name}, wants to control me from their phone. The code is ${spoken}. Is that you?`).then(finish)
+    void confirm(`Someone on ${label}, ${req.name}, wants to control me from their phone. The code is ${spoken}. Is that you?`).then(finish)
     mine = pending
-    status(`📱 pairing request · ${req.name} · code ${req.code} · say yes, or Allow in Setup`)
+    status(`📱 pairing request · ${label} · ${req.name} · code ${req.code} · say yes, or Allow in Setup`)
     setupChanged()
   })
 }
 
-/** One message from the paired phone. It runs as phone work, so every line and step of hers goes back to the phone. */
-async function phoneMessage(text: string): Promise<void> {
-  console.log(`[remote] from the phone: ${text.slice(0, 80)}`)
+/** One message from a channel's owner. It runs as that channel's work, so every line and step of hers goes back. */
+async function channelMessage(text: string, from: { channel: ChannelId; name: string; voice: boolean }): Promise<void> {
+  console.log(`[channels] ${from.channel}: ${from.voice ? 'voice note' : 'message'} from ${from.name}: ${text.slice(0, 80)}`)
   // On the Mac only: the phone knows what it sent.
-  const line = `📱 ${text.slice(0, 70)}`
+  const line = `📱 ${CHANNEL_LABELS[from.channel]}: ${text.slice(0, 70)}`
   win?.webContents.send('status', line)
   bar.status(line)
   await handleChat(text)
+}
+
+/** The screen as a PNG for the phone (her window greyed out, like every capture). */
+async function screenshotPng(): Promise<Uint8Array | null> {
+  const shot = await captureScreen().catch(() => undefined)
+  if (!shot) return null
+  return nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64')).toPNG()
+}
+
+/** send_to_me: a screenshot, or a file after a read-back, to the chat the message came from. */
+async function sendToMe(a: { what: 'screenshot' | 'file'; file: string | null }, ctx: ToolCtx): Promise<ToolOutcome> {
+  const where = channels.activeChannel
+  if (!where) return { ok: false, text: 'That only works for a message from their phone; they are at the computer, so show them here instead.' }
+  const label = CHANNEL_LABELS[where]
+  if (a.what === 'screenshot') {
+    const png = await screenshotPng()
+    if (!png) return { ok: false, text: 'No screenshot: Screen Recording is not allowed for me.', say: "I can't see the screen: Screen Recording is off for me." }
+    await channels.photo(png, 'Your screen just now')
+    journal.add('channel', `sent a screenshot to ${label}`)
+    return { ok: true, text: `Sent a screenshot of the screen to them on ${label} (her own window greyed out).`, say: "Here's your screen." }
+  }
+  const r = await resolveFile(a.file ?? '', { find: async (q) => (await findFiles(q))[0] ?? null })
+  if (!r.ok) return { ok: false, text: `Not sent: ${r.why}.`, say: `I didn't send it: ${r.why}.` }
+  const f = r.file
+  // Always read back, whatever the read-back setting: a file is leaving the Mac.
+  if (!ctx.approved && !(await ctx.confirm(`Send ${f.name} (${megabytes(f.bytes)}, in ${f.where}) to you on ${label}?`))) return { ok: false, text: 'The user said no; not sent.', say: 'Okay, not sent.' }
+  try {
+    await channels.file({ name: f.name, bytes: new Uint8Array(readFileSync(f.path)), mime: mimeFor(f.name) }, f.name)
+  } catch (err) {
+    return { ok: false, text: `${label} would not take it: ${(err as Error).message}`, say: `${label} wouldn't take it: ${(err as Error).message.slice(0, 120)}` }
+  }
+  journal.add('channel', `sent ${f.path} to ${label}`)
+  return { ok: true, text: `Sent ${f.name} (${f.path}) to them on ${label}.`, say: `Sent ${f.name}.` }
+}
+
+/** A phone number with its country code, or an email (an Apple ID). */
+function cleanHandles(raw: string): { handles: string[]; bad: string[] } {
+  const parts = raw.split(/[\n,;]+/).map((h) => h.trim()).filter(Boolean)
+  const ok = (h: string): boolean => /^\+\d[\d\s().-]{5,18}$/.test(h) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(h)
+  return { handles: [...new Set(parts.filter(ok))], bad: parts.filter((h) => !ok(h)) }
+}
+
+/** What the Mac has to allow or have before a channel can start; null when nothing. */
+function channelBlocker(id: ChannelId): string | null {
+  if (id === 'imessage') {
+    const a = chatDbAccess(CHAT_DB_PATH)
+    return a.ok ? null : (a.reason ?? 'Deskmate cannot read the Messages database.')
+  }
+  if (id === 'signal' && !findSignalCli(channelPrefs().signal?.cli)) return 'signal-cli is not installed: brew install signal-cli, then link it to your account (see docs/CHANNELS.md).'
+  return null
+}
+
+async function channelsState(): Promise<ChannelsSetupState> {
+  const p = channelPrefs()
+  const list: ChannelSetup[] = CHANNEL_IDS.map((id) => {
+    const st = channels.state(id)
+    const pairing = id === 'telegram' ? 'ask' : id === 'imessage' || id === 'signal' ? 'allowlist' : 'code'
+    const base: ChannelSetup = {
+      id,
+      label: CHANNEL_LABELS[id],
+      available: true,
+      configured: channelConfigured(id),
+      on: Boolean(st?.running),
+      pairing,
+      account: st?.account ?? null,
+      owner: st?.owner ?? (pairing === 'allowlist' ? null : (storedOwner(id)?.name ?? null)),
+      request: st?.request && pairAnswer ? st.request : null,
+      code: st?.code ?? null,
+      error: st?.error ?? null
+    }
+    if (id === 'whatsapp') return { ...base, available: false, why: WHATSAPP_REASON }
+    if (id === 'imessage' && process.platform !== 'darwin') return { ...base, available: false, why: 'iMessage is only on macOS.' }
+    if (id === 'telegram') base.fromEnv = !settings.get().telegramToken?.trim() && Boolean(process.env.DESKMATE_TELEGRAM_TOKEN?.trim())
+    if (id === 'imessage') base.handles = p.imessage?.handles ?? []
+    if (id === 'signal') {
+      base.handles = p.signal?.handles ?? []
+      base.number = p.signal?.account ?? ''
+    }
+    if (id === 'imessage' || id === 'signal') base.blocker = channelBlocker(id)
+    return base
+  })
+  const stt = localSttSelected() ? await sttHealthy().catch(() => false) : false
+  return { list, voiceReplies: Boolean(p.voiceReplies), stt }
+}
+
+/** One Setup action on a channel; tokens are checked with the service before they are kept. */
+async function channelAction(id: ChannelId, action: ChannelAction, data: Record<string, string>): Promise<{ ok: boolean; error?: string; account?: string; code?: string }> {
+  const label = CHANNEL_LABELS[id]
+  switch (action) {
+    case 'on':
+    case 'off':
+      setChannel(id, action === 'on')
+      return { ok: true }
+    case 'allow':
+    case 'refuse':
+      pairAnswer?.(action === 'allow')
+      return { ok: true }
+    case 'pair': {
+      if (!channels.state(id)?.running) return { ok: false, error: `Switch ${label} on first.` }
+      const code = channels.openPairing(id)
+      return code ? { ok: true, code } : { ok: false, error: `${label} does not pair with a code.` }
+    }
+    case 'pair-cancel':
+      channels.closePairing(id)
+      return { ok: true }
+    case 'forget':
+      channels.unpair(id)
+      saveOwner(id, null)
+      status(`${label} unpaired`)
+      return { ok: true }
+    case 'voice-replies':
+      setChannelPrefs('voiceReplies', data.on === 'true')
+      return { ok: true }
+    case 'save':
+      break
+    default:
+      return { ok: false, error: 'Unknown action.' }
+  }
+  // save: what each app needs, checked first.
+  if (id === 'telegram') {
+    const token = (data.token ?? '').trim()
+    const r = await checkTelegramToken(token, { base: TELEGRAM_API_URL })
+    if (!r.ok) return { ok: false, error: r.error }
+    // Another bot is another chat: the old pairing does not carry over.
+    if (token !== telegramToken()) {
+      channels.unpair(id)
+      settings.set({ remotePaired: undefined })
+    }
+    settings.set({ telegramToken: token, remoteEnabled: true })
+    startChannel(id)
+    status(channelStatusLine(id))
+    return { ok: true, account: r.bot ? `@${r.bot}` : undefined }
+  }
+  if (id === 'discord') {
+    const token = (data.token ?? '').trim()
+    const r = await checkDiscordToken(token, { base: DISCORD_API_URL })
+    if (!r.ok) return { ok: false, error: r.error }
+    if (token !== channelPrefs().discord?.token) {
+      channels.unpair(id)
+      setChannelPrefs('discord', { owner: undefined })
+    }
+    setChannelPrefs('discord', { token, on: true })
+    startChannel(id)
+    return { ok: true, account: r.bot ? `@${r.bot}` : undefined }
+  }
+  if (id === 'slack') {
+    const botToken = (data.bot ?? '').trim()
+    const appToken = (data.app ?? '').trim()
+    const r = await checkSlackTokens(botToken, appToken, { base: SLACK_API_URL })
+    if (!r.ok) return { ok: false, error: r.error }
+    if (botToken !== channelPrefs().slack?.botToken) {
+      channels.unpair(id)
+      setChannelPrefs('slack', { owner: undefined })
+    }
+    setChannelPrefs('slack', { botToken, appToken, on: true })
+    startChannel(id)
+    return { ok: true, account: r.bot }
+  }
+  if (id === 'imessage' || id === 'signal') {
+    const { handles, bad } = cleanHandles(data.handles ?? '')
+    if (bad.length) return { ok: false, error: `${bad.slice(0, 3).join(', ')}: not a phone number with its country code (+1…) or an email.` }
+    if (id === 'imessage') {
+      if (!handles.length) return { ok: false, error: 'Add at least one handle: your own phone number (+1…) or Apple ID email.' }
+      setChannelPrefs('imessage', { handles, on: true })
+    } else {
+      const account = (data.number ?? '').replace(/[\s().-]/g, '')
+      if (!/^\+\d{6,15}$/.test(account)) return { ok: false, error: 'Your Signal number, with the country code (+15551234567).' }
+      setChannelPrefs('signal', { account, handles, on: true })
+    }
+    channels.setAllowlist(id, handles)
+    startChannel(id)
+    const blocker = channelBlocker(id)
+    return blocker ? { ok: false, error: blocker } : { ok: true }
+  }
+  return { ok: false, error: `${label} is not available.` }
 }
 
 // ---- first-run window: her brain, her voice, and what macOS lets her do
@@ -4107,7 +4391,7 @@ async function phoneMessage(text: string): Promise<void> {
 let setupWin: BrowserWindow | null = null
 let setupStartMode: string = brain.mode
 
-function openSetup(section?: 'characters'): void {
+function openSetup(section?: 'characters' | 'remote'): void {
   if (setupWin && !setupWin.isDestroyed()) {
     setupWin.show()
     setupWin.focus()
@@ -4176,15 +4460,7 @@ async function setupState(): Promise<SetupState> {
       localServer: localVoice ? await sttHealthy().catch(() => false) : false
     },
     permissions: { microphone: media('microphone'), screen: media('screen'), keys },
-    remote: {
-      token: Boolean(telegramToken()),
-      fromEnv: !settings.get().telegramToken?.trim() && Boolean(process.env.DESKMATE_TELEGRAM_TOKEN?.trim()),
-      bot: remoteBot,
-      on: Boolean(remote),
-      paired: settings.get().remotePaired?.name ?? null,
-      request: remote?.pairing && pairAnswer ? { name: remote.pairing.name, code: remote.pairing.code } : null,
-      error: remoteError
-    },
+    channels: await channelsState(),
     notices: noticeState(),
     mcp: mcpState(),
     learn: learnState(),
@@ -4240,28 +4516,15 @@ ipcMain.handle('setup:claude', async (_event, key: string | null, model: string,
   return result
 })
 ipcMain.handle('setup:allow', (_event, kind: PermissionKind) => allow(kind))
-ipcMain.handle('setup:telegram', async (_event, raw: string) => {
-  const token = String(raw ?? '').trim()
-  const result = await checkToken(token, { base: TELEGRAM_API_URL })
-  if (result.ok) {
-    // Another bot is another chat: the old pairing does not carry over.
-    const changed = token !== telegramToken()
-    settings.set({ telegramToken: token, remoteEnabled: true, ...(changed ? { remotePaired: undefined } : {}) })
-    remoteBot = result.bot ?? null
-    startRemote()
-    status(remoteStatusLine())
+ipcMain.handle('setup:channel', async (_event, rawId: string, action: ChannelAction, data?: Record<string, string>) => {
+  const id = CHANNEL_IDS.find((c) => c === rawId)
+  if (!id) return { ok: false, error: 'No such chat app.' }
+  try {
+    return await channelAction(id, action, data ?? {})
+  } finally {
+    refreshTray()
+    setupChanged()
   }
-  return result
-})
-ipcMain.handle('setup:remote', (_event, action: string) => {
-  if (action === 'allow' || action === 'refuse') pairAnswer?.(action === 'allow')
-  else if (action === 'forget') {
-    if (remote?.paired) remote.unpair()
-    else settings.set({ remotePaired: undefined })
-    status('phone unpaired')
-  } else if (action === 'on' || action === 'off') setRemote(action === 'on')
-  refreshTray()
-  setupChanged()
 })
 ipcMain.handle('setup:notices', (_event, raw: unknown) => {
   setNoticePrefs(cleanNoticePatch(raw))
@@ -4371,7 +4634,7 @@ app.whenReady().then(async () => {
     }, 30_000).unref()
   }
   createTray()
-  startRemote()
+  startChannels()
   // What she comes to tell you about on her own: reminders (kept across restarts), messages, the calendar.
   reminderStore.start()
   // Scheduled jobs: whatever came due while she was off runs now, once. Sleep, wake and the lock screen tell her
@@ -4443,7 +4706,7 @@ app.on('before-quit', () => {
   reminderStore.stop()
   scheduleStore.stop()
   void mcp.close()
-  remote?.stop()
+  channels.stopAll()
   bar.destroy()
   body.destroy()
   planCard.destroy()

@@ -1,6 +1,6 @@
 /**
  * The prompt-injection guard. Text her hands read from somewhere other than the user (a window's text or OCR, a web
- * page, an incoming message or notification, an MCP server's answer, a message from the phone remote) goes into a
+ * page, an incoming message or notification, an MCP server's answer, a message from a chat app on the phone) goes into a
  * prompt only wrapped as data, and the turn that read it is marked: from then on, anything that sends, deletes, buys,
  * runs a shell or writes somewhere outside needs the user's spoken or clicked yes, whatever the setting for read-backs
  * says. Pure, so the tests and the eval use it as is.
@@ -16,7 +16,7 @@ const SOURCE_NAMES: Record<UntrustedSource, string> = {
   web: 'a web page',
   message: 'a message someone sent you',
   notification: 'a notification',
-  phone: 'a message from the phone remote',
+  phone: 'a message sent from your phone',
   mcp: 'a connected tool server',
   past: 'old logs that hold text from elsewhere',
   skill: "a skill script's output",
