@@ -38,7 +38,8 @@ export function briefDue(prefs: BriefPrefs, lastDay: string | undefined, now: Da
 }
 
 export interface BriefInput {
-  events: CalendarEvent[]
+  /** today's events; null when there is no calendar to read (no line about it) */
+  events: CalendarEvent[] | null
   /** today's reminders: text and when */
   reminders: { text: string; at: number }[]
   /** what scheduled jobs reported since yesterday evening */
@@ -58,9 +59,11 @@ export function briefLines(b: BriefInput, now: Date): string[] {
   const lines: string[] = []
   const end = new Date(now)
   end.setHours(23, 59, 59, 999)
-  const today = b.events.filter((e) => !e.cancelled && (e.allDay || (e.end > now.getTime() && e.start <= end.getTime())))
+  const today = (b.events ?? []).filter((e) => !e.cancelled && (e.allDay || (e.end > now.getTime() && e.start <= end.getTime())))
   if (b.calendarProblem) lines.push(b.calendarProblem)
-  else if (!today.length) lines.push('Nothing on your calendar today.')
+  else if (!b.events) {
+    // no calendar here: nothing to say about it
+  } else if (!today.length) lines.push('Nothing on your calendar today.')
   else {
     const parts = today.slice(0, 5).map((e) => (e.allDay ? `${e.title || 'an all-day event'} (all day)` : `${e.title || 'an event'} at ${clockTime(e.start)}`))
     lines.push(`Calendar: ${parts.join(', ')}${today.length > 5 ? `, and ${today.length - 5} more` : ''}.`)

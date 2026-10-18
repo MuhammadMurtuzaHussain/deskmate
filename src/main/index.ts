@@ -3132,8 +3132,10 @@ async function agentDispatch(text: string, opts: { voice?: boolean }): Promise<R
     refreshTray()
     console.log(`[agent] shortcut (${fast.why}): ${fast.tool} ${JSON.stringify(fast.input).slice(0, 120)}`)
     try {
-      const { out } = await runOneTool(tools, fast.tool, fast.input, { origin, confirm, onStep: status, log: taskLogger('shortcut'), stopped: () => actStop || quitting })
+      const { out, record } = await runOneTool(tools, fast.tool, fast.input, { origin, confirm, onStep: status, log: taskLogger('shortcut'), stopped: () => actStop || quitting })
       memory.addTurn('user', text)
+      // As after an agent turn: the history says what was done, so the next turn knows (names only).
+      memory.addTurn('user', `[you used: ${fast.tool} (${record.refused ? 'the user said no' : out.ok ? 'done' : 'not done'})]`)
       const line = out.say ?? (out.untrusted ? '' : out.text)
       if (!line) return QUIET
       memory.addTurn('assistant', line)
@@ -3227,6 +3229,8 @@ const PHONE_ASK_MS = 15 * 60_000
 let screenLocked = false
 let macAsleep = false
 let wasPresent = true
+/** they came back and she has not caught them up yet (she waits until she is free) */
+let backDue = false
 
 /** How long since the keyboard or mouse was touched. */
 function idleMs(): number {
@@ -3237,8 +3241,18 @@ function idleMs(): number {
   }
 }
 
+/** Testing only: a file holding "here" or "away" stands in for the real desk (DESKMATE_DEBUG_PRESENCE=<path>). */
+const DEBUG_PRESENCE = process.env.DESKMATE_DEBUG_PRESENCE?.trim() || ''
+
 /** At the desk: the screen unlocked, the Mac awake, and the keyboard or mouse touched in the last few minutes. */
 function userPresent(): boolean {
+  if (DEBUG_PRESENCE) {
+    try {
+      return readFileSync(DEBUG_PRESENCE, 'utf8').trim() !== 'away'
+    } catch {
+      return true
+    }
+  }
   return !screenLocked && !macAsleep && idleMs() < AWAY_MS
 }
 
@@ -3336,9 +3350,12 @@ async function runJobTurn(job: Job, askFn: Ask, lateMs: number): Promise<RunResu
 /** Away → back at the desk: what was kept for them, then the morning brief, then the steps waiting for a yes. */
 async function presenceTick(why: 'tick' | 'unlock' | 'resume' | 'start'): Promise<void> {
   const here = userPresent()
-  const back = here && (!wasPresent || why === 'unlock' || why === 'resume' || why === 'start')
+  if (here && (!wasPresent || why !== 'tick')) backDue = true
+  if (!here) backDue = false
   wasPresent = here
-  if (!back) return
+  // In the middle of something: the next tick tries again.
+  if (!backDue || busyWithUser() || scheduler.current) return
+  backDue = false
   await maybeBrief()
   await scheduler.userBack()
 }
@@ -3530,13 +3547,13 @@ async function maybeBrief(force = false): Promise<void> {
     const since = new Date(now)
     since.setDate(since.getDate() - 1)
     since.setHours(18, 0, 0, 0)
-    let events: CalendarEvent[] = []
+    let events: CalendarEvent[] | null = null
     let calendarProblem: string | undefined
     if (calendarAccess === 'fullAccess' && appHands.available) {
       const sinceMidnight = now.getHours() * 60 + now.getMinutes()
       events = await appHands.calendarEvents(24 * 60 - sinceMidnight, sinceMidnight).catch(() => {
         calendarProblem = "I couldn't read your calendar this morning."
-        return []
+        return [] as CalendarEvent[]
       })
     } else if (appHands.available) calendarProblem = "I can't see your calendar yet: allow it in Setup, under What she tells you about."
     const entries = [...memFiles.entries('user'), ...memFiles.entries('memory')]
@@ -4376,10 +4393,8 @@ app.whenReady().then(async () => {
     screenLocked = false
     void presenceTick('unlock')
   })
-  setInterval(() => {
-    void presenceTick('tick')
-    void heartbeat()
-  }, 30_000).unref()
+  // The heartbeat waits for the presence check: she catches them up (and asks what waits) before any check-in.
+  setInterval(() => void presenceTick('tick').then(() => heartbeat()), 30_000).unref()
   setTimeout(() => void presenceTick('start'), 20_000).unref()
   heartbeatText()
   {

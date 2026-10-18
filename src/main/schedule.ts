@@ -330,7 +330,7 @@ export function ruleText(rule: Rule, tz?: string): string {
       return `on the ${rule.nth === -1 ? 'last' : ORDINAL[rule.nth ?? 1]} ${dayName(rule.weekday ?? 1)} of every month${at}`
     }
     case 'interval': {
-      const every = rule.minutes === 60 ? 'every hour' : rule.minutes % 60 === 0 ? `every ${rule.minutes / 60} hours` : rule.minutes === 30 ? 'every half hour' : `every ${rule.minutes} minutes`
+      const every = rule.minutes === 1 ? 'every minute' : rule.minutes === 60 ? 'every hour' : rule.minutes % 60 === 0 ? `every ${rule.minutes / 60} hours` : rule.minutes === 30 ? 'every half hour' : `every ${rule.minutes} minutes`
       const window = rule.from || rule.to ? ` from ${clockText(rule.from ?? '00:00')} to ${clockText(rule.to ?? '24:00')}` : ''
       const days = rule.days.length && rule.days.length < 7 ? ` ${daysText(rule.days).replace(/^every (weekday)$/, 'on weekdays').replace(/^every /, 'on ')}` : ''
       return `${every}${window}${days}`
@@ -760,6 +760,13 @@ export class ScheduleStore {
   }
 
   addWaiting(w: Omit<Waiting, 'id' | 'at'>): Waiting {
+    // The same step again (a job that runs every few minutes): one entry, kept fresh.
+    const same = this.waits.find((x) => x.jobId === w.jobId && x.tool === w.tool && JSON.stringify(x.input) === JSON.stringify(w.input))
+    if (same) {
+      same.at = this.now()
+      this.save()
+      return same
+    }
     const item: Waiting = { ...w, id: `w${this.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, at: this.now() }
     this.waits.push(item)
     this.save()

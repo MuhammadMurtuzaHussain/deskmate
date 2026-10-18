@@ -222,6 +222,9 @@ test('pause, resume, match, one-offs and steps waiting for a yes survive a resta
     store.setPaused(slack.id, false)
     assert.equal(wall(store.get(slack.id)!.nextAt, DUB), 'Tue 2026-10-20 09:00')
     store.addWaiting({ jobId: slack.id, label: slack.label, tool: 'send_message', input: { app: 'slack', to: 'ana', text: 'hi' }, what: 'send "hi" to ana on slack' })
+    // the same step from the next run is one entry, not two
+    store.addWaiting({ jobId: slack.id, label: slack.label, tool: 'send_message', input: { app: 'slack', to: 'ana', text: 'hi' }, what: 'send "hi" to ana on slack' })
+    assert.equal(store.waiting().length, 1)
     store.record(slack.id, 'waiting', 'wants to send a message')
     store.stop()
     const again = new ScheduleStore(path, () => {}, { now: () => now })

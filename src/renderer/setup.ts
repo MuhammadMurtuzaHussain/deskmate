@@ -401,7 +401,7 @@ function renderSchedule(sc: ScheduleSetupState | undefined): void {
   const hb = sc.heartbeat
   const lastBeat = hb.last ? ` Last check ${ago(hb.last.at)}: ${hb.last.skipped ? `skipped (${hb.last.skipped})` : hb.last.said ? `"${hb.last.said}"` : 'nothing needed you'}${hb.last.tokens ? `, ${hb.last.tokens} tokens` : ''}.` : ''
   $<HTMLSpanElement>('hb-note').textContent = hb.minutes
-    ? `every ${hb.minutes} minutes she checks ${hb.items} thing${hb.items === 1 ? '' : 's'} from HEARTBEAT.md and stays quiet unless one needs you; skipped in quiet hours and overnight.${lastBeat}`
+    ? `${hb.minutes === 1 ? 'every minute' : `every ${hb.minutes} minutes`} she checks ${hb.items} thing${hb.items === 1 ? '' : 's'} from HEARTBEAT.md and stays quiet unless one needs you; skipped in quiet hours and overnight.${lastBeat}`
     : 'off (DESKMATE_HEARTBEAT_MINUTES=0)'
   box('brief-on').checked = sc.brief.on
   if (document.activeElement !== box('brief-after')) box('brief-after').value = sc.brief.after
