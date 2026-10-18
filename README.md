@@ -7,7 +7,7 @@
 <p align="center">
   <b>A Live2D or 3D AI companion that lives on your desktop.</b><br>
   She watches what you're doing, talks back with a real voice and real expressions, dances when you ask, remembers you, and reacts when you poke her.<br>
-  Runs <b>100 % local</b> with Ollama + Kokoro, or on Gemini. macOS, Windows, Linux.
+  Runs <b>100 % local</b> with Ollama + Kokoro, or on Claude or Gemini. macOS, Windows, Linux.
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@
 - **Drives your Chrome (macOS).** "What’s on this page", "search for Dublin weather", "next tab", "click sign in", or a whole goal: "look up the cheapest flight to Lisbon next Friday". She works in the Chrome you already have open, logged in as you, reading the page text and clicking through with her own brain, a step at a time. Anything that pays, sends, posts or deletes is read back to you first; passwords are never typed.
 - **Answers your phone.** Away from the laptop, text her through a Telegram bot of your own: "tell sam on Discord I'm running late", "what's on my screen?", "ask Claude to fix the build", `/selfie`. Everything she says while she works on it comes back to the phone, and her "send it?" questions get Yes / No buttons. Only the one account you paired (with a yes on the Mac) can control her. [docs/AGENT.md](docs/AGENT.md#from-your-phone-telegram).
 - **Remembers.** A tiered memory per character: what matters sticks, small talk fades. `/forget` wipes it.
-- **Lives on your desktop.** "Come here", "sit on this window" (she sits on its top edge, legs dangling, and rides along when you move it), "go to sleep", "walk around". "Where's my resume?" and she finds it, opens Finder on it, walks over and points at it with a ring around the spot. Carry her by the head and she dangles. Left alone for ten minutes she dozes off. Full body in 3D (VRM); with a Live2D model she leans, bobs, looks, and uses the model's own poses.
+- **Lives on your desktop.** "Come here", "sit on this window" (she sits on its top edge, legs dangling, and rides along when you move it), "go to sleep", "walk around". "Where's my resume?" and she finds it, opens Finder on it, walks over and points at it with a ring around the spot. Carry her by the head and she dangles. After a few minutes on a window she stretches, hops down and walks home; standing around, she now and then glances at your pointer, yawns or stretches. Left alone for ten minutes she dozes off. Full body in 3D (VRM and rigged FBX); with a Live2D model she leans, bobs, looks, and uses the model's own poses.
 - **Reacts to touch.** Tap her head, tummy or elsewhere for different reactions; press and drag her anywhere on the screen and she comments.
 - **Dances and changes outfits (3D characters).** No buttons: ask her ("dance for me", "something slower", "spin", "change your outfit") and she decides to; or type `/dance`, `/slow`, `/spin`, `/outfit`, `/stop`. Built-in choreographies (upbeat groove, slow and sensual, a twirl) with smooth blends, and real motion capture when you drop clips in: Mixamo `.fbx` dances retarget straight onto any VRM character, `.vrma` plays as is, `.vmd` for MMD. Hair and skirts move with the model's own physics.
 - **Is yours to shape.** Personality is a plain-text file. Models are standard Live2D / VTube Studio folders, VRM avatars (VRoid Studio, VRoid Hub, Booth), MMD models (.pmx) or a plain .obj/.glb. Multiple characters, switchable from the panel or the tray, each with her own voice and memory.
@@ -57,9 +57,9 @@ Grab the latest build from the [Releases page](https://github.com/MuhammadMurtuz
 | Windows 10/11 | `Deskmate-x.y.z-win-x64-setup.exe` (installer) or `-portable.exe` | Unsigned: SmartScreen → "More info" → "Run anyway". |
 | Linux | `Deskmate-x.y.z-linux-x86_64.AppImage` or `-linux-amd64.deb` | `chmod +x` the AppImage. Tray icon needs `libayatana-appindicator` on GNOME. |
 
-She starts in the bottom-right corner. The first time, a **setup window** walks you through her brain (a local Ollama model it finds on your Mac, or a Gemini key it checks for you), her voice, and the permissions she needs (microphone, screen, Accessibility), with a button for each. Come back to it any time from the menu-bar icon → **Setup…**. The sections below are the same steps by hand.
+She starts in the bottom-right corner. The first time, a **setup window** walks you through her brain (Claude with your Anthropic key, a local Ollama model it finds on your Mac, or a Gemini key it checks for you), her voice, the permissions she needs (microphone, screen, Accessibility), and the phone remote, with a button for each. Come back to it any time from the menu-bar icon → **Setup…**. The sections below are the same steps by hand.
 
-When a newer release is out, the tray menu shows **Update available: vX.Y.Z**, which opens its download page (she checks GitHub at launch and every 6 hours; `DESKMATE_UPDATE_CHECK=0` in `.env` turns that off). Install it over the old one; your settings, memory and characters stay.
+When a newer release is out, the tray menu shows **Update available: vX.Y.Z**, which opens its download page (she checks GitHub at launch and every 6 hours; `DESKMATE_UPDATE_CHECK=0` in `.env` turns that off). Install it over the old one; your settings, memory and characters stay. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 ### Give her a brain (2 minutes)
 
@@ -88,7 +88,7 @@ Without setup she uses your system voice. For a natural one: [docs/VOICES.md](do
 
 ### Give her hands (optional)
 
-On a Mac she can message people on Discord and Slack and prompt the Claude app for you: switch on **Accessibility** for Deskmate when she asks (System Settings → Privacy & Security → Accessibility). Details: [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
+On a Mac she can message people on Discord and Slack and prompt the Claude app for you: switch on **Accessibility** for Deskmate when she asks (System Settings → Privacy & Security → Accessibility). Messages and Spotify go through their own scripting instead: say **Allow** the first time macOS asks whether Deskmate may control them. Details: [docs/AGENT.md](docs/AGENT.md#apps-discord-slack-and-the-claude-app-macos).
 
 On a Mac she can also drive the Chrome you have open: say yes when macOS asks, and switch on **View → Developer → Allow JavaScript from Apple Events** in Chrome once so she can read pages and click. Details and the safety rules: [docs/AGENT.md](docs/AGENT.md#browser-she-drives-your-chrome).
 
@@ -115,7 +115,7 @@ npm run dev
 | what | where | how |
 |---|---|---|
 | Personality | `character/<id>/persona.md` | Plain English. Who she is, how she talks, what she reacts to, how far flirting goes. |
-| Look | `character/<id>/character.json` | Live2D Cubism 3/4 (incl. VTube Studio models), VRM 0.x/1.0, MMD `.pmx`, or a static `.obj`/`.glb`. Map her expressions to nine emotions. |
+| Look | `character/<id>/character.json` | Live2D Cubism 3/4 (incl. VTube Studio models), VRM 0.x/1.0, a rigged FBX / Collada / glTF character, MMD `.pmx`, or a static `.obj`/`.glb`. Map her expressions to nine emotions. |
 | Moves | `character/<id>/character.json` | 3D only: `dance.bpm`, `animations` (Mixamo `.fbx` or `.vrma` for VRM, `.vmd` for MMD), `outfits` (other model files, parts to hide, materials to recolour). |
 | Private tweaks | `character/<id>/local.json` | Gitignored overlay for your own clips, voice or model path, merged over `character.json`. |
 | Voice | `character/<id>/character.json` → `voice` | Kokoro preset, ElevenLabs voice id, system voice. |
@@ -135,7 +135,7 @@ All settings are environment variables, read from `.env` / `.env.local` in the u
 ## How it works
 
 ```
-Electron main ──── Ollama / Gemini (text + screenshot) ──► {say, emotion, speak, remember, action, tool}
+Electron main ──── Ollama / Gemini / Claude (text + screenshot) ──► {say, emotion, speak, remember, action, tool}
    │  desktopCapturer every N s, chokidar on your project folder
    │  mic ──► Whisper (local) ──► text · Kokoro / ElevenLabs / say ──► audio
    │  tool: claude ──► `claude -p` in the project folder (stream-json) ──► she reports back
@@ -152,7 +152,7 @@ The LLM returns a line plus an emotion tag; the tag picks a Live2D expression, t
 
 ## Privacy
 
-Local mode sends nothing anywhere, apart from the update check: one request to GitHub's releases API at launch and every 6 hours, which carries only the app version (`DESKMATE_UPDATE_CHECK=0` turns it off). With Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them and her selfies pass through Telegram under your own bot. Memory and settings live in your user-data folder and nowhere else.
+Local mode sends nothing anywhere, apart from the update check: one request to GitHub's releases API at launch and every 6 hours, which carries only the app version (`DESKMATE_UPDATE_CHECK=0` turns it off). With Claude, Gemini or ElevenLabs configured, chat text, screenshots (on looks and screen-related questions) and spoken lines go to those services under your own keys. What you say is transcribed on your machine. A Claude job sends your instruction and whatever Claude Code reads in that folder to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her replies to them and her selfies pass through Telegram under your own bot. Memory and settings live in your user-data folder and nowhere else.
 
 ## Roadmap
 

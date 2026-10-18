@@ -48,6 +48,7 @@ Set `"renderer"` in `character.json`:
 | renderer | file | expressions | dance | outfits | notes |
 |---|---|---|---|---|---|
 | `vrm` | `.vrm` (0.x or 1.0) | built-in presets, no mapping needed | built-in choreographies + `.vrma` clips | `tint`, `hide`/`show`, or other `.vrm` files | VRoid Studio exports, VRoid Hub, Booth. Spring bones move hair and skirts. |
+| `vrm` | rigged `.fbx`, `.dae`, `.glb`/`.gltf` | face morphs wired to the VRM presets when the model has them | built-in choreographies + Mixamo clips | `hide`/`show`, `tint` | Sketchfab-style and game characters: the skeleton is mapped onto the VRM humanoid by bone names (3ds Max Biped, Mixamo, Unreal, Blender-style), so idle, walking, sitting and pointing work too. Textures go in a `textures/` folder next to the model; `"hide"` at the top of character.json drops broken parts at load. |
 | `mmd` | `.pmx` | morphs, mapped via `morphs` (defaults cover 笑い / まばたき / あ … and ARKit names like `mouthSmileLeft`) | built-in choreographies + `.vmd` motions | material `hide`/`show` lists | Rigid-body physics (hair, skirt, chest) runs through Ammo when `physics.simulate` is not false. |
 | `mesh` | `.obj` + `.mtl`, `.glb` | none | whole-body bob and spin | no | For models without a rig: she still talks (bubble + voice) and moves as a whole. |
 
