@@ -18,6 +18,22 @@ The app ships with `mika` (Live2D's free sample model Haru, loaded from a CDN). 
 
 The tray menu has "Open characters folder" and "Open settings folder" shortcuts. Characters appear in the panel dropdown and the tray's Character submenu; each one has her own memory file.
 
+## The easy way: Setup → Characters
+
+Menu-bar icon → **Characters…** (or **Setup…**, section 6) shows a card for every character, with a picture of her (made the first time you open it, kept in `<user data>/thumbs`, made again when her `character.json` or `local.json` changes). Click a card to switch to her.
+
+**Add a character…** takes a `.vrm`, a Live2D model (its `.model3.json`, or the whole folder), a `.pmx`, a rigged `.fbx` / `.glb` / `.dae`, or a `.zip` with any of these inside (a VRM wins when a pack has several). Deskmate copies it into `<user data>/character/<id>/model/` and writes a `character.json` and a starter `persona.md` beside it:
+
+- **Expressions** from the model's own names. VRM: its presets (happy, angry, sad, relaxed, surprised; VRM 0.x joy / sorrow / fun too) and custom ones like `Blush`. Live2D: English VTube Studio names (`blush`, `shock`, `angry`, `hearteyes`, `cry`, `eyeroll`…), pinyin and Chinese (`red`, `black`, `lianhong`, `开心`, `生气`, `脸红`, `惊讶`, `哭`…) and Japanese (`笑顔`, `怒り`, `泣き`, `照れ`, `びっくり`, `ジト目`…). Numbered faces (`f01`…) are left for you to map.
+- **Pose toggles** (Live2D): a watermark toggle (`watermark`, `shuiyin`, `水印`, `logo`) goes in `poses.base` so it is always on; `sitting` / `坐` in `poses.sit`, sleep and lie toggles likewise. They are never used as faces.
+- **Motions** (Live2D): `Idle`, a `Tap…` group for reactions, a `Walk` group if there is one.
+- **Licence**: a VRM's own metadata (who may use the avatar, commercial use, redistribution, the licence) goes in `license`. When it keeps the avatar to its author (or people they license), Setup says so in yellow: only use her if that is you. Other models: a readme or licence file beside the model is copied along and named in `license`.
+- **Personality**: a neutral starter persona. Edit it right there.
+
+For the character on your desk, Setup also edits her **voice** (the Kokoro presets the local voice server lists, or its bundled list when it is not running), **speed**, **camera zoom** and **personality**. These are saved to `<user data>/character/<id>/local.json` and `persona.md`, over whatever ships with her (for a shipped character, **Back to her original personality** drops your copy). **Remove her** (characters you added only) moves her folder to the Trash.
+
+Model paths in a `character.json` that are relative (`model/rin.vrm`) mean "inside this character's folder"; the app serves them to the renderer as `deskmate://character/<id>/model/rin.vrm`, so models under the user-data folder load in development and in the installed app alike.
+
 ## character.json
 
 ```json
@@ -72,10 +88,11 @@ Example (the bundled Victoria):
 - **Dancing** is triggered by asking her (the brain returns an `action`), by `/dance`, `/slow`, `/spin`, `/stop` in the chat box, or from the tray. Built-in styles: `groove` (upbeat, with phrases), `slow` (hip figure-eights, body waves, hands up into the hair), `spin`; they blend in and out over half a second. When `animations` are listed, dance requests play those clips instead (a "slow" request prefers clips whose name contains slow, rumba, waltz or belly).
 - **Real dances (VRM)**: go to [mixamo.com](https://www.mixamo.com) (free Adobe account), search "dancing", download any clip as FBX ("Without Skin" is smallest), put it in a `dances/` folder next to the model and list it: `"animations": [{ "name": "salsa", "file": "/models/<id>/dances/Salsa_Dancing.fbx" }]`. The app retargets Mixamo's skeleton onto the VRM humanoid at load. `.vrma` files (Booth, VRoid Hub) play directly. Keep clip lists in `local.json` if you don't want them in git (Mixamo's terms allow use in your projects, not redistribution of the raw files).
 - **Real dances (MMD)**: `.vmd` motions from their creators' pages; list them the same way. Most forbid redistribution.
-- **`local.json`**: a gitignored file next to `character.json` whose keys override it, for private things: `animations`, `voice`, `model`, `outfits`.
+- **`local.json`**: a gitignored file next to `character.json` whose keys override it, for private things: `animations`, `voice`, `model`, `outfits`. `voice`, `camera`, `physics`, `idle` and `dance` are merged key by key (a `{"voice": {"speed": 0.95}}` keeps her voice preset). Setup's own changes go to a second `local.json` in `<user data>/character/<id>/`, applied last.
+- **Motion clips for her body (VRM)**: clips in `animations` named `idle`, `walk`, `sit` or `lie` (Mixamo `.fbx` or `.vrma`) play in that state instead of the procedural pose, over it, so a clip that moves only some bones leaves the rest posed. Every other clip is a dance. Example: `"animations": [{"name": "walk", "file": "/models/rin/clips/Walking.fbx"}, {"name": "lie", "file": "/models/rin/clips/lying.vrma"}]`.
 - **Outfits**: `model` swaps the whole file; `hide`/`show` toggle meshes (VRM) or materials (MMD) by name fragment; `tint` recolours materials whose name contains the key (works on light textures). Ask her to change, type `/outfit`, or use the tray.
 - **Morphs (MMD)**: `"morphs": { "happy": "笑い+mouthSmileLeft+mouthSmileRight", "mouth": "あ", "blink": "まばたき" }`; join several with `+`.
-- **Poses (Live2D)**: VTube Studio models often carry pose toggles as expressions (sitting, hand signs). Name them in `poses` and she layers them over her emotion: `"poses": {"sit": "sitting", "point": "point_hand", "sleep": "sleepy", "dance": ["hand_y", "hand_love"]}` (sit when sitting on a window, point when pointing, dance cycles the list every four beats).
+- **Poses (Live2D)**: VTube Studio models often carry pose toggles as expressions (sitting, hand signs). Name them in `poses` and she layers them over her emotion: `"poses": {"sit": "sitting", "lie": "lying", "point": "point_hand", "sleep": "sleepy", "dance": ["hand_y", "hand_love"], "base": ["watermark"]}` (sit when sitting on a window, lie when lying on one (sit when there is no lie toggle), point when pointing, dance cycles the list every four beats, base is always on).
 - **Framing**: `camera.zoom` to frame her closer (`1` fits her whole body, `1.35` crops at the knees and keeps her face where it was; works for Live2D and 3D), `camera.fov` and `camera.yOffset` (fraction of body height) if she sits too high or low; `idle.armsDown` if her arms hang wrong (VRM rigs start in a T-pose, MMD rigs in an A-pose).
 
 Bundled 3D characters: Victoria (bundled file) and Vita, Vivi, Shino (fetched from github.com/madjin/vrm-samples on first use). All four are VRoid Project sample models whose metadata states CC0 (see `src/renderer/public/models/victoria/LICENSE.txt`).

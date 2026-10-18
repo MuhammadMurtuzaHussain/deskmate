@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, NoticePrefs, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
-  getConfig: () => ipcRenderer.invoke('config:get'),
+  getConfig: (id) => ipcRenderer.invoke('config:get', id),
   send: (text) => ipcRenderer.invoke('chat:send', text),
   lookNow: () => ipcRenderer.invoke('watch:look'),
   toggleWatch: () => ipcRenderer.invoke('watch:toggle'),
@@ -51,6 +51,16 @@ const api: DeskmateApi = {
   calendarAccess: () => ipcRenderer.invoke('setup:calendar'),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
+  },
+  listCharacters: () => ipcRenderer.invoke('characters:list'),
+  characterThumb: (id) => ipcRenderer.invoke('characters:thumb', id),
+  characterDetails: (id) => ipcRenderer.invoke('characters:details', id),
+  saveCharacter: (id, patch) => ipcRenderer.invoke('characters:save', id, patch),
+  addCharacter: (path) => ipcRenderer.invoke('characters:add', path),
+  removeCharacter: (id) => ipcRenderer.invoke('characters:remove', id),
+  voices: () => ipcRenderer.invoke('characters:voices'),
+  onCharactersChanged: (cb) => {
+    ipcRenderer.on('characters:changed', () => cb())
   },
   onPlan: (cb) => {
     ipcRenderer.on('plan:update', (_event, plan: Plan | null) => cb(plan))

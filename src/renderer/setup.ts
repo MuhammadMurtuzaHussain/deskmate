@@ -1,4 +1,4 @@
-import type { NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
+import type { CharacterCard, CharacterDetails, NoticePrefs, NoticeState, PermissionKind, RemoteAction, SetupState } from '../shared/types'
 
 const api = window.deskmate
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -354,6 +354,194 @@ for (const row of document.querySelectorAll<HTMLDivElement>('.perm')) {
   })
 }
 
+// ---- Characters: a card each, the one she is now highlighted; voice, zoom and personality for her; add and remove
+
+const KIND: Record<CharacterCard['renderer'], string> = { live2d: 'Live2D', vrm: '3D · VRM', mmd: '3D · MMD', mesh: '3D · mesh' }
+const charMsg = $<HTMLDivElement>('char-msg')
+const editMsg = $<HTMLDivElement>('ce-msg')
+function note(el: HTMLElement, text: string, kind: 'good' | 'bad' | '' = ''): void {
+  el.textContent = text
+  el.className = `msg${kind ? ` ${kind}` : ''}`
+}
+/** thumbnails already fetched this session (data: URLs), so a re-render does not ask again */
+const thumbs = new Map<string, string | null>()
+let editing: CharacterDetails | null = null
+
+async function renderCharacters(): Promise<void> {
+  if (!api.listCharacters) return
+  $<HTMLElement>('characters').classList.remove('hidden')
+  const cards = await api.listCharacters()
+  const grid = $<HTMLDivElement>('char-grid')
+  grid.innerHTML = ''
+  for (const c of cards) {
+    const card = document.createElement('button')
+    card.className = `card${c.active ? ' active' : ''}`
+    card.title = c.active ? `${c.name} is on your desk now` : `Switch to ${c.name}`
+    const pic = document.createElement('div')
+    pic.className = 'pic'
+    const initial = document.createElement('span')
+    initial.className = 'initial loading'
+    initial.textContent = c.name.charAt(0).toUpperCase()
+    pic.appendChild(initial)
+    const name = document.createElement('div')
+    name.className = 'name'
+    name.textContent = c.name
+    const kind = document.createElement('div')
+    kind.className = 'kind'
+    const chipOf = (text: string, cls = ''): HTMLSpanElement => {
+      const el = document.createElement('span')
+      el.className = `chip${cls ? ` ${cls}` : ''}`
+      el.textContent = text
+      return el
+    }
+    kind.appendChild(chipOf(KIND[c.renderer] ?? c.renderer))
+    if (c.userAdded) kind.appendChild(chipOf('added', 'ok'))
+    card.append(pic, name, kind)
+    card.addEventListener('click', () => void pick(c))
+    grid.appendChild(card)
+    void showThumb(c.id, pic, initial)
+  }
+  const active = cards.find((c) => c.active)
+  if (active && editing?.id !== active.id) await edit(active.id)
+}
+
+async function showThumb(id: string, pic: HTMLElement, initial: HTMLElement): Promise<void> {
+  let url = thumbs.get(id)
+  if (url === undefined) {
+    url = (await api.characterThumb?.(id).catch(() => null)) ?? null
+    thumbs.set(id, url)
+  }
+  initial.classList.remove('loading')
+  if (!url) return
+  const img = document.createElement('img')
+  img.src = url
+  img.alt = ''
+  pic.replaceChildren(img)
+}
+
+async function pick(c: CharacterCard): Promise<void> {
+  if (c.active) return
+  note(charMsg, `Switching to ${c.name}…`)
+  await api.setCharacter(c.id)
+  note(charMsg, `${c.name} is on your desk now.`, 'good')
+  editing = null
+  await renderCharacters()
+}
+
+async function fillVoices(current: string): Promise<void> {
+  const select = $<HTMLSelectElement>('ce-voice')
+  const list = (await api.voices?.()) ?? { voices: [current], live: false }
+  const voices = list.voices.includes(current) ? list.voices : [current, ...list.voices]
+  select.innerHTML = ''
+  for (const v of voices) {
+    const opt = document.createElement('option')
+    opt.value = v
+    // af_ = American female, bm_ = British male …
+    const who = `${v[0] === 'b' ? 'British' : 'American'} ${v[1] === 'm' ? 'male' : 'female'}`
+    opt.textContent = `${v.slice(3).replace(/^\w/, (x) => x.toUpperCase())} · ${who}`
+    opt.selected = v === current
+    select.appendChild(opt)
+  }
+  select.title = list.live ? 'from the local voice server' : 'the local voice server is not running; these are the voices it comes with'
+}
+
+function showEditor(d: CharacterDetails): void {
+  editing = d
+  $<HTMLDivElement>('char-edit').classList.remove('hidden')
+  $<HTMLElement>('ce-name').textContent = d.name
+  $<HTMLElement>('ce-kind').textContent = KIND[d.renderer] ?? d.renderer
+  $<HTMLInputElement>('ce-speed').value = String(d.speed)
+  $<HTMLInputElement>('ce-zoom').value = String(d.zoom)
+  $<HTMLElement>('ce-speed-v').textContent = `${d.speed.toFixed(2)}×`
+  $<HTMLElement>('ce-zoom-v').textContent = `${d.zoom.toFixed(2)}×`
+  $<HTMLTextAreaElement>('ce-persona').value = d.persona
+  $<HTMLElement>('ce-license').textContent = d.license ? `Licence: ${d.license}` : "Licence: not stated. Check the creator's terms."
+  const warn = $<HTMLDivElement>('ce-warn')
+  warn.classList.toggle('hidden', !d.restricted)
+  warn.textContent = d.restricted ? `${d.name}'s licence restricts this avatar to its author (or people they license). Only use her if that is you.` : ''
+  $<HTMLButtonElement>('ce-remove').classList.toggle('hidden', !d.userAdded)
+  $<HTMLButtonElement>('ce-reset').classList.toggle('hidden', !d.personaEdited)
+  note(editMsg, '')
+}
+
+async function edit(id: string): Promise<void> {
+  const d = await api.characterDetails?.(id)
+  if (!d) return
+  showEditor(d)
+  await fillVoices(d.voice)
+}
+
+$<HTMLInputElement>('ce-speed').addEventListener('input', (e) => {
+  $<HTMLElement>('ce-speed-v').textContent = `${Number((e.target as HTMLInputElement).value).toFixed(2)}×`
+})
+$<HTMLInputElement>('ce-zoom').addEventListener('input', (e) => {
+  $<HTMLElement>('ce-zoom-v').textContent = `${Number((e.target as HTMLInputElement).value).toFixed(2)}×`
+})
+
+$<HTMLButtonElement>('ce-save').addEventListener('click', async () => {
+  if (!editing || !api.saveCharacter) return
+  const d = editing
+  const voice = $<HTMLSelectElement>('ce-voice').value
+  const speed = Number($<HTMLInputElement>('ce-speed').value)
+  const zoom = Number($<HTMLInputElement>('ce-zoom').value)
+  const persona = $<HTMLTextAreaElement>('ce-persona').value
+  // Only what changed, so an untouched persona is not copied over the shipped one.
+  const changed = {
+    ...(voice !== d.voice ? { voice } : {}),
+    ...(Math.abs(speed - d.speed) > 1e-6 ? { speed } : {}),
+    ...(Math.abs(zoom - d.zoom) > 1e-6 ? { zoom } : {}),
+    ...(persona !== d.persona ? { persona } : {})
+  }
+  if (!Object.keys(changed).length) {
+    note(editMsg, 'Nothing changed.')
+    return
+  }
+  const saved = await api.saveCharacter(d.id, changed)
+  if (!saved) return note(editMsg, 'Could not save that.', 'bad')
+  showEditor(saved)
+  note(editMsg, `Saved. ${saved.name} uses it from her next line${'zoom' in changed ? '; her window reloaded for the zoom' : ''}.`, 'good')
+})
+
+$<HTMLButtonElement>('ce-reset').addEventListener('click', async () => {
+  if (!editing || !api.saveCharacter) return
+  const saved = await api.saveCharacter(editing.id, { persona: '' })
+  if (saved) {
+    showEditor(saved)
+    note(editMsg, 'Back to her original personality.', 'good')
+  }
+})
+
+$<HTMLButtonElement>('ce-remove').addEventListener('click', async () => {
+  if (!editing?.userAdded || !api.removeCharacter) return
+  const { id, name } = editing
+  if (!window.confirm(`Remove ${name}? Her folder goes to the Trash, so you can still put it back.`)) return
+  const r = await api.removeCharacter(id)
+  if (!r.ok) return note(editMsg, r.error ?? 'Could not remove her.', 'bad')
+  thumbs.delete(id)
+  editing = null
+  $<HTMLDivElement>('char-edit').classList.add('hidden')
+  note(charMsg, `${name} is gone (her folder is in the Trash).`, 'good')
+  await renderCharacters()
+})
+
+async function addCharacter(path?: string): Promise<void> {
+  if (!api.addCharacter) return
+  const button = $<HTMLButtonElement>('char-add')
+  button.disabled = true
+  note(charMsg, path ? 'Adding…' : 'Pick her model…')
+  try {
+    const r = await api.addCharacter(path)
+    if (r.cancelled) return note(charMsg, '')
+    if (!r.ok) return note(charMsg, r.error ?? 'That did not work.', 'bad')
+    const extra = r.warnings?.length ? ` ${r.warnings.join(' ')}` : ''
+    note(charMsg, `Added ${r.name}. Click her card to switch to her.${extra}`, r.restricted ? 'bad' : 'good')
+    await renderCharacters()
+  } finally {
+    button.disabled = false
+  }
+}
+$<HTMLButtonElement>('char-add').addEventListener('click', () => void addCharacter())
+
 $<HTMLButtonElement>('done').addEventListener('click', () => void api.finishSetup?.())
 
 // Permissions are switched on in System Settings; check again whenever they come back to this window.
@@ -366,3 +554,4 @@ void api.getConfig().then((config) => {
   }
 })
 void refresh()
+void renderCharacters()

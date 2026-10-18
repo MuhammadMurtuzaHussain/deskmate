@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased: she plans it out, and she notices things
+## Unreleased: she plans it out, she notices things, and she makes herself at home
+
+**She makes herself at home (desktop moments)**
+- "Lie down on this window": she lies on her front along its top edge, chin on her hands, calves kicking slowly, and rides along when you move it (3D). Live2D characters lie down the way they sit, with the model's `lie` or `sit` toggle and her head propped and rocking.
+- "Hide" / "peek-a-boo": she slips behind the left or right edge of the screen and leans back in with her head tilted and a little wave. Hide waits until "come out" / "found you"; peek-a-boo pops out and comes home after half a minute.
+- Pointer play: hold the pointer by her head for two seconds and she reaches up and swats at it (3D: the arm on its side; Live2D: a pounce with head and eyes), now and then with a word about it. At most once every 40 s, never while she is busy or talking (`DESKMATE_CURSOR_PLAY=0`).
+- Left alone a while (4 minutes, `DESKMATE_RESTLESS_MINUTES`), she lies down on the front window or peeks out from the screen edge on her own (`DESKMATE_IDLE_MOVES=0`).
+- Bored while Claude works: a Claude Code job that runs a few minutes (`DESKMATE_BORED_MINUTES`, 3) has her yawn and slouch, sit on the terminal or the Claude app if it is in front, and doze off; when it ends she wakes and says "okay, back to work" before she reports.
+- Motion clips for her body: `animations` named `idle`, `walk`, `sit` or `lie` (Mixamo `.fbx` or `.vrma`) play in those states over the procedural pose.
+- The menu-bar icon's **Her body** has **Lie down on the front window** and **Peek-a-boo**.
+
+**Characters, the easy way**
+- Setup → **Characters** (menu-bar icon → **Characters…**): a card with a picture for every character (made on first view with the same capture as her selfie, cached in `<user data>/thumbs`); click one to switch.
+- Voice (Kokoro presets from the local voice server), speed, camera zoom and personality for the character on your desk, saved to `<user data>/character/<id>/local.json` and `persona.md`.
+- **Add a character…**: a `.vrm`, a Live2D model or its folder, a `.pmx`, a rigged `.fbx` / `.glb` / `.dae`, or a `.zip` with one inside. She is copied into your user-data folder with `character.json` written for you: VRM expression presets, Live2D expression names in English, pinyin, Chinese and Japanese mapped to her emotions, pose toggles (a watermark toggle always on), the VRM licence read from its metadata with a warning when the avatar is for its author only, and a neutral starter personality.
+- **Remove her** for characters you added (her folder goes to the Trash).
+- Models under the user-data folder load through `deskmate://character/<id>/…`; relative model paths in `character.json` mean "in this character's folder". `local.json` now merges `voice`, `camera`, `physics`, `idle` and `dance` key by key.
+- VRM characters use custom expressions named in `expressions` (e.g. `"shy": "Blush"`) besides the five presets.
 
 **She notices things**
 - Notices: a short line in her voice when something happens, without being asked; she wakes up for it and walks over to your pointer for the important ones, then goes home. Repeats are dropped, messages that pile up are said together, and spoken messages are capped per hour.

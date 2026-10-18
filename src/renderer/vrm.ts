@@ -5,7 +5,7 @@ import { VRMAnimationLoaderPlugin, createVRMAnimationClip, type VRMAnimation } f
 import type { Anchors, BodyState, CharacterConfig, DanceStyle, Emotion, Gesture, Outfit } from '../shared/types'
 import { blendPose, dancePose, defaultBpm, idlePose, type Pose } from './dance'
 import { loadRig } from './rig'
-import { danglePose, gestureWeight, glancePose, pointPose, sitPose, sleepPose, stretchPose, walkPose, yawnPose } from './body'
+import { danglePose, gestureWeight, glancePose, liePose, lieSleepPose, peekPose, pointPose, sighPose, sitPose, sleepPose, slumpPose, stretchPose, swatPose, walkPose, yawnPose } from './body'
 import { loadMixamoAnimation } from './mixamo'
 import { resolveAsset } from './assets'
 import type { Avatar, Bounds } from './avatar'
@@ -27,6 +27,9 @@ const EMOTION_WEIGHTS: Record<Emotion, Record<string, number>> = {
   shy: { happy: 0.35, sad: 0.25, relaxed: 0.3 }
 }
 const EXPRESSIONS = ['happy', 'angry', 'sad', 'relaxed', 'surprised']
+/** Motion clips named after a body state play in that state instead of the procedural pose (character.json → animations). */
+const STATE_CLIPS = ['idle', 'walk', 'sit', 'lie'] as const
+type StateClip = (typeof STATE_CLIPS)[number]
 
 /** World-space bounds that account for skinning (geometry boxes of skinned meshes are in bind pose). */
 function skinnedBounds(root: THREE.Object3D): THREE.Box3 {
@@ -86,6 +89,18 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   // expression state (smoothed)
   const target: Record<string, number> = {}
   const current: Record<string, number> = {}
+  /**
+   * Expressions beyond the five presets that character.json maps an emotion to ("flirty": "happy+Blush"): an imported
+   * model's own custom expressions. The presets keep their tuned weights below; these come in at full weight.
+   */
+  const customNames = [
+    ...new Set(
+      Object.values(character.expressions ?? {})
+        .flatMap((e) => String(e ?? '').split('+'))
+        .map((n) => n.trim())
+        .filter((n) => n && !EXPRESSIONS.includes(n.toLowerCase()))
+    )
+  ]
   let mouth = 0
   let fakeMouth = 0
   let blinkAt = 2 + Math.random() * 3
@@ -102,6 +117,10 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let clips: THREE.AnimationClip[] = []
   let clipIndex = -1
   let activeAction: THREE.AnimationAction | null = null
+  /** clips for idle / walk / sit / lie, and the one playing now for the body state (dances win over it) */
+  const stateClips = new Map<StateClip, THREE.AnimationClip>()
+  let stateAction: THREE.AnimationAction | null = null
+  let stateClipName: StateClip | null = null
 
   // outfits
   const outfits: Outfit[] = character.outfits ?? []
@@ -145,6 +164,9 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       mixer = null
       clips = []
       activeAction = null
+      stateClips.clear()
+      stateAction = null
+      stateClipName = null
     }
     vrm = next
     resolved.clear()
@@ -178,12 +200,39 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
           clip = createVRMAnimationClip(anim, v)
         }
         clip.name = a.name
-        clips.push(clip)
+        const state = STATE_CLIPS.find((n) => n === a.name.trim().toLowerCase())
+        if (state) stateClips.set(state, clip)
+        else clips.push(clip)
       } catch (err) {
         console.warn('[vrm] animation failed', a.file, err)
       }
     }
     if (clips.length) console.log(`[vrm] ${clips.length} dance clip(s) ready: ${clips.map((c) => c.name).join(', ')}`)
+    if (stateClips.size) console.log(`[vrm] motion clips for ${[...stateClips.keys()].join(', ')}`)
+  }
+
+  /** Which state clip fits what her body is doing right now (none while dancing, carried, or with no clip for it). */
+  function wantedStateClip(): StateClip | null {
+    if (!stateClips.size || dancing || carried !== null) return null
+    const mode = body.mode === 'sleep' ? sleepOn ?? 'idle' : body.mode
+    const name: StateClip | null = mode === 'idle' ? 'idle' : mode === 'walk' ? 'walk' : mode === 'sit' ? 'sit' : mode === 'lie' ? 'lie' : null
+    return name && stateClips.has(name) ? name : null
+  }
+
+  /** Crossfades to the state clip that fits, or out of clips back to the procedural poses. */
+  function updateStateClip(): void {
+    const want = wantedStateClip()
+    if (want === stateClipName || !mixer) return
+    const prev = stateAction
+    stateClipName = want
+    stateAction = want ? mixer.clipAction(stateClips.get(want) as THREE.AnimationClip) : null
+    stateAction?.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.4).play()
+    if (prev && prev !== stateAction) {
+      prev.fadeOut(0.4)
+      window.setTimeout(() => {
+        if (prev !== stateAction && prev !== activeAction) prev.stop()
+      }, 450)
+    }
   }
 
   function applyOutfit(o: Outfit | null): void {
@@ -264,7 +313,8 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   let gesture: (Gesture & { start: number; dur: number }) | null = null
   let gestureFace = { mouth: 0, eyes: 0 }
   let eyesHeld = 0
-  const GESTURE_S: Record<Gesture['kind'], number> = { stretch: 2.6, yawn: 2.8, glance: 1.8 }
+  const GESTURE_S: Record<Gesture['kind'], number> = { stretch: 2.6, yawn: 2.8, glance: 1.8, swat: 1.5, sigh: 2.6 }
+  let boredWeight = 0
 
   function bodyFrame(t: number): Pose | null {
     const armDown = character.idle?.armsDown ?? rigArmsDown ?? 1.18
@@ -279,13 +329,19 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       }
       case 'sit':
         return sitPose(t)
+      case 'lie':
+        return liePose(t)
+      case 'peek':
+        return peekPose(t, body.facing ?? 1)
       case 'sleep':
-        return sleepPose(sleepOnSit ? sitPose(t) : idlePose(t, 0.3, 0), t)
+        if (sleepOn === 'lie') return lieSleepPose(t)
+        return sleepPose(sleepOn === 'sit' ? sitPose(t) : idlePose(t, 0.3, 0), t)
       default:
         return null
     }
   }
-  let sleepOnSit = false
+  /** the seat she fell asleep on, if any */
+  let sleepOn: 'sit' | 'lie' | null = null
 
   /** Idle, dance, or a blend of the two while a dance starts or stops. */
   function poseFrame(t: number, dt: number): void {
@@ -333,6 +389,15 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
         } else if (gesture.kind === 'yawn') {
           out = blendPose(out, yawnPose(out, k), w)
           gestureFace = { mouth: 0.85 * w * Math.sin(Math.min(1, k * 1.25) * Math.PI), eyes: 0.75 * w }
+        } else if (gesture.kind === 'sigh') {
+          out = blendPose(out, sighPose(out, k), w)
+          gestureFace = { mouth: 0.25 * w * Math.sin(Math.min(1, k * 1.3) * Math.PI), eyes: 0.45 * w }
+        } else if (gesture.kind === 'swat') {
+          const a = avatar.anchors?.()
+          const from = a?.head ?? { x: window.innerWidth / 2, y: window.innerHeight * 0.2 }
+          const to = gesture.target ?? from
+          const armDown = character.idle?.armsDown ?? rigArmsDown ?? 1.18
+          out = blendPose(out, swatPose(out, k, to.x - from.x, from.y - to.y, armDown, body.mode === 'lie'), w)
         } else {
           const a = avatar.anchors?.()
           const from = a?.head ?? { x: window.innerWidth / 2, y: window.innerHeight * 0.2 }
@@ -341,6 +406,10 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
         }
       }
     }
+    // Bored with a long Claude job: a slouch over whatever she is doing.
+    boredWeight += ((body.bored && body.mode !== 'sleep' && body.mode !== 'walk' ? 1 : 0) - boredWeight) * Math.min(1, dt * 1.5)
+    if (boredWeight < 0.002) boredWeight = 0
+    if (boredWeight > 0) out = blendPose(out, slumpPose(out, t), boredWeight * 0.8)
     // Carried: a damped pendulum driven by how fast the cursor moves her.
     const goal = carried === null ? 0 : Math.max(-0.6, Math.min(0.6, -carried / 1800))
     carrySway += (goal - carrySway) * Math.min(1, dt * 5)
@@ -364,7 +433,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
   function updateFace(dt: number): void {
     if (!vrm?.expressionManager) return
     const em = vrm.expressionManager
-    for (const name of EXPRESSIONS) {
+    for (const name of [...EXPRESSIONS, ...customNames]) {
       const to = target[name] ?? 0
       const cur = current[name] ?? 0
       const nx = cur + (to - cur) * Math.min(1, dt * 8)
@@ -407,14 +476,18 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     const dt = Math.min(0.05, timer.getDelta())
     const t = timer.getElapsed()
     if (vrm) {
+      updateStateClip()
       if (activeAction && mixer) {
         mixer.update(dt)
       } else {
         poseFrame(t, dt)
-      }
-      if (!activeAction && (body.mode !== 'idle' || bodyWeight > 0 || carried !== null || carryWeight > 0.002 || gesture)) {
-        // poseFrame applied idle/dance; redo the frame with the body layer on top (cheap: a few bone writes).
-        applyPose(bodyLayer(t, dt, lastPose ?? idlePose(t, physics.sway, 0)))
+        if (body.mode !== 'idle' || bodyWeight > 0 || carried !== null || carryWeight > 0.002 || gesture || body.bored || boredWeight > 0) {
+          // poseFrame applied idle/dance; redo the frame with the body layer on top (cheap: a few bone writes).
+          applyPose(bodyLayer(t, dt, lastPose ?? idlePose(t, physics.sway, 0)))
+        }
+        // A state clip goes over the procedural pose: one that animates only some bones (a walk with just the legs)
+        // leaves the rest of her posed, not in her T-pose.
+        if (stateAction && mixer) mixer.update(dt)
       }
       updateFace(dt)
       vrm.update(dt)
@@ -485,6 +558,8 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     setExpression(emotion: Emotion) {
       const weights = EMOTION_WEIGHTS[emotion] ?? {}
       for (const name of EXPRESSIONS) target[name] = weights[name] ?? 0
+      const mapped = String(character.expressions?.[emotion] ?? '').split('+').map((n) => n.trim())
+      for (const name of customNames) target[name] = mapped.includes(name) ? 1 : 0
     },
 
     speak: (url: string) => speaker.speak(url),
@@ -500,7 +575,7 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     },
 
     setBody(state: BodyState) {
-      sleepOnSit = state.mode === 'sleep' && (body.mode === 'sit' || (body.mode === 'sleep' && sleepOnSit))
+      sleepOn = state.mode !== 'sleep' ? null : body.mode === 'sit' || body.mode === 'lie' ? body.mode : body.mode === 'sleep' ? sleepOn : null
       body = state
       if (state.mode === 'point' && state.target) avatar.pointerMove(state.target.x, state.target.y)
       // Walking, sitting, sleeping or pointing ends a dance.
@@ -512,10 +587,10 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
     },
 
     gesture(g: Gesture) {
-      // Not over a dance, a motion clip, or while she walks or sleeps.
+      // Not over a dance, or while she walks or sleeps (a state clip, say idle, plays over it on the bones it moves).
       if (dancing || activeAction || body.mode === 'walk' || body.mode === 'sleep') return
       gesture = { ...g, start: -1, dur: GESTURE_S[g.kind] }
-      if (g.kind === 'glance' && g.target) avatar.pointerMove(g.target.x, g.target.y)
+      if ((g.kind === 'glance' || g.kind === 'swat') && g.target) avatar.pointerMove(g.target.x, g.target.y)
     },
 
     anchors(): Anchors | null {
@@ -568,7 +643,8 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
         activeAction = null
         window.setTimeout(() => {
           ending.stop()
-          mixer?.stopAllAction()
+          // every dance clip, but not the state clip (idle, sit…) fading back in
+          if (mixer) for (const c of clips) if (mixer.existingAction(c) !== activeAction) mixer.existingAction(c)?.stop()
         }, 450)
       }
     },

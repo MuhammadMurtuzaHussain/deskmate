@@ -61,3 +61,28 @@ label.inline { display: flex; align-items: center; gap: 6px; white-space: nowrap
 label.inline input { accent-color: var(--accent); }
 .row.labelled { align-items: center; }
 .row.labelled > span { flex: none; width: 42px; }
+
+/* Characters */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; }
+.card { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); cursor: pointer; text-align: left; white-space: normal; }
+.card:hover { background: rgba(255, 255, 255, 0.09); }
+.card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: rgba(179, 140, 255, 0.12); }
+.card .pic { height: 132px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: radial-gradient(circle at 50% 35%, rgba(179, 140, 255, 0.18), transparent 70%); overflow: hidden; }
+.card .pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.card .pic .initial { font-size: 34px; font-weight: 650; color: rgba(244, 241, 255, 0.35); }
+.card .pic .initial.loading { animation: breathe 1.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.35; } }
+.card .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .kind { display: flex; gap: 4px; flex-wrap: wrap; }
+.card .kind .chip { font-size: 10px; padding: 1px 6px; }
+.edit { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.edit h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.edit .row.labelled { align-items: center; }
+.edit input[type='range'] { flex: 1; padding: 0; border: 0; background: none; accent-color: var(--accent); }
+.edit .val { flex: none; width: 40px; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+.persona { display: flex; flex-direction: column; gap: 4px; }
+textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.06); color: var(--ink); font: 12px/1.5 ui-monospace, Menlo, monospace; outline: none; }
+textarea:focus { border-color: var(--accent); }
+.warnbox { padding: 8px 10px; border-radius: 10px; background: rgba(255, 207, 122, 0.12); color: var(--warn); font-size: 12px; }
+button.danger { color: #ff9a9a; }
+button.danger:hover { background: rgba(255, 120, 120, 0.15); }

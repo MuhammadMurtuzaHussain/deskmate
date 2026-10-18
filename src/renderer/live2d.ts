@@ -71,17 +71,21 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   const poseParams = new Map<string, { id: string; value: number; blend: string }[]>()
   const poseWeight = new Map<string, number>()
   let savedBlink: unknown = undefined
-  let sleptSitting = false
+  /** the seat she fell asleep on, if any */
+  let sleptOn: 'sit' | 'lie' | null = null
   // a stretch, yawn or glance in progress (ms timestamps on the model's clock; start is set on the next frame)
-  let gesture: (Gesture & { start: number; dur: number }) | null = null
-  const GESTURE_MS: Record<Gesture['kind'], number> = { stretch: 2600, yawn: 2800, glance: 1800 }
+  let gesture: (Gesture & { start: number; dur: number; kicked?: boolean }) | null = null
+  const GESTURE_MS: Record<Gesture['kind'], number> = { stretch: 2600, yawn: 2800, glance: 1800, swat: 1500, sigh: 2600 }
+  /** peeking in from a screen edge: how far she leans (radians, smoothed); bored: how slumped */
+  let peekLean = 0
+  let bored = 0
   /** mouth and eyes for the gesture, applied after expressions and blinking (which would otherwise undo them) */
   let gestureFace = { mouth: 0, eyes: 0 }
 
   async function loadPoses(): Promise<void> {
     if (!model || !character.poses) return
     const settings = model.internalModel.settings as unknown as { url: string; expressions?: { Name: string; File: string }[] }
-    const wanted = new Set([character.poses.sit, character.poses.point, character.poses.sleep, ...(character.poses.dance ?? []), ...(character.poses.base ?? [])].filter(Boolean) as string[])
+    const wanted = new Set([character.poses.sit, character.poses.lie, character.poses.point, character.poses.sleep, ...(character.poses.dance ?? []), ...(character.poses.base ?? [])].filter(Boolean) as string[])
     for (const e of settings.expressions ?? []) {
       if (!wanted.has(e.Name)) continue
       try {
@@ -97,7 +101,9 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
   /** Which pose toggle is on right now, if any. */
   function activePose(beats: number): string | null {
     const p = character.poses ?? {}
-    if (body.mode === 'sit' || (body.mode === 'sleep' && sleptSitting)) return p.sit ?? null
+    // No lying toggle: she sits on the window instead (with her head propped on her hands, see bodyFrame).
+    if (body.mode === 'lie' || (body.mode === 'sleep' && sleptOn === 'lie')) return p.lie ?? p.sit ?? null
+    if (body.mode === 'sit' || (body.mode === 'sleep' && sleptOn === 'sit')) return p.sit ?? null
     if (body.mode === 'point') return p.point ?? null
     if (body.mode === 'sleep') return p.sleep ?? null
     if (dancing && p.dance?.length) return p.dance[Math.floor(beats / 4) % p.dance.length]
@@ -135,7 +141,28 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       core.setParameterValueById('ParamEyeROpen', 0)
     } else if (body.mode === 'sit') {
       core.addParameterValueById('ParamAngleZ', Math.sin(t * 0.6) * 4)
+    } else if (body.mode === 'lie') {
+      // head propped on her hands, rocking slowly from side to side, looking up at you
+      core.addParameterValueById('ParamAngleZ', 13 + Math.sin(t * 0.5) * 6)
+      core.addParameterValueById('ParamAngleY', -8 + Math.sin(t * 0.8) * 2)
+      core.addParameterValueById('ParamBodyAngleZ', 5 + Math.sin(t * 0.5 + 0.4) * 2)
+      core.addParameterValueById('ParamBodyAngleY', -4)
+      model.internalModel.focusController.focus(0, 0.35)
+    } else if (body.mode === 'peek') {
+      // leaning back in from behind the edge, head tilted right over, eyes toward the middle of the screen
+      const breathe = 0.85 + 0.15 * Math.sin(t * 0.9)
+      core.addParameterValueById('ParamAngleZ', facing * 22 * breathe)
+      core.addParameterValueById('ParamAngleX', -facing * 12)
+      core.addParameterValueById('ParamBodyAngleZ', facing * 8 * breathe)
+      core.addParameterValueById('ParamBodyAngleX', -facing * 6)
+      model.internalModel.focusController.focus(-facing * 0.6, 0.1)
     }
+    if (bored > 0.01) {
+      core.addParameterValueById('ParamAngleZ', 9 * bored + Math.sin(t * 0.35) * 3 * bored)
+      core.addParameterValueById('ParamAngleY', -7 * bored)
+      core.addParameterValueById('ParamBodyAngleY', -3 * bored)
+    }
+    bored += ((body.bored && body.mode !== 'sleep' ? 1 : 0) - bored) * Math.min(1, dt * 1.5)
     offsetY += gestureFrame(core, now)
     if (dancing) {
       const b = beats * Math.PI
@@ -162,8 +189,12 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     // Carried: she swings from the top of her head (the model's anchor), as if held there.
     const goal = carried === null ? 0 : Math.max(-0.5, Math.min(0.5, -carried / 2500))
     carrySway += (goal - carrySway) * Math.min(1, dt * 6)
-    model.rotation = carrySway
-    model.y = baseY + offsetY
+    // Peeking: the whole of her leans in toward the middle of the screen, pivoting at her feet, not her head.
+    peekLean += ((body.mode === 'peek' ? -facing * (0.2 + 0.04 * Math.sin(t * 0.9)) : 0) - peekLean) * Math.min(1, dt * 3)
+    const h = model.height
+    model.rotation = carrySway + peekLean
+    model.x = app.screen.width / 2 + h * Math.sin(peekLean)
+    model.y = baseY + offsetY + h * (1 - Math.cos(peekLean))
   }
 
   /**
@@ -195,6 +226,34 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       core.addParameterValueById('ParamAngleZ', 7 * w)
       gestureFace = { mouth: 0.9 * w * open, eyes: 0.7 * w }
       return 0
+    }
+    if (gesture.kind === 'sigh') {
+      const sink = Math.sin(Math.min(1, k * 1.3) * Math.PI)
+      core.addParameterValueById('ParamAngleY', -12 * sink * w)
+      core.addParameterValueById('ParamBodyAngleY', -5 * sink * w)
+      core.addParameterValueById('ParamAngleZ', 6 * w)
+      gestureFace = { mouth: 0.3 * w * sink, eyes: 0.5 * w }
+      return 8 * sink * w
+    }
+    if (gesture.kind === 'swat') {
+      // no arm to swing: she leans at it, eyes on it, and ducks her head in a quick pounce
+      const a = avatar.anchors?.()
+      const from = a?.head ?? { x: app.screen.width / 2, y: app.screen.height * 0.2 }
+      const to = gesture.target ?? from
+      const nx = Math.max(-1, Math.min(1, (to.x - from.x) / 200))
+      const ny = Math.max(-1, Math.min(1, (from.y - to.y) / 200))
+      const pounce = k > 0.38 && k < 0.6 ? Math.sin(((k - 0.38) / 0.22) * Math.PI) : 0
+      model.internalModel.focusController.focus(nx, ny)
+      core.addParameterValueById('ParamBodyAngleX', nx * 12 * w)
+      core.addParameterValueById('ParamBodyAngleZ', -nx * 8 * w)
+      core.addParameterValueById('ParamAngleX', nx * 22 * w)
+      core.addParameterValueById('ParamAngleY', (ny * 14 - pounce * 12) * w)
+      if (pounce > 0.9 && !gesture.kicked) {
+        gesture.kicked = true
+        sway.impulse = Math.max(sway.impulse, 0.6)
+        sway.impulseAt = now
+      }
+      return -pounce * 14 * w
     }
     const a = avatar.anchors?.()
     const from = a?.head ?? { x: app.screen.width / 2, y: app.screen.height * 0.2 }
@@ -353,7 +412,7 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
     isDancing: () => dancing,
 
     setBody(state: BodyState) {
-      sleptSitting = state.mode === 'sleep' && (body.mode === 'sit' || (body.mode === 'sleep' && sleptSitting))
+      sleptOn = state.mode !== 'sleep' ? null : body.mode === 'sit' || body.mode === 'lie' ? body.mode : body.mode === 'sleep' ? sleptOn : null
       // Eyes stay shut while asleep: the blink controller would open them every frame.
       const internal = model?.internalModel as unknown as { eyeBlink?: unknown } | undefined
       if (internal) {

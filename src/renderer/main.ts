@@ -477,10 +477,39 @@ async function createAvatar(): Promise<Avatar> {
   return createLive2DAvatar(canvas, config.character)
 }
 
+/**
+ * Thumbnail mode (?thumb=<id>, in an offscreen window the main process opens for Setup's character cards): only her,
+ * loaded and settled in her idle pose, with nothing else of the app running. window.__thumb says when to capture.
+ */
+async function thumbnail(id: string): Promise<void> {
+  const flag = window as unknown as { __thumb?: string }
+  try {
+    document.body.classList.add('portrait')
+    config = await api.getConfig(id)
+    avatar = await createAvatar()
+    await avatar.load()
+    avatar.setExpression('happy')
+    await new Promise((r) => window.setTimeout(r, 1800))
+    flag.__thumb = 'ready'
+  } catch (err) {
+    console.error('[thumb]', err)
+    flag.__thumb = `error: ${(err as Error).message}`
+  }
+}
+
 async function main(): Promise<void> {
+  const thumbId = new URLSearchParams(location.search).get('thumb')
+  if (thumbId) return thumbnail(thumbId)
   config = await api.getConfig()
   wireUi()
   fillCharacterSelect()
+  // Added or removed in Setup: the list beside her status follows.
+  api.onCharactersChanged?.(() => {
+    void api.getConfig().then((c) => {
+      config.characters = c.characters
+      fillCharacterSelect()
+    })
+  })
   micBtn.classList.toggle('hidden', !config.ears)
   if (config.wakeWord) micBtn.title = `she answers after "${config.wakeWord}"; click to mute or unmute her ears`
   setStatus(`loading ${config.character.name}…`)
@@ -495,6 +524,8 @@ async function main(): Promise<void> {
   wirePointer()
   island.start()
   wireBody()
+  // Development only: the avatar on window.__deskmate, for driving poses over the DevTools protocol.
+  if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) (window as unknown as { __deskmate: unknown }).__deskmate = { avatar }
   watchBtn.classList.toggle('on', config.watching)
   keyForm.classList.toggle('hidden', config.mode !== 'demo')
   if (config.listening) applyListening(true)

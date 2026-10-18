@@ -3,8 +3,8 @@ export const EMOTIONS: Emotion[] = ['neutral', 'happy', 'flirty', 'surprised', '
 
 export type AvatarCommand = 'dance' | 'dance_slow' | 'spin' | 'stop_dancing' | 'next_outfit' | BodyCommand
 /** Moves that take her window somewhere: the main process handles these, the renderer only animates them. */
-export type BodyCommand = 'come_here' | 'go_home' | 'sit' | 'stand' | 'sleep' | 'wake' | 'wander' | 'stay'
-export const BODY_COMMANDS: BodyCommand[] = ['come_here', 'go_home', 'sit', 'stand', 'sleep', 'wake', 'wander', 'stay']
+export type BodyCommand = 'come_here' | 'go_home' | 'sit' | 'lie' | 'peek' | 'stand' | 'sleep' | 'wake' | 'wander' | 'stay'
+export const BODY_COMMANDS: BodyCommand[] = ['come_here', 'go_home', 'sit', 'lie', 'peek', 'stand', 'sleep', 'wake', 'wander', 'stay']
 export const AVATAR_COMMANDS: AvatarCommand[] = ['dance', 'dance_slow', 'spin', 'stop_dancing', 'next_outfit', ...BODY_COMMANDS]
 export type DanceStyle = 'groove' | 'slow' | 'spin'
 
@@ -103,17 +103,21 @@ export interface Plan {
 
 /** What her body is doing on the desktop, beyond idle and dancing. */
 export interface BodyState {
-  mode: 'idle' | 'walk' | 'point' | 'sit' | 'sleep'
-  /** walking direction on screen: -1 left, 1 right */
+  /** lie: on her front along a window's top edge · peek: mostly off a screen edge, leaning back in */
+  mode: 'idle' | 'walk' | 'point' | 'sit' | 'lie' | 'peek' | 'sleep'
+  /** walking direction on screen: -1 left, 1 right; for peek, the edge she hides behind (-1 left, 1 right) */
   facing?: -1 | 1
   /** what she points at, in CSS pixels relative to her window (may lie outside it) */
   target?: { x: number; y: number }
+  /** a Claude Code job has been running a while: she slumps, sighs and fidgets */
+  bored?: boolean
 }
 
 /** A short one-off movement played over whatever she is doing: getting up from a seat, or an idle touch. */
 export interface Gesture {
-  kind: 'stretch' | 'yawn' | 'glance'
-  /** for a glance: where to look, in CSS pixels relative to her window */
+  /** swat: a quick reach for the pointer hovering by her head · sigh: a bored slump */
+  kind: 'stretch' | 'yawn' | 'glance' | 'swat' | 'sigh'
+  /** for a glance or a swat: where, in CSS pixels relative to her window */
   target?: { x: number; y: number }
 }
 
@@ -151,7 +155,9 @@ export interface CharacterConfig {
   /** 3D: meshes or materials to leave out at load, by name fragment (a rip's broken wings, a prop) */
   hide?: string[]
   /** Live2D: expressions that are really poses (VTube Studio toggles), layered on top of her emotion */
-  poses?: { sit?: string; point?: string; sleep?: string; dance?: string[]; /** always on (e.g. a model's own watermark-off toggle) */ base?: string[] }
+  poses?: { sit?: string; /** lying on a window (falls back to sit) */ lie?: string; point?: string; sleep?: string; dance?: string[]; /** always on (e.g. a model's own watermark-off toggle) */ base?: string[] }
+  /** set by "Add a character": the file it came from, and when */
+  imported?: { from: string; at: string }
 }
 
 export type BrainMode = 'gemini' | 'ollama' | 'anthropic' | 'demo'
@@ -180,9 +186,44 @@ export interface ProjectInfo {
   path: string
 }
 
+/** A card in Setup → Characters. */
+export interface CharacterCard {
+  id: string
+  name: string
+  renderer: NonNullable<CharacterConfig['renderer']>
+  /** added in Setup (lives under <user data>/character), so it can be removed */
+  userAdded: boolean
+  active: boolean
+}
+
+/** What Setup edits for one character. */
+export interface CharacterDetails {
+  id: string
+  name: string
+  renderer: NonNullable<CharacterConfig['renderer']>
+  voice: string
+  speed: number
+  zoom: number
+  persona: string
+  license: string | null
+  /** the licence keeps the avatar to its author (VRM metadata), as far as Deskmate can tell */
+  restricted: boolean
+  userAdded: boolean
+  /** the persona shown is Setup's own copy (a shipped one can go back to its original) */
+  personaEdited: boolean
+}
+
+export interface CharacterPatch {
+  voice?: string
+  speed?: number
+  zoom?: number
+  /** '' goes back to the character's own persona */
+  persona?: string
+}
+
 export interface AppConfig {
   character: CharacterConfig
-  characters: { id: string; name: string }[]
+  characters: { id: string; name: string; renderer?: CharacterConfig['renderer']; userAdded?: boolean }[]
   mode: BrainMode
   modelName: string
   watchDir: string | null
@@ -278,7 +319,8 @@ export interface NoticeState {
 export type PermissionKind = 'microphone' | 'screen' | 'keys' | 'calendars'
 
 export interface DeskmateApi {
-  getConfig(): Promise<AppConfig>
+  /** with an id: that character in place of the active one (for her thumbnail) */
+  getConfig(id?: string): Promise<AppConfig>
   send(text: string): Promise<Reply>
   lookNow(): Promise<void>
   toggleWatch(): Promise<boolean>
@@ -325,6 +367,19 @@ export interface DeskmateApi {
   calendarAccess?(): Promise<{ granted: boolean; status: string; error?: string }>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
+  /** Setup → Characters */
+  listCharacters?(): Promise<CharacterCard[]>
+  /** a picture of her as a data: URL, made the first time it is asked for and kept in <user data>/thumbs */
+  characterThumb?(id: string): Promise<string | null>
+  characterDetails?(id: string): Promise<CharacterDetails | null>
+  saveCharacter?(id: string, patch: CharacterPatch): Promise<CharacterDetails | null>
+  /** picks a model (a dialog, or `path`) and imports it as a new character */
+  addCharacter?(path?: string): Promise<{ ok: boolean; id?: string; name?: string; warnings?: string[]; restricted?: boolean; error?: string; cancelled?: boolean }>
+  removeCharacter?(id: string): Promise<{ ok: boolean; error?: string }>
+  /** Kokoro voices the local voice server offers (a fixed list when it is not running) */
+  voices?(): Promise<{ voices: string[]; live: boolean }>
+  /** characters were added or removed */
+  onCharactersChanged?(cb: () => void): void
   /** plan card window */
   onPlan?(cb: (plan: Plan | null) => void): void
   planAction?(action: PlanAction): void

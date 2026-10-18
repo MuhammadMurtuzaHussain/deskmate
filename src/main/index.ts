@@ -1,6 +1,7 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Agent, type Task } from './agent'
@@ -17,6 +18,7 @@ import { Settings } from './settings'
 import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavDurationMs, wavHead } from './stt'
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
+import { characterFile, importCharacter, resolveCharacterAssets } from './characters'
 import { Body } from './body'
 import { agendaLine, dueEvents, eventLine, type CalendarEvent } from './calendar'
 import { appAllowed, BannerWatch, messageLine } from './inbox'
@@ -30,7 +32,7 @@ import { Hands, HandsError } from './hands'
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type CharacterCard, type CharacterDetails, type CharacterPatch, type NoticePrefs, type NoticeState, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -40,45 +42,85 @@ const REPO_URL = 'https://github.com/MuhammadMurtuzaHussain/deskmate'
 loadDotEnv(USER_DATA, ROOT)
 
 // Characters live in character/<id>/{character.json, persona.md}. Each has her own persona, voice and memory file.
-// Two roots: the ones shipped with the app, and the user's own under <user data>/character (editable, survives updates).
-const CHARACTER_DIRS = [join(USER_DATA, 'character'), join(RESOURCES, 'character')]
+// Two roots: the user's own under <user data>/character (added in Setup; editable, survives updates), and the ones
+// shipped with the app. Setup's changes to a shipped character (voice, zoom, personality) go to
+// <user data>/character/<id>/local.json and persona.md, beside nothing else.
+const USER_CHARACTERS = join(USER_DATA, 'character')
+const CHARACTER_DIRS = [USER_CHARACTERS, join(RESOURCES, 'character')]
 function characterDir(id: string): string | null {
   return CHARACTER_DIRS.find((d) => existsSync(join(d, id, 'character.json'))) ?? null
 }
-function listCharacters(): { id: string; name: string }[] {
-  const seen = new Map<string, string>()
+type CharacterEntry = { id: string; name: string; renderer: NonNullable<CharacterConfig['renderer']>; userAdded: boolean }
+function listCharacters(): CharacterEntry[] {
+  const seen = new Map<string, CharacterEntry>()
   for (const root of CHARACTER_DIRS) {
     if (!existsSync(root)) continue
     for (const d of readdirSync(root, { withFileTypes: true })) {
       if (!d.isDirectory() || seen.has(d.name) || !existsSync(join(root, d.name, 'character.json'))) continue
       try {
         const cfg = JSON.parse(readFileSync(join(root, d.name, 'character.json'), 'utf8')) as CharacterConfig
-        seen.set(d.name, cfg.name)
+        seen.set(d.name, { id: d.name, name: cfg.name, renderer: cfg.renderer ?? 'live2d', userAdded: root === USER_CHARACTERS })
       } catch (err) {
         console.warn(`[character] skipping ${d.name}: ${(err as Error).message}`)
       }
     }
   }
-  return [...seen].map(([id, name]) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id))
+  return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+/** Objects in character.json that a local.json changes a part of (a voice speed keeps the voice's other fields). */
+const MERGED_KEYS = ['voice', 'camera', 'physics', 'idle', 'dance'] as const
+function overlay(character: CharacterConfig, local: Partial<CharacterConfig>): CharacterConfig {
+  const out = { ...character, ...local } as CharacterConfig
+  for (const k of MERGED_KEYS) {
+    if (local[k] && character[k]) (out as unknown as Record<string, unknown>)[k] = { ...character[k], ...local[k] }
+  }
+  return out
+}
+/** The local.json files that apply to a character: the one beside its character.json, then Setup's in user data. */
+function localFiles(id: string): string[] {
+  const dir = join(characterDir(id) as string, id)
+  return [...new Set([join(dir, 'local.json'), join(USER_CHARACTERS, id, 'local.json')])]
 }
 function readCharacter(id: string): { character: CharacterConfig; persona: string } {
   const dir = join(characterDir(id) as string, id)
   let character = { ...(JSON.parse(readFileSync(join(dir, 'character.json'), 'utf8')) as CharacterConfig), id }
-  // local.json (gitignored) overlays private tweaks: your own dance clips, voice, outfits, model path.
-  const localPath = join(dir, 'local.json')
-  if (existsSync(localPath)) {
+  // local.json (gitignored) overlays private tweaks: your own dance clips, voice, outfits, model path; Setup's last.
+  for (const localPath of localFiles(id)) {
+    if (!existsSync(localPath)) continue
     try {
-      character = { ...character, ...(JSON.parse(readFileSync(localPath, 'utf8')) as Partial<CharacterConfig>), id }
+      character = { ...overlay(character, JSON.parse(readFileSync(localPath, 'utf8')) as Partial<CharacterConfig>), id }
     } catch (err) {
-      console.warn(`[character] ${id}/local.json ignored: ${(err as Error).message}`)
+      console.warn(`[character] ${localPath} ignored: ${(err as Error).message}`)
     }
   }
-  const persona = readFileSync(join(dir, 'persona.md'), 'utf8')
-  return { character, persona }
+  const ownPersona = join(USER_CHARACTERS, id, 'persona.md')
+  const persona = readFileSync(existsSync(ownPersona) ? ownPersona : join(dir, 'persona.md'), 'utf8')
+  // Paths relative to the character's folder (an added character's model/…) load through deskmate://.
+  return { character: resolveCharacterAssets(character, `deskmate://character/${encodeURIComponent(id)}`), persona }
+}
+
+// Models under <user data> reach the renderer (the dev server or file://) through deskmate://character/<id>/<path>.
+protocol.registerSchemesAsPrivileged([{ scheme: 'deskmate', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }])
+async function serveCharacterFile(request: Request): Promise<Response> {
+  const url = new URL(request.url)
+  const [, rawId, ...rest] = url.pathname.split('/')
+  let id = ''
+  try {
+    id = decodeURIComponent(rawId ?? '')
+  } catch {
+    // a malformed id is just not found
+  }
+  const root = url.hostname === 'character' && id && !/[\\/]|^\.\.?$/.test(id) ? characterDir(id) : null
+  const file = root ? characterFile(join(root, id), rest.join('/')) : null
+  if (!file || !existsSync(file) || !statSync(file).isFile()) return new Response('not found', { status: 404 })
+  const res = await net.fetch(pathToFileURL(file).href)
+  const headers = new Headers(res.headers)
+  headers.set('access-control-allow-origin', '*')
+  return new Response(res.body, { status: res.status, headers })
 }
 
 const settings = new Settings(join(app.getPath('userData'), 'settings.json'))
-const characters = listCharacters()
+let characters = listCharacters()
 if (characters.length === 0) throw new Error('no characters found under character/<id>/character.json')
 const requested = process.env.DESKMATE_CHARACTER?.trim() || settings.get().activeCharacter || 'mika'
 let activeId = characters.some((c) => c.id === requested) ? requested : characters[0].id
@@ -125,8 +167,30 @@ const body = new Body({
   hands: appHands,
   selfIds: SELF_IDS,
   log: (line) => console.log(`[body] ${line}`),
-  busy: () => acting || browsing || herSpeaking || hearing
+  busy: () => acting || browsing || herSpeaking || hearing,
+  onSwat: () => void swatLine()
 })
+
+/** Now and then a word about the pointer she just went for; most swats are silent, and never more than one in 5 min. */
+const SWAT_LINES: [string, Emotion][] = [
+  ['Hey! Missed it.', 'annoyed'],
+  ['Almost had it!', 'happy'],
+  ["Stop teasing me with that thing.", 'flirty'],
+  ['Gotcha. Okay, no I didn\'t.', 'smug'],
+  ["Is that for me?", 'happy'],
+  ['Too slow? Me? Never.', 'smug']
+]
+let lastSwatLine = 0
+async function swatLine(): Promise<void> {
+  const now = Date.now()
+  if (now - lastSwatLine < 5 * 60_000 || Math.random() > 0.35 || pending || touching) return
+  lastSwatLine = now
+  const [say, emotion] = SWAT_LINES[Math.floor(Math.random() * SWAT_LINES.length)]
+  // After the swing lands, not on top of it.
+  await new Promise((r) => setTimeout(r, 700))
+  if (herSpeaking || hearing || acting || browsing) return
+  await deliver({ say, emotion, speak: true, remember: [] }, 'touch')
+}
 // What she did, by day ("what did you do today?"), and the plan she is showing or working through.
 const journal = new Journal(join(USER_DATA, 'log'))
 const plans = new PlanStore(join(USER_DATA, 'plans'))
@@ -146,6 +210,7 @@ let lastActivity = Date.now()
 function activity(): void {
   lastActivity = Date.now()
   if (body.mode === 'sleep') body.wake()
+  body.noticed()
 }
 
 /** Something she is waiting on an answer for: a job she read back, or a risky browser action. */
@@ -296,6 +361,8 @@ function buildTrayMenu(): Menu {
       submenu: [
         { label: 'Come here', click: () => void runBodyCommand('come_here') },
         { label: 'Sit on the front window', enabled: appHands.available, click: () => void runBodyCommand('sit') },
+        { label: 'Lie down on the front window', enabled: appHands.available, click: () => void runBodyCommand('lie') },
+        { label: 'Peek-a-boo', click: () => void runBodyCommand('peek', { boo: true }) },
         { label: 'Back to her spot', click: () => void runBodyCommand('go_home') },
         { label: body.mode === 'sleep' ? 'Wake her' : 'Let her nap', click: () => void runBodyCommand(body.mode === 'sleep' ? 'wake' : 'sleep') },
         { label: 'Walk around on her own', type: 'checkbox', checked: body.wandering, click: () => void runBodyCommand(body.wandering ? 'stay' : 'wander') }
@@ -364,7 +431,8 @@ function buildTrayMenu(): Menu {
       checked: loginItem,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked })
     },
-    { label: 'Setup…', click: openSetup },
+    { label: 'Characters…', click: () => openSetup('characters') },
+    { label: 'Setup…', click: () => openSetup() },
     { label: 'Open settings folder', click: () => void shell.openPath(USER_DATA) },
     { label: 'Open characters folder', click: () => void shell.openPath(CHARACTER_DIRS[1]) },
     { label: 'Help and docs', click: () => void shell.openExternal(REPO_URL) },
@@ -595,7 +663,20 @@ async function portrait(): Promise<string> {
   } finally {
     void win.webContents.executeJavaScript("document.body.classList.remove('portrait')")
   }
-  // Trim to what is not transparent. The bitmap is in device pixels (BGRA); crop() takes points.
+  image = trimTransparent(image)
+  const dir = join(app.getPath('pictures'), 'Deskmate')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${character.name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`)
+  const png = image.toPNG()
+  writeFileSync(file, png)
+  // Electron 44's clipboard takes W3C-style items.
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]).catch((err) => console.warn('[portrait] clipboard:', (err as Error).message))
+  return file
+}
+
+/** A capture trimmed to what is not transparent (her, without the empty window around her). */
+function trimTransparent(image: Electron.NativeImage): Electron.NativeImage {
+  // The bitmap is in device pixels (BGRA); crop() takes points.
   const size = image.getSize()
   const bmp = image.toBitmap()
   const scale = Math.sqrt(bmp.length / 4 / (size.width * size.height)) || 1
@@ -617,22 +698,211 @@ async function portrait(): Promise<string> {
   }
   if (x1 > x0 && y1 > y0) {
     const pad = 6 * scale
-    image = image.crop({
-      x: Math.max(0, Math.floor((x0 - pad) / scale)),
-      y: Math.max(0, Math.floor((y0 - pad) / scale)),
-      width: Math.min(size.width, Math.ceil((x1 - x0 + 2 * pad) / scale)),
-      height: Math.min(size.height, Math.ceil((y1 - y0 + 2 * pad) / scale))
+    const x = Math.max(0, Math.floor((x0 - pad) / scale))
+    const y = Math.max(0, Math.floor((y0 - pad) / scale))
+    return image.crop({
+      x,
+      y,
+      width: Math.min(size.width - x, Math.ceil((x1 - x0 + 2 * pad) / scale)),
+      height: Math.min(size.height - y, Math.ceil((y1 - y0 + 2 * pad) / scale))
     })
   }
-  const dir = join(app.getPath('pictures'), 'Deskmate')
-  mkdirSync(dir, { recursive: true })
-  const file = join(dir, `${character.name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`)
-  const png = image.toPNG()
-  writeFileSync(file, png)
-  // Electron 44's clipboard takes W3C-style items.
-  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]).catch((err) => console.warn('[portrait] clipboard:', (err as Error).message))
-  return file
+  return image
 }
+
+// ---- Setup → Characters: thumbnails, voice / zoom / personality, adding and removing characters
+
+const THUMBS = join(USER_DATA, 'thumbs')
+const THUMB_H = 360
+let thumbQueue: Promise<unknown> = Promise.resolve()
+
+/** When anything that changes her look last changed: character.json and the local.json overlays. */
+function lookChangedAt(id: string): number {
+  const dir = characterDir(id)
+  if (!dir) return 0
+  return Math.max(...[join(dir, id, 'character.json'), ...localFiles(id)].map((f) => (existsSync(f) ? statSync(f).mtimeMs : 0)))
+}
+
+/**
+ * Her picture for a card, as a data: URL. Made once, the same way as portrait(): she is loaded on her own in an
+ * offscreen copy of her window, captured with her transparency and trimmed; kept in <user data>/thumbs until her
+ * character.json or local.json changes. One at a time; null when her model does not load.
+ */
+function thumbnail(id: string): Promise<string | null> {
+  const file = join(THUMBS, `${id}.png`)
+  if (existsSync(file) && statSync(file).mtimeMs > lookChangedAt(id)) return Promise.resolve(`data:image/png;base64,${readFileSync(file).toString('base64')}`)
+  const job = thumbQueue.then(async () => {
+    const image = await renderThumb(id).catch((err) => {
+      console.warn(`[thumbs] ${id}: ${(err as Error).message}`)
+      return null
+    })
+    if (!image) return null
+    const sized = image.getSize().height > THUMB_H ? image.resize({ height: THUMB_H, quality: 'good' }) : image
+    mkdirSync(THUMBS, { recursive: true })
+    const png = sized.toPNG()
+    writeFileSync(file, png)
+    console.log(`[thumbs] ${id}: ${sized.getSize().width}x${sized.getSize().height}`)
+    return `data:image/png;base64,${png.toString('base64')}`
+  })
+  thumbQueue = job
+  return job
+}
+
+async function renderThumb(id: string): Promise<Electron.NativeImage | null> {
+  const w = new BrowserWindow({
+    width: WIN_W,
+    height: Math.min(WIN_H, 760),
+    show: false,
+    frame: false,
+    transparent: true,
+    webPreferences: { preload: PRELOAD, sandbox: false, offscreen: true }
+  })
+  try {
+    w.webContents.setFrameRate(30)
+    if (process.env.ELECTRON_RENDERER_URL) await w.loadURL(`${process.env.ELECTRON_RENDERER_URL}/?thumb=${encodeURIComponent(id)}`)
+    else await w.loadFile(join(__dirname, '../renderer/index.html'), { query: { thumb: id } })
+    // The page says when her model is in and posed (or that it could not load it).
+    const until = Date.now() + 45_000
+    let state = ''
+    while (Date.now() < until) {
+      state = String(await w.webContents.executeJavaScript('window.__thumb ?? ""').catch(() => ''))
+      if (state) break
+      await new Promise((r) => setTimeout(r, 300))
+    }
+    if (state !== 'ready') throw new Error(state ? `the model did not load (${state})` : 'timed out loading the model')
+    return trimTransparent(await w.webContents.capturePage())
+  } finally {
+    w.destroy()
+  }
+}
+
+/** Kokoro presets, in the local voice server's order, for when it is not running to ask. */
+const KOKORO_VOICES = [
+  'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 'af_sky', 'af_alloy', 'af_jessica', 'af_river',
+  'bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily', 'am_michael', 'am_fenrir', 'am_puck', 'am_echo', 'am_eric', 'am_liam', 'am_onyx',
+  'am_adam', 'am_santa', 'bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel'
+]
+
+async function kokoroVoices(): Promise<{ voices: string[]; live: boolean }> {
+  const speech = process.env.DESKMATE_TTS_URL?.trim() || 'http://127.0.0.1:8880/v1/audio/speech'
+  try {
+    const res = await fetch(speech.replace(/\/v1\/audio\/speech\/?$/, '/v1/voices'), { signal: AbortSignal.timeout(1500) })
+    const body = (await res.json()) as { voices?: unknown }
+    if (res.ok && Array.isArray(body.voices) && body.voices.length) return { voices: body.voices.map(String), live: true }
+  } catch {
+    // not running: the bundled list
+  }
+  return { voices: KOKORO_VOICES, live: false }
+}
+
+function characterDetails(id: string): CharacterDetails | null {
+  const entry = characters.find((c) => c.id === id)
+  if (!entry) return null
+  const { character: c, persona: p } = readCharacter(id)
+  return {
+    id,
+    name: c.name,
+    renderer: c.renderer ?? 'live2d',
+    voice: c.voice?.kokoro ?? 'af_heart',
+    speed: c.voice?.speed ?? 1,
+    zoom: c.camera?.zoom ?? 1,
+    persona: p,
+    license: c.license ?? null,
+    restricted: /avatar use: (?:the author only|only people the author licenses)/.test(c.license ?? ''),
+    userAdded: entry.userAdded,
+    personaEdited: !entry.userAdded && existsSync(join(USER_CHARACTERS, id, 'persona.md'))
+  }
+}
+
+/** Saves Setup's changes to <user data>/character/<id>/local.json and persona.md; she picks them up straight away. */
+function saveCharacter(id: string, patch: CharacterPatch): CharacterDetails | null {
+  if (!characters.some((c) => c.id === id)) return null
+  const dir = join(USER_CHARACTERS, id)
+  mkdirSync(dir, { recursive: true })
+  const localPath = join(dir, 'local.json')
+  let local: Partial<CharacterConfig> = {}
+  try {
+    if (existsSync(localPath)) local = JSON.parse(readFileSync(localPath, 'utf8')) as Partial<CharacterConfig>
+  } catch {
+    local = {}
+  }
+  const num = (v: unknown, lo: number, hi: number): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined)
+  const voice = typeof patch.voice === 'string' && /^[a-z]{2}_[a-z]+$/i.test(patch.voice) ? patch.voice : undefined
+  const speed = num(patch.speed, 0.6, 1.5)
+  const zoom = num(patch.zoom, 0.5, 2.5)
+  if (voice || speed !== undefined) local.voice = { ...local.voice, ...(voice ? { kokoro: voice } : {}), ...(speed !== undefined ? { speed: Math.round(speed * 100) / 100 } : {}) }
+  if (zoom !== undefined) local.camera = { ...local.camera, zoom: Math.round(zoom * 100) / 100 }
+  if (voice || speed !== undefined || zoom !== undefined) writeFileSync(localPath, JSON.stringify(local, null, 2) + '\n')
+  const ownPersona = join(dir, 'persona.md')
+  const userAdded = characters.find((c) => c.id === id)?.userAdded
+  if (typeof patch.persona === 'string') {
+    const text = patch.persona.replace(/\r\n/g, '\n').slice(0, 20_000)
+    // Empty: a shipped character goes back to her own persona (an added one keeps hers; it is the only one).
+    if (text.trim()) writeFileSync(ownPersona, text.endsWith('\n') ? text : text + '\n')
+    else if (!userAdded && existsSync(ownPersona)) rmSync(ownPersona)
+  }
+  console.log(`[character] saved ${id}: ${JSON.stringify({ ...patch, persona: patch.persona === undefined ? undefined : `${patch.persona.length} chars` })}`)
+  if (id === activeId) {
+    switchCharacter(id)
+    // Her zoom is the renderer's; voice and personality apply from her next line.
+    if (zoom !== undefined) win?.webContents.reload()
+  }
+  return characterDetails(id)
+}
+
+function charactersChanged(): void {
+  characters = listCharacters()
+  win?.webContents.send('characters:changed')
+  refreshTray()
+}
+
+ipcMain.handle('characters:list', (): CharacterCard[] => characters.map((c) => ({ ...c, active: c.id === activeId })))
+ipcMain.handle('characters:thumb', (_event, id: string) => (characters.some((c) => c.id === id) ? thumbnail(String(id)) : null))
+ipcMain.handle('characters:details', (_event, id: string) => characterDetails(String(id)))
+ipcMain.handle('characters:save', (_event, id: string, patch: CharacterPatch) => saveCharacter(String(id), patch ?? {}))
+ipcMain.handle('characters:voices', () => kokoroVoices())
+ipcMain.handle('characters:add', async (event, given?: string) => {
+  let path = typeof given === 'string' && given ? given : null
+  if (!path) {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: 'Add a character',
+      buttonLabel: 'Add',
+      message: 'Pick a .vrm, a Live2D .model3.json (or its folder), a .pmx, a rigged .fbx, or a .zip with one inside',
+      properties: process.platform === 'darwin' ? ['openFile', 'openDirectory'] : ['openFile'],
+      filters: [{ name: 'Characters', extensions: ['vrm', 'json', 'pmx', 'fbx', 'glb', 'gltf', 'dae', 'zip'] }]
+    }
+    const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true }
+    path = picked.filePaths[0]
+  }
+  try {
+    const result = importCharacter(path, { root: USER_CHARACTERS, taken: (id) => characters.some((c) => c.id === id) })
+    console.log(`[character] added ${result.config.name} (${result.id}, ${result.config.renderer}) from ${basename(path)}${result.warnings.length ? `; ${result.warnings.join('; ')}` : ''}`)
+    charactersChanged()
+    return { ok: true, id: result.id, name: result.config.name, warnings: result.warnings, restricted: result.restricted }
+  } catch (err) {
+    console.warn(`[character] could not add ${basename(path)}: ${(err as Error).message}`)
+    return { ok: false, error: (err as Error).message }
+  }
+})
+ipcMain.handle('characters:remove', async (_event, raw: string) => {
+  const id = String(raw)
+  const entry = characters.find((c) => c.id === id)
+  if (!entry?.userAdded) return { ok: false, error: 'Only characters you added can be removed.' }
+  if (characters.length < 2) return { ok: false, error: 'She is the only one left.' }
+  if (id === activeId) {
+    switchCharacter((characters.find((c) => c.id !== id) as CharacterEntry).id)
+    win?.webContents.reload()
+  }
+  // To the Trash, not gone for good: a mistake can be put back.
+  await shell.trashItem(join(USER_CHARACTERS, id)).catch((err) => console.warn(`[character] trash ${id}: ${(err as Error).message}`))
+  if (existsSync(join(USER_CHARACTERS, id, 'character.json'))) return { ok: false, error: 'Could not move her folder to the Trash.' }
+  rmSync(join(THUMBS, `${id}.png`), { force: true })
+  console.log(`[character] removed ${id} (moved to the Trash)`)
+  charactersChanged()
+  return { ok: true }
+})
 
 /** One downscaled JPEG of the primary display, with her own window greyed out. */
 async function captureScreen(): Promise<Stimulus['screenshot']> {
@@ -735,8 +1005,9 @@ async function setWatching(on: boolean): Promise<boolean> {
 
 ipcMain.handle(
   'config:get',
-  (): AppConfig => ({
-    character,
+  (_event, id?: string): AppConfig => ({
+    // a thumbnail window asks for the character it pictures
+    character: typeof id === 'string' && characters.some((c) => c.id === id) ? readCharacter(id).character : character,
     characters,
     mode: brain.mode,
     modelName: brain.modelName,
@@ -1178,7 +1449,7 @@ async function agentGoal(goal: string, log: (line: string) => void, stopped: () 
 }
 
 /** Body moves: from her brain's "action", or from a phrase. Returns a line to say, or null to stay quiet. */
-async function runBodyCommand(command: BodyCommand): Promise<string | null> {
+async function runBodyCommand(command: BodyCommand, opts: { boo?: boolean } = {}): Promise<string | null> {
   switch (command) {
     case 'come_here':
       await body.comeToCursor()
@@ -1186,12 +1457,17 @@ async function runBodyCommand(command: BodyCommand): Promise<string | null> {
     case 'go_home':
       await body.goHome()
       return null
-    case 'sit': {
-      if (!appHands.available) return 'I need my hands helper to find a window to sit on.'
-      const app = await body.sitOnTopWindow()
+    case 'sit':
+    case 'lie': {
+      if (!appHands.available) return `I need my hands helper to find a window to ${command} on.`
+      const app = await body.sitOnTopWindow({ seat: command })
       if (app === 'too_high') return "That window's right up at the top of the screen, there's no room for me on it. Move it down a bit?"
-      return app ? null : "There's no window here I can sit on."
+      return app ? null : `There's no window here I can ${command} on.`
     }
+    case 'peek':
+      // "hide" stays hidden until called back; peek-a-boo pops out and comes back after a bit.
+      void body.peek({ boo: opts.boo, ms: opts.boo ? 25_000 : Infinity })
+      return null
     case 'stand':
       body.stand()
       return null
@@ -1217,6 +1493,9 @@ const BODY_PHRASES: [RegExp, BodyCommand][] = [
   [/^(?:come (?:here|over(?: here)?|to me)|over here)\b/i, 'come_here'],
   [/^(?:go (?:home|back to your (?:spot|corner|place))|back to your (?:spot|corner|place))\b/i, 'go_home'],
   [/^(?:sit(?: down)?(?: on (?:this|the|my|that) window| here)?|have a seat|take a seat)[.!]?$/i, 'sit'],
+  [/^(?:lie|lay)(?: (?:down|back))?(?: on (?:top of )?(?:this|the|my|that) window| here| on (?:top|it))?[.!]?$/i, 'lie'],
+  [/^(?:hide|go hide|hide (?:somewhere|from me)|(?:let's |wanna )?play (?:peek[- ]?a[- ]?boo|hide and seek)|peek[- ]?a[- ]?boo|peekaboo|hide and seek)[.!]?$/i, 'peek'],
+  [/^(?:come out(?: now)?|(?:i )?found you|you can come out(?: now)?)[.!]?$/i, 'go_home'],
   [/^(?:stand up|get up|get down)[.!]?$/i, 'stand'],
   [/^(?:go to sleep|take a nap|nap time|sleep)[.!]?$/i, 'sleep'],
   [/^(?:wake up)[.!]?$/i, 'wake'],
@@ -1793,7 +2072,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   const said = stripName(text).replace(/^(?:can you |could you |please )+/i, '').replace(/[.!]+$/, '')
   const move = BODY_PHRASES.find(([re]) => re.test(said))
   if (move) {
-    const line = await runBodyCommand(move[1])
+    const line = await runBodyCommand(move[1], { boo: /boo|seek/i.test(said) })
     return line ? sayPlain(line) : QUIET
   }
   const lookFor = RE_FIND.exec(said)
@@ -1843,7 +2122,8 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     }
   }
   await deliver(reply, 'chat')
-  if (reply.action && (BODY_COMMANDS as string[]).includes(reply.action)) void runBodyCommand(reply.action as BodyCommand)
+  // (a peek she decides on is peek-a-boo, back after a bit; a typed "hide" waits to be found)
+  if (reply.action && (BODY_COMMANDS as string[]).includes(reply.action)) void runBodyCommand(reply.action as BodyCommand, { boo: reply.action === 'peek' })
   if (reply.tool) void runTool(reply.tool, { voice: opts.voice, acknowledged: true })
   return reply
 }
@@ -1858,6 +2138,9 @@ agent.on('progress', (task: Task) => {
 })
 agent.on('end', (task: Task) => {
   refreshTray()
+  // She got bored waiting (and may have dozed off): awake again, and back to work before she reports.
+  const wasBored = boredStage > 0 && !agent.running().length
+  if (wasBored) endBoredom()
   const folder = basename(task.cwd)
   const secs = Math.round(((task.endedAt ?? Date.now()) - task.startedAt) / 1000)
   console.log(`[hands] job ${task.id} ${task.status} after ${secs}s${task.costUsd ? ` ($${task.costUsd.toFixed(2)})` : ''}: ${task.error ?? (task.result ?? '').slice(0, 120)}`)
@@ -1874,6 +2157,10 @@ agent.on('end', (task: Task) => {
     void remote.run(tell)
     return
   }
+  const speak = async (): Promise<void> => {
+    if (wasBored) await sayPlain('Okay, back to work.', 'happy')
+    await tell()
+  }
   // Otherwise it is news: she comes over and tells them (or tells them after quiet time).
   const short = task.title.length > 60 ? `${task.title.slice(0, 57)}…` : task.title
   notices.post({
@@ -1883,9 +2170,81 @@ agent.on('end', (task: Task) => {
     brief: task.status === 'done' ? `Claude finished "${short}"` : `Claude's job "${short}" failed`,
     important: true,
     log: false,
-    speak: tell
+    speak
   })
 })
+
+// ---- bored while Claude works: after a few minutes of a job she yawns and slumps, then sits on the terminal (or
+// the Claude app) if it is in front, then dozes off. The job's end wakes her (see agent.on('end') above).
+
+/** minutes a Claude Code job runs before she gets bored with it; 0 = never (DESKMATE_BORED_MINUTES) */
+const BORED_MIN = Number(process.env.DESKMATE_BORED_MINUTES ?? 3)
+/** windows she will sit on while she waits: terminals, editors with a terminal, the Claude app */
+const WORK_APPS = /terminal|iterm|warp|ghostty|kitty|alacritty|wezterm|hyper|tabby|claude|code|cursor|windsurf|zed|xcode|jetbrains|intellij|pycharm|webstorm/i
+let boredStage = 0
+let lastBoredFidget = 0
+
+function endBoredom(): void {
+  boredStage = 0
+  body.setBored(false)
+  if (body.mode === 'sleep') body.wake()
+}
+
+async function boredTick(): Promise<void> {
+  const jobs = agent.running()
+  if (!jobs.length) {
+    if (boredStage > 0) endBoredom()
+    return
+  }
+  if (BORED_MIN <= 0 || acting || browsing || herSpeaking || hearing || pending || !win?.isVisible()) return
+  // They are talking to her: she is not bored right now.
+  if (Date.now() - lastActivity < 60_000) return
+  const minutes = (Date.now() - Math.min(...jobs.map((j) => j.startedAt))) / 60_000
+  if (boredStage === 0 && minutes >= BORED_MIN) {
+    boredStage = 1
+    lastBoredFidget = Date.now()
+    console.log(`[body] bored: Claude has been at it ${minutes.toFixed(1)} min`)
+    body.setBored(true)
+    body.gesture({ kind: 'yawn' })
+  } else if (boredStage === 1 && minutes >= BORED_MIN + 1) {
+    boredStage = 2
+    if (!body.seat && body.mode !== 'sleep' && appHands.available) {
+      const sat = await body.sitOnTopWindow({ only: (top) => WORK_APPS.test(`${top.app} ${top.bundleId}`) })
+      if (sat && sat !== 'too_high') console.log(`[body] bored: sitting on ${sat} while Claude works`)
+    }
+  } else if (boredStage === 2 && minutes >= BORED_MIN + 3) {
+    boredStage = 3
+    console.log('[body] bored: dozing off')
+    body.sleep()
+  } else if (boredStage > 0 && body.mode !== 'sleep' && Date.now() - lastBoredFidget > 40_000) {
+    lastBoredFidget = Date.now()
+    body.gesture({ kind: Math.random() < 0.6 ? 'sigh' : 'yawn' })
+  }
+}
+
+// ---- left alone a long while (not asleep yet), she finds something to do: lies down on the window in front, or hides
+// behind the edge of the screen and peeks out for a bit (DESKMATE_IDLE_MOVES=0 turns this off).
+const IDLE_MOVES = !/^(0|false|no|off)$/i.test(process.env.DESKMATE_IDLE_MOVES?.trim() || '')
+/** minutes without anything happening before she gets restless */
+const RESTLESS_MIN = Math.max(1, Number(process.env.DESKMATE_RESTLESS_MINUTES ?? 4))
+let lastIdleMove = Date.now()
+
+async function restlessTick(): Promise<void> {
+  if (!IDLE_MOVES || body.mode !== 'idle' || body.wandering || boredStage > 0 || agent.running().length) return
+  if (acting || browsing || herSpeaking || hearing || pending || !win?.isVisible()) return
+  const now = Date.now()
+  if (now - lastActivity < RESTLESS_MIN * 60_000 || now - lastIdleMove < RESTLESS_MIN * 2 * 60_000) return
+  lastIdleMove = now
+  if (appHands.available && Math.random() < 0.5) {
+    const lay = await body.sitOnTopWindow({ seat: 'lie' })
+    if (lay && lay !== 'too_high') {
+      console.log(`[body] restless: lying on ${lay}`)
+      return
+    }
+  }
+  console.log('[body] restless: peeking from the edge of the screen')
+  void body.peek({ ms: 30_000 + Math.random() * 30_000 })
+}
 
 // ---- notices: what she comes to tell you about on her own (notice.ts): jobs, messages, calendar, reminders
 
@@ -2383,7 +2742,7 @@ function setupChanged(): void {
 }
 
 function remoteMenuItem(): Electron.MenuItemConstructorOptions {
-  if (!telegramToken()) return { label: 'Phone remote: set up…', toolTip: 'Send her messages from your phone, through a Telegram bot', click: openSetup }
+  if (!telegramToken()) return { label: 'Phone remote: set up…', toolTip: 'Send her messages from your phone, through a Telegram bot', click: () => openSetup() }
   const paired = settings.get().remotePaired
   return {
     label: `Phone remote: ${remote ? 'on' : 'off'}`,
@@ -2503,10 +2862,11 @@ async function phoneMessage(text: string): Promise<void> {
 let setupWin: BrowserWindow | null = null
 let setupStartMode: string = brain.mode
 
-function openSetup(): void {
+function openSetup(section?: 'characters'): void {
   if (setupWin && !setupWin.isDestroyed()) {
     setupWin.show()
     setupWin.focus()
+    if (section) void setupWin.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`)
     return
   }
   setupStartMode = brain.mode
@@ -2535,6 +2895,7 @@ function openSetup(): void {
     finishSetup()
   })
   loadPage(setupWin, 'setup')
+  if (section) setupWin.webContents.once('did-finish-load', () => void setupWin?.webContents.executeJavaScript(`document.getElementById('${section}')?.scrollIntoView()`))
 }
 
 /** Closing the window counts as done: it does not come back on its own. Her window reloads if her brain changed. */
@@ -2675,6 +3036,7 @@ let stopLocalTts: () => void = () => undefined
 
 app.whenReady().then(async () => {
   if (process.platform === 'darwin') app.dock?.hide() // menu-bar app: no Dock icon
+  protocol.handle('deskmate', serveCharacterFile)
   const local = await brain.detectOllama()
   if (local.running) {
     console.log(`[brain] Ollama running; models: ${local.models.join(', ') || '(none)'}; using ${brain.ollamaModel}: ${local.hasModel ? 'yes' : 'NOT INSTALLED (ollama pull ' + brain.ollamaModel + ')'}`)
@@ -2717,9 +3079,14 @@ app.whenReady().then(async () => {
   body.rememberHome()
   if (/^(1|true|yes|on)$/i.test(process.env.DESKMATE_WANDER?.trim() || '')) body.wander(true, () => !acting && !browsing && !herSpeaking)
   if (!/^(0|false|no|off)$/i.test(process.env.DESKMATE_IDLE_TOUCHES?.trim() || '')) body.idleTouches(true)
+  if (!/^(0|false|no|off)$/i.test(process.env.DESKMATE_CURSOR_PLAY?.trim() || '')) body.cursorPlay(true)
+  setInterval(() => {
+    void boredTick()
+    void restlessTick()
+  }, 20_000).unref()
   if (SLEEP_AFTER_MIN > 0) {
     setInterval(() => {
-      if (body.mode === 'idle' || body.mode === 'sit') {
+      if (body.mode === 'idle' || body.mode === 'sit' || body.mode === 'lie') {
         if (Date.now() - lastActivity > SLEEP_AFTER_MIN * 60_000 && !acting && !browsing && !herSpeaking && !hearing && !agent.running().length) body.sleep()
       }
     }, 30_000).unref()
