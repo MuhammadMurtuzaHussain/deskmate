@@ -11,6 +11,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import Vision
 
 let VERSION = "1"
 
@@ -408,6 +409,47 @@ func resolveApp(_ raw: String) -> (String, String)? {
   return loose
 }
 
+// MARK: - Reading text off the screen (OCR)
+
+/// Where each item of the last OCR sits on screen, by the number the agent saw.
+var ocrRects: [CGRect] = []
+
+/// The app's front-most normal window: its id and bounds in screen points (top-left origin, like AX and CGEvent).
+func frontWindow(_ pid: pid_t) -> (CGWindowID, CGRect)? {
+  guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [Json] else { return nil }
+  for w in list where (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid && (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 {
+    guard let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+          let b = w[kCGWindowBounds as String] as? NSDictionary,
+          let rect = CGRect(dictionaryRepresentation: b as CFDictionary), rect.width > 50, rect.height > 50 else { continue }
+    return (id, rect)
+  }
+  return nil
+}
+
+/// Text in an app's front window, read with Vision: for canvas apps, games and web views whose controls the
+/// accessibility tree does not describe. Needs Screen Recording for the app that runs the helper.
+func ocrWindow(_ pid: pid_t, max: Int) throws -> Json {
+  guard let (wid, bounds) = frontWindow(pid) else { throw HandsError("no_window") }
+  guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, wid, [.boundsIgnoreFraming, .bestResolution]) else {
+    throw HandsError("capture_failed: allow Screen Recording")
+  }
+  let request = VNRecognizeTextRequest()
+  request.recognitionLevel = .accurate
+  request.usesLanguageCorrection = true
+  try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+  let found = (request.results ?? []).compactMap { obs -> (String, CGRect)? in
+    guard let top = obs.topCandidates(1).first, top.confidence > 0.3 else { return nil }
+    let bb = obs.boundingBox // normalised, origin bottom-left
+    let rect = CGRect(x: bounds.minX + bb.minX * bounds.width, y: bounds.minY + (1 - bb.maxY) * bounds.height,
+                      width: bb.width * bounds.width, height: bb.height * bounds.height)
+    return (top.string, rect)
+  }
+  // Reading order: rows top to bottom (within a few points), then left to right.
+  let sorted = found.sorted { a, b in abs(a.1.minY - b.1.minY) > 6 ? a.1.minY < b.1.minY : a.1.minX < b.1.minX }.prefix(max)
+  ocrRects = sorted.map { $0.1 }
+  return ["items": sorted.enumerated().map { "[\($0.offset)] \($0.element.0)" }, "window": ["x": bounds.minX, "y": bounds.minY, "w": bounds.width, "h": bounds.height]]
+}
+
 // MARK: - Menus
 
 struct MenuEntry {
@@ -514,7 +556,7 @@ func handle(_ req: Json) throws -> Json {
     guard let name = str(req, "name"), let (id, appName) = resolveApp(name) else { throw HandsError("not_installed") }
     return ["bundleId": id, "name": appName]
   case "snapshot":
-    guard let app = (str(req, "bundleId").flatMap { runningApp($0) }) ?? frontmost() else { throw HandsError("not_running") }
+    guard let app = str(req, "bundleId").map({ runningApp($0) }) ?? frontmost() else { throw HandsError("not_running") }
     var r = snapshot(app.processIdentifier, maxElements: int(req, "maxElements") ?? 120, maxText: int(req, "maxText") ?? 3500)
     r["app"] = app.localizedName ?? ""
     r["bundleId"] = app.bundleIdentifier ?? ""
@@ -537,6 +579,17 @@ func handle(_ req: Json) throws -> Json {
     guard let f = frame(el) else { throw HandsError("cannot_click: no position") }
     mouseClick(at: CGPoint(x: f.midX, y: f.midY))
     return ["element": info, "via": "click"]
+  case "ocr":
+    guard let app = str(req, "bundleId").map({ runningApp($0) }) ?? frontmost() else { throw HandsError("not_running") }
+    var r = try ocrWindow(app.processIdentifier, max: int(req, "max") ?? 250)
+    r["app"] = app.localizedName ?? ""
+    r["bundleId"] = app.bundleIdentifier ?? ""
+    return r
+  case "clickText":
+    guard let n = int(req, "index"), n >= 0, n < ocrRects.count else { throw HandsError("no_such_text: read the screen again") }
+    let r = ocrRects[n]
+    mouseClick(at: CGPoint(x: r.midX, y: r.midY))
+    return [:]
   case "key":
     guard let combo = str(req, "combo") else { throw HandsError("no_combo") }
     try pressCombo(combo)

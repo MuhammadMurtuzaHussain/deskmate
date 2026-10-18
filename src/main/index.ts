@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -467,6 +467,61 @@ function maskOwnWindow(bmp: Buffer, size: Electron.Size, display: Electron.Displ
   }
 }
 
+/**
+ * A picture of her as she is on screen right now: her panel, bubble and grip hidden for a frame, the window captured
+ * with its transparency, empty edges trimmed. Saved as a PNG in ~/Pictures/Deskmate (Messages sends attachments from
+ * there without trouble) and put on the clipboard. Returns the file's path.
+ */
+async function portrait(): Promise<string> {
+  if (!win || !win.isVisible()) throw new Error('show me first (menu-bar icon → Show her), then ask again')
+  await win.webContents.executeJavaScript(
+    "document.body.classList.add('portrait'); new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"
+  )
+  let image: Electron.NativeImage
+  try {
+    image = await win.webContents.capturePage()
+  } finally {
+    void win.webContents.executeJavaScript("document.body.classList.remove('portrait')")
+  }
+  // Trim to what is not transparent. The bitmap is in device pixels (BGRA); crop() takes points.
+  const size = image.getSize()
+  const bmp = image.toBitmap()
+  const scale = Math.sqrt(bmp.length / 4 / (size.width * size.height)) || 1
+  const pw = Math.round(size.width * scale)
+  const ph = Math.round(size.height * scale)
+  let x0 = pw
+  let y0 = ph
+  let x1 = -1
+  let y1 = -1
+  for (let y = 0; y < ph; y += 2) {
+    for (let x = 0; x < pw; x += 2) {
+      if (bmp[(y * pw + x) * 4 + 3] > 24) {
+        if (x < x0) x0 = x
+        if (x > x1) x1 = x
+        if (y < y0) y0 = y
+        if (y > y1) y1 = y
+      }
+    }
+  }
+  if (x1 > x0 && y1 > y0) {
+    const pad = 6 * scale
+    image = image.crop({
+      x: Math.max(0, Math.floor((x0 - pad) / scale)),
+      y: Math.max(0, Math.floor((y0 - pad) / scale)),
+      width: Math.min(size.width, Math.ceil((x1 - x0 + 2 * pad) / scale)),
+      height: Math.min(size.height, Math.ceil((y1 - y0 + 2 * pad) / scale))
+    })
+  }
+  const dir = join(app.getPath('pictures'), 'Deskmate')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `${character.name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`)
+  const png = image.toPNG()
+  writeFileSync(file, png)
+  // Electron 44's clipboard takes W3C-style items.
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]).catch((err) => console.warn('[portrait] clipboard:', (err as Error).message))
+  return file
+}
+
 /** One downscaled JPEG of the primary display, with her own window greyed out. */
 async function captureScreen(): Promise<Stimulus['screenshot']> {
   if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
@@ -891,6 +946,11 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
   console.log(`[apps] ${req.app} ${req.action}${req.to ? ` → ${req.to}` : ''}${req.text ? `: ${req.text.slice(0, 60)}` : ''}`)
   const confirmFor = (policy: 'always' | 'voice' | 'never'): boolean => policy === 'always' || (policy === 'voice' && Boolean(opts.voice))
   try {
+    if (req.app === 'spotify' && req.action === 'play_query' && brain.claudeForAgent) {
+      // Picking the right song out of the search results is a job for the agent.
+      acting = false
+      return await runComputer(`In Spotify, find and play ${req.text}.`, opts)
+    }
     const result = await runApp(req, {
       hands: appHands,
       confirm,
@@ -898,7 +958,8 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
       confirmPrompts: confirmFor(CONFIRM_JOBS),
       onStep: status,
       log,
-      stopped: () => actStop || quitting
+      stopped: () => actStop || quitting,
+      portrait
     })
     console.log(`[apps] ${result.ok ? 'done' : 'not done'}: ${result.summary}`)
     memory.addTurn('user', `[${APPS[req.app].name}: ${result.summary}]`)
@@ -951,7 +1012,8 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
       confirm,
       screenshot: () => captureScreen().catch(() => undefined),
       runApp: (req) =>
-        runApp(req, { hands: appHands, confirm, confirmMessages: CONFIRM_SENDS !== 'never', confirmPrompts: false, onStep: status, log, stopped }),
+        runApp(req, { hands: appHands, confirm, confirmMessages: CONFIRM_SENDS !== 'never', confirmPrompts: false, onStep: status, log, stopped, portrait }),
+      portrait,
       openUrl: async (url) => {
         if (chrome.chromeAvailable()) await chrome.open(url)
         else await shell.openExternal(url)
@@ -1032,6 +1094,17 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     await deliver(reply, 'chat')
     return reply
   }
+  if (/^(?:\/(?:selfie|portrait)|(?:take|send|give me|show me) (?:a |an )?(?:selfie|photo of you(?:rself)?|picture of you(?:rself)?|pic of you(?:rself)?))[.!]?$/i.test(stripName(text))) {
+    try {
+      const file = await portrait()
+      return sayPlain(`Copied a picture of me, paste it anywhere. It's also in Pictures, Deskmate folder.`, 'happy').then((r) => {
+        console.log(`[portrait] ${file}`)
+        return r
+      })
+    } catch (err) {
+      return sayPlain(`I couldn't take a picture of myself: ${(err as Error).message}`, 'sad')
+    }
+  }
   if (text.toLowerCase() === '/listen') {
     await setListening(!listening)
     return QUIET
@@ -1080,7 +1153,7 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     // Her "on it" would be a lie until they say yes; the read-back replaces it.
     return runTool(reply.tool, { voice: opts.voice })
   }
-  if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude)\b/i.test(text)) {
+  if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude|messages?|imessages?|imsg|texts?|texting|spotify|music|song|track)\b/i.test(text)) {
     // The quick routines only cover Discord, Slack and the Claude app. A request for another app ("text Notepad on
     // Messages") is real work for the agent when Claude is her brain. Otherwise it is either a small model replaying an
     // old request from memory ("what's on my screen?" once re-sent a Discord message), or something she cannot do yet.

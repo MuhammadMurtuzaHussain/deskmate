@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { Hands, HandsError, type FocusedElement } from './hands'
 
 /**
@@ -7,8 +8,9 @@ import { Hands, HandsError, type FocusedElement } from './hands'
  * fill in who and what. Nothing is ever sent before the window title shows the chat they named.
  */
 
-export type AppId = 'discord' | 'slack' | 'claude'
-export type AppAction = 'message' | 'open' | 'prompt'
+export type AppId = 'discord' | 'slack' | 'claude' | 'messages' | 'spotify'
+/** control: Spotify transport ("play", "pause", "next", "previous", "now"); play_query: find and play something */
+export type AppAction = 'message' | 'open' | 'prompt' | 'control' | 'play_query'
 
 export interface AppRequest {
   app: AppId
@@ -17,17 +19,26 @@ export interface AppRequest {
   to: string
   /** exactly what to send or type; empty for open */
   text: string
+  /** send a picture of her along with it (Messages) */
+  photo?: boolean
 }
 
 export const APPS: Record<AppId, { name: string; bundleId: string }> = {
   discord: { name: 'Discord', bundleId: 'com.hnc.Discord' },
   slack: { name: 'Slack', bundleId: 'com.tinyspeck.slackmacgap' },
-  claude: { name: 'Claude', bundleId: 'com.anthropic.claudefordesktop' }
+  claude: { name: 'Claude', bundleId: 'com.anthropic.claudefordesktop' },
+  messages: { name: 'Messages', bundleId: 'com.apple.MobileSMS' },
+  spotify: { name: 'Spotify', bundleId: 'com.spotify.client' }
+}
+
+function appId(word: string): AppId {
+  const w = word.toLowerCase()
+  return /^(?:imessages?|messages|imsg|texts?)$/.test(w) ? 'messages' : (w as AppId)
 }
 
 // ---- understanding the request
 
-const CHAT_APP = '(discord|slack)'
+const CHAT_APP = '(discord|slack|imessages?|messages|imsg)'
 const VERB = '(?:message|msg|dm|text|tell|ping|write(?: to)?|send(?: a message to| a dm to| a note to)?)'
 const POLITE = '^(?:(?:hey |ok |okay |so )?(?:can|could|would) you (?:please )?|please )?'
 const SEP = '(?:,|:| that| saying| to say| and say| and tell (?:them|him|her))'
@@ -36,8 +47,10 @@ const CLAUDE_APP = '(?:the )?claude(?: desktop app| desktop| app| chat)'
 const MESSAGE_PATTERNS: { re: RegExp; app: number; to: number; text: number }[] = [
   // "discord: sam: running late" (the /discord command)
   { re: new RegExp(`^${CHAT_APP}:\\s*([^:]+?):\\s*(.+)$`, 'i'), app: 1, to: 2, text: 3 },
-  // "Discord: tell sam the build is green" (how her brain hands it over)
-  { re: new RegExp(`^${CHAT_APP}:\\s*${VERB} ([@#]?[\\w.'-]+)${SEP}?\\s+(.+)$`, 'i'), app: 1, to: 2, text: 3 },
+  // "Messages: text Note Pad that I'm late" (how her brain hands it over; a separator splits a longer name)
+  { re: new RegExp(`^${CHAT_APP}:\\s*${VERB} (.+?)${SEP}\\s+(.+)$`, 'i'), app: 1, to: 2, text: 3 },
+  // "Discord: tell sam the build is green" (one-word name, no separator)
+  { re: new RegExp(`^${CHAT_APP}:\\s*${VERB} ([@#]?[\\w.'-]+)\\s+(.+)$`, 'i'), app: 1, to: 2, text: 3 },
   // "tell sam on discord that I'm running late", "message #general in slack: standup moved"
   { re: new RegExp(`${POLITE}${VERB} (.+?) (?:on|in|over|via|through) ${CHAT_APP}${SEP}?\\s+(.+)$`, 'i'), to: 1, app: 2, text: 3 },
   // "on discord, tell sam that I'm late" / "on slack message ana: running late"
@@ -83,8 +96,36 @@ export function cleanTarget(raw: string): string {
 }
 
 /** The requests that need no model to understand. Null when the sentence is not about a desktop app. */
+const PHOTO = /,?\s*(?:and |with |plus |\+ )?(?:(?:also )?(?:send|share|attach|include) )?(?:a |an )?(?:photo|picture|pic|selfie|image|snap) of (?:you|yourself)(?: (?:sitting|standing|here|on (?:my|the) (?:desktop|screen))[^,.]*)?(?: as well| too)?[.!]?$/i
+const MESSAGES_PLAIN = new RegExp(`${POLITE}text ([@#]?[\\w.'-]+(?: [\\w.'-]+){0,2}?)${SEP}\\s+(.+)$`, 'i')
+const SPOTIFY_CONTROL: [RegExp, string][] = [
+  [/^(?:what(?:'s| is) (?:playing|this song)|what song is (?:this|playing)|which song is this)(?: on spotify)?$/i, 'now'],
+  [/^(?:pause|stop)(?: the)? (?:music|song|spotify|track)(?: on spotify)?$|^pause spotify$/i, 'pause'],
+  [/^(?:play|resume|unpause)(?: the)? (?:music|spotify)$|^(?:resume|unpause)(?: the)? (?:song|track)$/i, 'play'],
+  [/^(?:skip|next)(?: this)?(?: (?:song|track))?(?: on spotify)?$|^(?:skip|next) (?:song|track)$/i, 'next'],
+  [/^(?:previous|last|go back a|back a)(?: (?:song|track))(?: on spotify)?$/i, 'previous']
+]
+const SPOTIFY_PLAY = /^(?:play|put on|queue up) (.+?) (?:on|in|with) spotify$|^spotify[,:]? play (.+)$/i
+
 export function parseAppRequest(raw: string): AppRequest | null {
-  const text = raw.replace(/\s+/g, ' ').trim().replace(/[?]+$/, '')
+  let text = raw.replace(/\s+/g, ' ').trim().replace(/[?]+$/, '')
+  // Spotify: transport verbs, then "play X on spotify".
+  const bare = text.toLowerCase().replace(/[.!]+$/, '').replace(/^spotify[,:]\s*/, '')
+  for (const [re, verb] of SPOTIFY_CONTROL) if (re.test(bare)) return { app: 'spotify', action: 'control', to: '', text: verb }
+  const play = SPOTIFY_PLAY.exec(text.replace(/[.!]+$/, ''))
+  if (play) return { app: 'spotify', action: 'play_query', to: '', text: (play[1] ?? play[2]).trim() }
+  // "…, and send a photo of yourself" rides along with a message.
+  let photo = false
+  if (PHOTO.test(text)) {
+    photo = true
+    text = text.replace(PHOTO, '').trim()
+  }
+  const req = parseMessage(text)
+  if (req && photo) req.photo = true
+  return req
+}
+
+function parseMessage(text: string): AppRequest | null {
   for (const re of PROMPT_PATTERNS) {
     const m = re.exec(text)
     if (m && m[1].trim()) return { app: 'claude', action: 'prompt', to: '', text: cleanText(m[1]) }
@@ -92,21 +133,25 @@ export function parseAppRequest(raw: string): AppRequest | null {
   for (const p of MESSAGE_PATTERNS) {
     const m = p.re.exec(text)
     if (m && m[p.text]?.trim() && m[p.to]?.trim()) {
-      return { app: m[p.app].toLowerCase() as AppId, action: 'message', to: cleanTarget(m[p.to]), text: cleanText(m[p.text]) }
+      return { app: appId(m[p.app]), action: 'message', to: cleanTarget(m[p.to]), text: cleanText(m[p.text]) }
     }
   }
+  // "text Notepad that I'm running late": texting with no app named means Messages.
+  const plain = MESSAGES_PLAIN.exec(text)
+  if (plain && plain[2]?.trim()) return { app: 'messages', action: 'message', to: cleanTarget(plain[1]), text: cleanText(plain[2]) }
   for (const p of OPEN_PATTERNS) {
     const m = p.re.exec(text.replace(/[.!]+$/, ''))
-    if (m && m[p.to]?.trim() && !/^(?:discord|slack)$/i.test(m[p.to].trim())) {
-      return { app: m[p.app].toLowerCase() as AppId, action: 'open', to: cleanTarget(m[p.to]), text: '' }
+    if (m && m[p.to]?.trim() && !/^(?:discord|slack)$/i.test(m[p.to].trim()) && appId(m[p.app]) !== 'messages') {
+      return { app: appId(m[p.app]), action: 'open', to: cleanTarget(m[p.to]), text: '' }
     }
   }
   return null
 }
 
 /** For what the patterns miss: one planning call fills in the slots. */
-export const APP_PLAN_SYSTEM = `You turn a request about a desktop app into JSON. Reply with ONE JSON object: {"app": "discord"|"slack"|"claude"|"other", "action": "message"|"open"|"prompt", "to": string, "text": string}
-- "message": send "text" to a person, channel or group ("to") in Discord or Slack.
+export const APP_PLAN_SYSTEM = `You turn a request about a desktop app into JSON. Reply with ONE JSON object: {"app": "discord"|"slack"|"messages"|"claude"|"other", "action": "message"|"open"|"prompt", "to": string, "text": string, "photo": boolean}
+- "message": send "text" to a person, channel or group ("to") in Discord, Slack or Messages (iMessage, texts).
+- "photo": true when they also want a photo or picture of you (the companion) sent with it.
 - "open": just go to that chat or channel ("to") in Discord or Slack, sending nothing.
 - "prompt": type "text" into a new chat in the Claude desktop app and send it ("to" is "").
 - "to": only the name of the person, channel or server ("sam", "#general"), nothing else.
@@ -116,19 +161,22 @@ export const APP_PLAN_SYSTEM = `You turn a request about a desktop app into JSON
 export const APP_PLAN_SCHEMA = {
   type: 'object',
   properties: {
-    app: { type: 'string', enum: ['discord', 'slack', 'claude', 'other'] },
+    app: { type: 'string', enum: ['discord', 'slack', 'messages', 'claude', 'other'] },
     action: { type: 'string', enum: ['message', 'open', 'prompt'] },
     to: { type: 'string' },
-    text: { type: 'string' }
+    text: { type: 'string' },
+    photo: { type: 'boolean' }
   },
-  required: ['app', 'action', 'to', 'text']
+  required: ['app', 'action', 'to', 'text', 'photo']
 }
 
 export function fromPlan(obj: Record<string, unknown>): AppRequest | null {
   const app = String(obj.app ?? '').toLowerCase()
   if (!(app in APPS)) return null
   const action = (['message', 'open', 'prompt'].includes(String(obj.action)) ? obj.action : app === 'claude' ? 'prompt' : 'message') as AppAction
-  const req: AppRequest = { app: app as AppId, action: app === 'claude' ? 'prompt' : action, to: cleanTarget(String(obj.to ?? '')), text: cleanText(String(obj.text ?? '')) }
+  if (app === 'spotify') return null
+  const req: AppRequest = { app: app as AppId, action: app === 'claude' ? 'prompt' : action, to: cleanTarget(String(obj.to ?? '')), text: cleanText(String(obj.text ?? '')), photo: Boolean(obj.photo) }
+  if (req.app === 'messages' && req.action === 'open') return null
   if (req.action !== 'prompt' && !req.to) return null
   if (req.action !== 'open' && !req.text) return null
   return req
@@ -147,6 +195,8 @@ export interface RoutineDeps {
   log(line: string): void
   /** polled between steps; true when they said stop */
   stopped(): boolean
+  /** a picture of her as a PNG file, for "send a photo of yourself" */
+  portrait?(): Promise<string>
 }
 
 export interface RoutineResult {
@@ -244,6 +294,9 @@ export async function runApp(req: AppRequest, deps: RoutineDeps): Promise<Routin
 
   try {
     if (!(await hands.installed(id))) return fail(`${app.name} isn't installed on this Mac.`)
+    // Messages and Spotify have scripting dictionaries: no windows to drive, nothing typed where someone can see it.
+    if (req.app === 'messages') return await messagesRoutine(req, deps, step)
+    if (req.app === 'spotify') return await spotifyRoutine(req, step)
     await step(`opening`)
     const opened = await hands.launch(id)
     deps.log(`launched pid ${opened.pid} in ${opened.ms} ms${opened.wasRunning ? '' : ' (cold start)'}`)
@@ -304,7 +357,7 @@ export async function runApp(req: AppRequest, deps: RoutineDeps): Promise<Routin
 
     if (deps.confirmMessages) {
       await step(`in ${where} · waiting for your yes`)
-      const yes = await deps.confirm(`Send "${req.text}" to ${where} on ${app.name}?`)
+      const yes = await deps.confirm(`Send "${req.text}"${req.photo ? ' and a picture of me' : ''} to ${where} on ${app.name}?`)
       if (!yes) return fail('Okay, not sent.', `did not send to ${where} on ${app.name}: they said no`)
       // They may have used the computer while she waited: bring the app back and check it is still the same chat.
       await hands.launch(id)
@@ -315,6 +368,13 @@ export async function runApp(req: AppRequest, deps: RoutineDeps): Promise<Routin
     await step(`typing in ${where}`)
     if (!(await ensureInput(hands, id, 'message', deps.log))) {
       return fail(`I couldn't get into the message box in ${app.name}, so I didn't type anything.`, `no message box in ${where} on ${app.name}`)
+    }
+    if (req.photo && deps.portrait) {
+      // Her picture goes in first (it lands as an attachment), then the words.
+      await step('attaching a picture of me')
+      deps.log(`portrait: ${await deps.portrait()}`)
+      await hands.key('cmd+v', id)
+      await sleep(1500)
     }
     await hands.paste(req.text, id)
     await sleep(300)
@@ -378,6 +438,204 @@ async function promptClaude(req: AppRequest, deps: RoutineDeps, step: (label: st
   await hands.key('return', id)
   deps.log('prompt sent')
   return { ok: true, say: "Asked Claude. It's answering in the app.", summary: `asked the Claude app: "${req.text}"` }
+}
+
+// ---- apps with a scripting dictionary
+
+class ScriptError extends Error {
+  constructor(
+    message: string,
+    readonly notAllowed: boolean
+  ) {
+    super(message)
+  }
+}
+
+/** Runs an AppleScript with arguments passed as argv (never pasted into the source, so quotes in a message are safe). */
+function osa(script: string, args: string[] = [], timeoutMs = 30_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('osascript', ['-e', script, ...args], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (!err) return resolve(stdout.replace(/\n$/, ''))
+      const text = `${stderr || err.message}`.trim()
+      // -1743: the user has not allowed this app to control the other one (Privacy & Security → Automation).
+      reject(new ScriptError(text, /-1743|not allowed|not authori[sz]ed/i.test(text)))
+    })
+  })
+}
+
+const LIST_CHATS = `on run argv
+  set out to ""
+  tell application "Messages"
+    repeat with c in chats
+      set n to ""
+      try
+        set n to name of c
+      end try
+      if n is missing value then set n to ""
+      set ps to ""
+      try
+        repeat with p in participants of c
+          set fn to ""
+          try
+            set fn to full name of p
+          end try
+          if fn is missing value then set fn to ""
+          set ps to ps & fn & " <" & (handle of p) & ">;"
+        end repeat
+      end try
+      set out to out & (id of c) & tab & n & tab & ps & linefeed
+    end repeat
+  end tell
+  return out
+end run`
+
+const SEND_TO_CHAT = `on run argv
+  set chatId to item 1 of argv
+  set msg to item 2 of argv
+  set filePath to item 3 of argv
+  tell application "Messages"
+    set c to chat id chatId
+    if msg is not "" then send msg to c
+    if filePath is not "" then
+      set f to POSIX file filePath
+      send f to c
+    end if
+  end tell
+end run`
+
+interface Chat {
+  id: string
+  name: string
+  people: { name: string; handle: string }[]
+}
+
+/** Who a chat is, for the read-back: its own name, else its people. */
+function chatTitle(c: Chat): string {
+  if (c.name) return c.name
+  const names = c.people.map((p) => p.name || p.handle)
+  return names.length > 2 ? `${names.slice(0, 2).join(', ')} and ${names.length - 2} more` : names.join(' and ')
+}
+
+/** Chats whose name, or whose people's names or handles, hold every word they said; one-to-one chats and exact
+ * names rank first. */
+export function matchChats(chats: Chat[], target: string): { c: Chat; score: number }[] {
+  const want = words(target)
+  if (!want.length) return []
+  const scored = chats
+    .map((c) => {
+      const fields = [c.name, ...c.people.map((p) => p.name), ...c.people.map((p) => p.handle)].filter(Boolean)
+      const all = new Set(fields.flatMap(words))
+      if (!want.every((w) => all.has(w) || [...all].some((a) => a.startsWith(w) && w.length >= 3))) return null
+      const exact = fields.some((f) => words(f).join(' ') === want.join(' '))
+      return { c, score: (exact ? 10 : 0) + (c.people.length === 1 ? 5 : 0) - c.people.length * 0.1 }
+    })
+    .filter((x): x is { c: Chat; score: number } => x !== null)
+    .sort((a, b) => b.score - a.score)
+  return scored
+}
+
+async function messagesRoutine(req: AppRequest, deps: RoutineDeps, step: (label: string, ms?: number) => Promise<void>): Promise<RoutineResult> {
+  const fail = (say: string, summary = say): RoutineResult => {
+    deps.log(`failed: ${summary}`)
+    return { ok: false, say, summary }
+  }
+  try {
+    await step(`finding ${req.to}`)
+    const raw = await osa(LIST_CHATS, [], 60_000)
+    const chats: Chat[] = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [id, name, people] = line.split('\t')
+        return {
+          id,
+          name: name?.trim() ?? '',
+          people: (people ?? '')
+            .split(';')
+            .filter(Boolean)
+            .map((p) => {
+              const m = /^(.*?) <(.*)>$/.exec(p.trim())
+              return m ? { name: m[1].trim(), handle: m[2].trim() } : { name: '', handle: p.trim() }
+            })
+        }
+      })
+    deps.log(`${chats.length} chats in Messages`)
+    const found = matchChats(chats, req.to)
+    if (!found.length) return fail(`I couldn't find a chat with ${req.to} in Messages.`, `no Messages chat matches "${req.to}"`)
+    const top = found[0].c
+    // Two equally good matches with different names (two people called Sam) is a question, not a guess.
+    const tied = found.filter((x) => x.score === found[0].score && chatTitle(x.c) !== chatTitle(top)).map((x) => chatTitle(x.c))
+    if (tied.length) {
+      const options = [chatTitle(top), ...tied.slice(0, 2)]
+      return fail(`I found more than one: ${options.join(', or ')}. Say which one.`, `ambiguous Messages chat for "${req.to}": ${options.join(' | ')}`)
+    }
+    const who = chatTitle(top)
+    deps.log(`chat: ${who} (${top.id})`)
+    const what = `${req.text ? `"${req.text}"` : ''}${req.text && req.photo ? ' and ' : ''}${req.photo ? 'a picture of me' : ''}`
+    if (deps.confirmMessages) {
+      await step(`${who} · waiting for your yes`)
+      if (!(await deps.confirm(`Send ${what} to ${who} in Messages?`))) return fail('Okay, not sent.', `did not send to ${who} in Messages: they said no`)
+    }
+    let file = ''
+    if (req.photo) {
+      if (!deps.portrait) return fail("I can't take a picture of myself right now.")
+      file = await deps.portrait()
+      deps.log(`portrait: ${file}`)
+    }
+    await step(`sending to ${who}`)
+    await osa(SEND_TO_CHAT, [top.id, req.text, file])
+    deps.log(`sent to ${who}`)
+    return { ok: true, say: `Sent to ${who}.`, summary: `sent ${what} to ${who} in Messages`, where: who }
+  } catch (err) {
+    if (err instanceof ScriptError && err.notAllowed) {
+      return fail(
+        "macOS isn't letting me control Messages yet. System Settings → Privacy & Security → Automation → turn on Messages for Deskmate (Electron when run from source).",
+        'Messages automation not allowed'
+      )
+    }
+    return fail(`Messages gave me trouble: ${(err as Error).message.slice(0, 160)}`)
+  }
+}
+
+const SPOTIFY = `on run argv
+  set cmd to item 1 of argv
+  tell application "Spotify"
+    if cmd is "play" then
+      play
+    else if cmd is "pause" then
+      pause
+    else if cmd is "next" then
+      next track
+    else if cmd is "previous" then
+      previous track
+    end if
+    if cmd is not "now" then delay 0.6
+    if player state is stopped then return "stopped"
+    return (name of current track) & " by " & (artist of current track) & tab & (player state as text)
+  end tell
+end run`
+
+async function spotifyRoutine(req: AppRequest, step: (label: string, ms?: number) => Promise<void>): Promise<RoutineResult> {
+  try {
+    if (req.action === 'play_query') {
+      // Without the agent: open Spotify's search on it; picking the right result is the agent's job.
+      await step(`searching ${req.text}`)
+      await new Promise<void>((resolve) => execFile('open', [`spotify:search:${encodeURIComponent(req.text)}`], () => resolve()))
+      return { ok: true, say: `Opened Spotify's search for ${req.text}.`, summary: `opened Spotify search for "${req.text}"` }
+    }
+    await step(req.text)
+    const out = await osa(SPOTIFY, [req.text])
+    const [track, state] = out.split('\t')
+    if (out === 'stopped' || !track) return { ok: true, say: 'Nothing is playing on Spotify.', summary: 'Spotify is stopped' }
+    const say =
+      req.text === 'pause' ? 'Paused.' : req.text === 'now' ? `${state === 'playing' ? "It's" : 'Paused on'} ${track}.` : `Playing ${track}.`
+    return { ok: true, say, summary: `Spotify ${req.text}: ${track} (${state})` }
+  } catch (err) {
+    if (err instanceof ScriptError && err.notAllowed) {
+      return { ok: false, say: "macOS isn't letting me control Spotify yet. Privacy & Security → Automation → turn on Spotify for Deskmate.", summary: 'Spotify automation not allowed' }
+    }
+    return { ok: false, say: `Spotify gave me trouble: ${(err as Error).message.slice(0, 160)}`, summary: `Spotify error: ${(err as Error).message}` }
+  }
 }
 
 export function handsMessage(err: unknown, appName = 'the app'): string {

@@ -20,8 +20,10 @@ export interface ComputerDeps {
   confirm(question: string): Promise<boolean>
   /** a downscaled capture of the screen with her own window greyed out */
   screenshot(): Promise<{ data: string; mediaType: 'image/jpeg' | 'image/png' } | undefined>
-  /** the Discord / Slack / Claude app routines, with their own read-back */
+  /** the Discord / Slack / Messages / Claude app routines, with their own read-back */
   runApp(req: AppRequest): Promise<RoutineResult>
+  /** a picture of the companion as a PNG file, also put on the clipboard */
+  portrait(): Promise<string>
   openUrl(url: string): Promise<void>
   readWebPage(): Promise<string>
   onStep(text: string): void
@@ -75,8 +77,9 @@ How to work:
 - Start with look (or open_app, which looks for you). Element numbers come from the latest look and go stale once anything changes; look again after every action that changes the screen, and use what you see to check the action worked before moving on.
 - Prefer the app's own keyboard shortcuts and search (⌘K quick switchers, ⌘F, ⌘L in browsers, ⌘N) over long chains of clicks. Use choose_menu when you know the menu item.
 - To type into a field: type_text with its element number. To submit, press_keys "return" afterwards.
-- For a message on Discord or Slack use send_message; for a question to the Claude desktop app use ask_claude_app. For web pages use open_url and read_web_page.
-- If the screen does not have what you need in its text, take a screenshot.
+- For a message on Discord, Slack or Messages (iMessage) use send_message; for a question to the Claude desktop app use ask_claude_app. For web pages use open_url and read_web_page.
+- When they want a photo or picture of the companion ("of yourself", "of you") in another app, use paste_my_picture where the attachment should go (a message box), then send as usual.
+- If look shows few or no elements for what you can see (canvas apps, games, some web apps), use read_text_on_screen and click_text. If even that is not enough, take a screenshot.
 - Never enter passwords, card numbers or personal data; never buy, pay, or delete anything the user did not ask for. When a step needs their decision or a detail you don't have, ask_user (yes/no questions only).
 - If the same approach failed twice, try another way; if you are stuck, stop and say where.
 
@@ -108,11 +111,15 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   tool('choose_menu', 'Pick a menu-bar item of the front app by its titles, e.g. ["File", "New Window"] or just ["New Window"].', {
     path: { type: 'array', items: { type: 'string' } }
   }),
-  tool('send_message', 'Send a message to a person or channel on Discord or Slack (it finds the chat, checks it, and asks the user before sending).', {
-    app: { type: 'string', enum: ['discord', 'slack'] },
+  tool('send_message', 'Send a message to a person or channel on Discord, Slack or Messages (iMessage). It finds the chat, checks it, and asks the user before sending. photo: also send a picture of the companion (Messages only).', {
+    app: { type: 'string', enum: ['discord', 'slack', 'messages'] },
     to: { type: 'string' },
-    text: { type: 'string' }
+    text: { type: 'string' },
+    photo: { type: 'boolean' }
   }),
+  tool('paste_my_picture', 'Paste a picture of the companion (you, the character on screen) where the caret is in the front app, e.g. a message box.', {}),
+  tool('read_text_on_screen', "Read the front window's text with OCR, as numbered items with positions: for apps whose look shows little.", {}),
+  tool('click_text', 'Click the middle of text item n from the latest read_text_on_screen.', { item: { type: 'integer' } }),
   tool('ask_claude_app', 'Type a prompt into a new chat in the Claude desktop app and send it.', { prompt: { type: 'string' } }),
   tool('open_url', 'Open a web address in the browser.', { url: { type: 'string' } }),
   tool('read_web_page', 'Read the text of the page open in the browser.', {}),
@@ -136,6 +143,7 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
   /** the app the agent is working in, from its last look; keys and clicks only go there */
   let target: string | null = null
   let last: Snapshot | null = null
+  let ocrItems: string[] = []
 
   const blocked = (bundleId: string): string | null => {
     if (DENY_APPS.has(bundleId)) return `${bundleId} is off limits for you; tell the user to do this part themselves.`
@@ -226,12 +234,45 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         }
         deps.onStep(`menu ${path.join(' › ')}`)
         const pressed = await hands.pressMenu(target as string, path, target as string)
-        await new Promise((res) => setTimeout(res, 500))
+        // A menu item often opens a window or sheet; give it time to take the keyboard.
+        await new Promise((res) => setTimeout(res, 1000))
         return `Chose ${pressed.join(' › ')}. Look to check.`
       }
       case 'send_message': {
-        const result = await deps.runApp({ app: input.app as 'discord' | 'slack', action: 'message', to: String(input.to), text: String(input.text) })
+        const result = await deps.runApp({ app: input.app as 'discord' | 'slack' | 'messages', action: 'message', to: String(input.to), text: String(input.text), photo: Boolean(input.photo) })
         return result.ok ? `Done: ${result.summary}` : `Not sent: ${result.summary}`
+      }
+      case 'paste_my_picture': {
+        const no = needTarget()
+        if (no) return no
+        deps.onStep('pasting a picture of me')
+        await deps.portrait()
+        await hands.key('cmd+v', target as string)
+        await new Promise((res) => setTimeout(res, 800))
+        return 'Pasted the picture. Look to check it is attached.'
+      }
+      case 'read_text_on_screen': {
+        deps.onStep('reading the screen')
+        const r = await hands.ocr(target ?? undefined)
+        ocrItems = r.items
+        if (!target) target = r.bundleId || null
+        const no = target ? blocked(target) : null
+        if (no) return no
+        return `App: ${r.app}\nText items:\n${r.items.join('\n') || '(no text found)'}`
+      }
+      case 'click_text': {
+        const no = needTarget()
+        if (no) return no
+        const n = Number(input.item)
+        const line = ocrItems.find((l) => l.startsWith(`[${n}] `))
+        if (!line) return `There is no text item [${n}]; read the screen again.`
+        if (RISKY_LABEL.test(line) && !(await deps.confirm(`Click "${line.replace(/^\[\d+\]\s*/, '')}" in ${last?.app ?? 'the app'}?`))) {
+          return 'The user said no. Do not click it.'
+        }
+        deps.onStep(`clicking "${line.replace(/^\[\d+\]\s*/, '').slice(0, 30)}"`)
+        await hands.clickText(n, target as string)
+        await new Promise((res) => setTimeout(res, 500))
+        return `Clicked ${line}. Look or read the screen again to check.`
       }
       case 'ask_claude_app': {
         const result = await deps.runApp({ app: 'claude', action: 'prompt', to: '', text: String(input.prompt) })

@@ -191,6 +191,17 @@ export class Hands {
     return { element: r.element as FocusedElement, via: r.via ? String(r.via) : undefined }
   }
 
+  /** The front window's text read with OCR, as numbered items for clickText(); for apps accessibility cannot read. */
+  async ocr(bundleId?: string): Promise<{ app: string; bundleId: string; items: string[] }> {
+    const r = await this.call('ocr', { bundleId }, 30_000)
+    return { app: String(r.app ?? ''), bundleId: String(r.bundleId ?? ''), items: (r.items as string[]) ?? [] }
+  }
+
+  /** Clicks the middle of text item n from the last ocr(); with `expect`, only while that app is in front. */
+  async clickText(index: number, expect?: string): Promise<void> {
+    await this.call('clickText', { index, expect })
+  }
+
   stop(): void {
     this.proc?.stdin.end()
     this.proc = null

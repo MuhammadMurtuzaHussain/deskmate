@@ -33,7 +33,7 @@ Pick **Claude** in the setup window (menu-bar icon → Setup…), paste an Anthr
 With Claude as her brain:
 
 - **Chat** uses the same reply format as the other brains (structured output), sees your screen when you ask about it, and keeps her persona cached between turns so replies stay quick and cheap. Requests Anthropic's safety filters decline are retried on the model Anthropic recommends (server-side fallback, on the models that support it). If Claude is rate limited or unreachable and Ollama is running, the local model answers instead.
-- **The agent.** For anything that takes several steps across apps, she hands the goal to Claude with her hands as tools: open an app by name, read its front window as numbered elements plus its text, click an element, type into a field, press keys and shortcuts, pick a menu item, take a screenshot, open or read a web page, the Discord/Slack/Claude-app routines, and a yes/no question to you. Claude works in a loop (look, act, look again to check) for up to `DESKMATE_AGENT_STEPS` (25) rounds, and she says what happened. Say it, type it, or `/computer <goal>` (also `/agent`).
+- **The agent.** For anything that takes several steps across apps, she hands the goal to Claude with her hands as tools: open an app by name, read its front window as numbered elements plus its text, click an element, type into a field, press keys and shortcuts, pick a menu item, read the window's text with OCR and click on text (for canvas apps, games and web views that accessibility cannot describe), take a screenshot, paste a picture of her, open or read a web page, the Discord/Slack/Messages/Claude-app routines, and a yes/no question to you. Claude works in a loop (look, act, look again to check) for up to `DESKMATE_AGENT_STEPS` (25) rounds, and she says what happened. Say it, type it, or `/computer <goal>` (also `/agent`).
 
 The rules live in the tools, so the model cannot talk its way past them:
 
@@ -126,6 +126,18 @@ She can work the desktop apps you already use, logged in as you, even when they 
 Typed shortcuts: `/discord sam: running late`, `/slack #general`, `/app <anything>`. Other phrasings go to her brain, which hands them over ("let ana know on slack the deploy is done").
 
 "Ask Claude to …" is still a Claude Code job in a project folder; "the Claude app", "open Claude and ask …" is the chat app.
+
+### Messages (iMessage) and Spotify
+
+| you say | she does |
+|---|---|
+| "text Note Pad that I'm on my way" / "message mum on imessage saying see you at 8" | finds the chat by the person's name (or the group's), reads it back, sends on your yes |
+| "…, and send a photo of yourself" | adds a picture of her (also works on Discord and Slack: it goes in as an attachment) |
+| "pause the music" / "skip this song" / "previous track" / "what's playing" | Spotify, at once |
+| "play bohemian rhapsody on spotify" | with Claude as her brain the agent finds and plays it; otherwise she opens Spotify's search for it |
+| "take a selfie" / `/selfie` | copies a picture of her to the clipboard (and saves it in Pictures › Deskmate) to paste anywhere |
+
+Messages and Spotify are driven through their own scripting, not by typing into their windows, so nothing shows up as "typing…" for the other person. The first time, macOS asks whether Deskmate (Electron when run from source) may control Messages / Spotify: say yes (System Settings → Privacy & Security → Automation if you change your mind). If two chats match equally ("sam" with two Sams), she asks which one instead of guessing.
 
 ### One-time setup
 

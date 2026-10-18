@@ -50,3 +50,6 @@ body.tucked #panel { opacity: 0; transform: translateY(10px); pointer-events: no
 body.tucked.peek #panel { opacity: 1; transform: none; }
 body.tucked.peek #chat, body.tucked.peek #keyform, body.tucked.peek #character { display: none; }
 body.tucked.peek #statusrow { margin-bottom: 0; }
+
+/* a picture of her (for "send a photo of yourself"): only her, for one frame */
+body.portrait #panel, body.portrait #bubble, body.portrait #grip { visibility: hidden !important; }
