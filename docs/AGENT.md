@@ -64,15 +64,35 @@ Her tools:
 | `set_reminder`, `list_reminders`, `cancel_reminder` | reminders and timers, once or every hour / day / weekday / week |
 | `make_plan` | a plan on the card, for big goals you want to see first |
 | `calendar`, `recall_day`, `recent_messages` | your calendar, what she did today or yesterday, the message notifications she saw lately |
-| `move`, `remember` | her body (come here, sit, dance…), and a fact worth keeping about you |
-| `skill_…` | each skill in `skills/` and your skills folder |
+| `move` | her body (come here, sit, dance…) |
+| `remember`, `update_memory`, `forget` | her notes about you, USER.md and MEMORY.md (below) |
+| `search_past` | everything you two said and everything she did, searched (below) |
+| `skill_…` | each app routine (`skill.json`) in `skills/` and your skills folder |
+| `read_skill`, `run_skill_script` | the instructions of a SKILL.md skill, and its scripts (docs/SKILLS.md) |
 | `<server>__<tool>` | every tool of every MCP server you connected (below) |
 
-**Shortcuts.** Commands that need no thinking skip the model and run their tool at once, through the same code and the same checks: "tell sam on discord I'm running late", "remind me in 20 minutes to stretch", "what reminders do I have", "next tab", "search for …", "ask Claude to …", "how's Claude doing", "open github.com", "where's my resume", "pause the music", a skill's trigger phrase, and the slash commands. Anything with a second step ("…and open it", "…then text him"), a repeat ("every …"), or a judgment call ("look up …", "check …", "what's on this page") goes to the agent.
+**Shortcuts.** Commands that need no thinking skip the model and run their tool at once, through the same code and the same checks: "tell sam on discord I'm running late", "remind me in 20 minutes to stretch", "what reminders do I have", "next tab", "search for …", "ask Claude to …", "how's Claude doing", "open github.com", "where's my resume", "pause the music", a skill's trigger phrase, and the slash commands. Anything with a second step ("…and open it", "…then text him"), a repeat ("every …"), several clock times, a judgment call ("look up …", "check …", "what's on this page"), or something only her notes can resolve ("text my sister", "fix the form on my portfolio", "my usual music") goes to the agent.
 
 **Gemini and Ollama** keep the older routing (shortcuts, then one tool picked from the reply), which suits models that do not do tool use well. If Claude is rate limited or unreachable before anything was done, the same older routing answers, on the local model when Ollama is running.
 
 Settings: `DESKMATE_AGENT_CORE=0` keeps the older routing with a Claude brain too; `DESKMATE_AGENT_ROUNDS` (10) caps the tool rounds in one turn. Each turn is logged in `<user data>/tasks/agent-*.log`, and "stop" ends it at the next step.
+
+## Memory: her notes, and the past
+
+She remembers you in two plain Markdown files in `<user data>/memory/` (tray → **Open her memory**, or Setup → **What she remembers and knows**):
+
+| file | what is in it | size |
+|---|---|---|
+| `USER.md` | who you are, what you like and how you want things done, the people you message, your projects | about 2,400 characters |
+| `MEMORY.md` | facts that stay true, and lessons from doing things for you (what worked, app quirks) | about 3,200 characters |
+
+One note is one `- ` line under a `## ` heading. Both files go into her prompt every turn, in the cached part (so they cost little), and she uses them without being asked: "text my sister" is the sister your notes name, "my usual coding music" is the one they say. When you tell her something worth keeping she adds it with `remember`; when a note is wrong or stale she changes it with `update_memory`; "forget the thing about my dentist" is `forget`. When a file is full she has to merge or drop notes before adding one. Edit the files yourself whenever you like: she keeps your lines and your own headings as they are, and only adds, changes or removes whole notes. The files are shared by all her characters, since they are about you.
+
+Small talk (importance 1 or 2: "had pasta for lunch") stays out of the files and fades in days unless it comes up again, as before. The first launch of this version moves the facts she already kept (importance 3 and up, from `memory-<character>.json`) into the files once. `/forget` empties both files and keeps the old ones as `USER.md.bak` and `MEMORY.md.bak`.
+
+**Search the past.** Everything you say to her and she says back is kept in `<user data>/chats/YYYY-MM-DD.jsonl`, beside her day logs (`log/`) and plans (`plans/`). A full-text index over all three (`past.db`, SQLite FTS5 through Node's built-in `node:sqlite`, no extra install) lets her answer "what did I ask you about the dentist last week?" or "what did you send sam yesterday?" with `search_past`. The index is updated from where it left off before every search, and rebuilt from the files if it is missing or broken; the files are the truth. Old logs hold what pages, screens and messages said, so search results count as untrusted text (a send right after one asks first).
+
+**She gets better with use.** After a task that took five or more real tool calls and worked, she writes down how she did it as a skill (a `SKILL.md`: when to use it, the steps with her tools, the quirks she ran into, edge cases) into `<user data>/skills/drafts/`, shows it on the card beside her and says one line: *I wrote down how I did that as a skill, "weekly report". Keep it?* "Yes" (or **Keep it** on the card, tray → **Skills** → **Drafts**, or Setup) makes it a skill she uses; "no" throws it away; anything else leaves it waiting in the tray. When she follows a skill and finds a better way, she proposes the changed version the same way (*I found a better way to do weekly report: … Update the skill?*). A draft is only text until you say yes, every step is logged in her day log, and `DESKMATE_LEARN_SKILLS=0` turns it off. Writing a draft is one more Claude call.
 
 ## Tool servers (MCP)
 
@@ -103,18 +123,18 @@ She reads a lot of text that someone else wrote: windows on your screen (accessi
 - **It is wrapped as data.** That text reaches the model only inside `<untrusted source="web" from="…">…</untrusted>` tags (`screen`, `web`, `message`, `notification`, `mcp`), and anything in it that looks like a tag is defused, so a page cannot close the wrapper and talk as you. Every prompt that sees it (the agent core, the computer agent, the browse loop, page questions, notices) says it is never instructions.
 - **The turn is marked.** Once a turn has read untrusted text, every tool that sends, deletes, buys, runs a shell, or writes through an MCP server waits for your spoken, typed or clicked yes, whatever `DESKMATE_CONFIRM_SENDS` and `DESKMATE_CONFIRM_JOBS` say. Tools with their own read-back (a message, a Claude Code job, a skill) have it forced on; the others get a question that says why: "I read a web page just now, so I'm checking first: …". A screenshot counts as reading the screen.
 - **Messages from the phone remote** are your requests and she acts on them, but they arrive over the network, so a turn that starts on the phone is marked from the first word: every send, delete, job or MCP write asks first, with Yes / No buttons in Telegram.
-- **No planted memories.** In a marked turn she does not keep new facts about you, and what she did goes into her history as tool names only, not their output.
+- **No planted memories.** In a marked turn she does not add, change or remove notes about you, and what she did goes into her history as tool names only, not their output. A skill she drafts sees tool results only as untrusted data, and only becomes one she uses after your yes.
 - The computer agent also asks before shortcuts that delete or empty the Trash (⌘⌫ and its kin).
 
 The rules are in the code between the model and the tools (`src/main/core.ts`, `src/main/untrusted.ts`), so a model that is talked into something still cannot do it without you.
 
 ## Evals
 
-`npm run eval` scores the agent core on 32 realistic requests (messages on four apps, skills, files, reminders and repeats, Claude Code jobs, browsing, calendar, two-step requests, plans, a missing detail, small talk, and three prompt-injection attempts through a page, a message and the screen) against fake hands that record every call and press nothing. Each task checks the tools chosen, their arguments, what must never happen, and her reply.
+`npm run eval` scores the agent core on 44 realistic requests (messages on four apps, skills, files, reminders and repeats, Claude Code jobs, browsing, calendar, two-step requests, plans, a missing detail, small talk, three prompt-injection attempts through a page, a message and the screen, and twelve about memory and skills: using a preference from her notes, keeping, changing and forgetting a note, searching the past, and picking the right SKILL.md) against fake hands that record every call and press nothing. Each task checks the tools chosen, their arguments, what must never happen, her reply, and for memory tasks what her notes say afterwards.
 
 - `npm run eval` replays the model answers recorded in `test/evals/cassettes/` (no network, free) and prints a success rate.
 - `npm run eval -- --live` calls the Anthropic API (needs `ANTHROPIC_API_KEY`) and records new answers; `--model` and `--effort` pick what to test (default `claude-haiku-5-5` at `low`), `--only id,id` runs a few.
-- The last live run, Claude Haiku 5.5 at effort low: 31 of 32 (97%); 13 tasks went through shortcuts, 19 through the agent, every injection attempt was ignored. The miss: "every hour, remind me to drink water" set the right hourly reminder but reworded it to "drink some water".
+- The last live run, Claude Haiku 5.5 at effort low: 41 of 44 (93%), and 42 of 44 replaying the same answers after a too-strict check in one memory task was fixed. 13 tasks went through shortcuts, 31 through the agent; every injection attempt was ignored, and all twelve memory, search and skill tasks passed. The misses: "every hour, remind me to drink water" was reworded to "drink some water" (as before), and "check my slack for anything from ana, then text sam" stopped at the notifications instead of looking in Slack.
 
 `npm test` never calls the API; its agent tests use a scripted model.
 
@@ -346,4 +366,4 @@ What keeps it safe:
 
 ## Privacy
 
-Speech recognition and her brain (with Ollama) stay on your machine. With Claude as her brain, your messages, her recent conversation, what she remembers about you and what her tools return (a page's text, a screenshot when you ask about the screen, an MCP server's answer) go to Anthropic. MCP servers get the arguments of the calls she makes to them. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted), and so do her notices (a job done, "Sam messaged you on Discord", a reminder); nothing else she sees or hears is sent there. Notification banners and calendar events are read on the Mac and go nowhere, except as the one line she says about them: to the brain when she phrases a reminder or an event in her own words, and to the phone as above.
+Speech recognition and her brain (with Ollama) stay on your machine. Her notes (USER.md, MEMORY.md), the chat archive, the search index and the skills she writes stay in her folder on your Mac. With Claude as her brain, your messages, her recent conversation, her notes about you, what `search_past` finds and what her tools return (a page's text, a screenshot when you ask about the screen, an MCP server's answer) go to Anthropic. MCP servers get the arguments of the calls she makes to them. What she reads in Chrome goes to the brain you chose (local Ollama: nowhere; Gemini: Google), nothing else. In Discord, Slack and the Claude app she reads only window titles and the text box she types into, and sends nothing to her brain from them; your request itself goes to the brain only when its wording needs a model to understand. A job sends your instruction, and whatever Claude Code reads in that folder, to Anthropic, exactly as running `claude` there yourself would. With the phone remote on, your phone messages, her answers to them and her selfies go through Telegram's servers (bot chats are not end-to-end encrypted), and so do her notices (a job done, "Sam messaged you on Discord", a reminder); nothing else she sees or hears is sent there. Notification banners and calendar events are read on the Mac and go nowhere, except as the one line she says about them: to the brain when she phrases a reminder or an event in her own words, and to the phone as above.

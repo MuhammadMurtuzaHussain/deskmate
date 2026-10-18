@@ -1,8 +1,15 @@
 # Skills
 
-A skill teaches her one routine in one app ("message someone on WhatsApp", "start a note") without touching the
-core. It is a folder with a `skill.json` recipe and, if you need it, a small handler file. She loads skills at
-startup from two places:
+A skill teaches her something without touching the core. There are two kinds, and one folder can hold both:
+
+- **Instructions, in the open Agent Skills format**: a `SKILL.md` (the format [agentskills.io](https://agentskills.io)
+  describes, and the one OpenClaw's ClawHub and Hermes Agent use), so skills written for those work here too. She
+  reads its name and description every turn and loads the rest when a request matches. She also writes these
+  herself (below).
+- **An app routine**: a `skill.json` recipe of her hands' primitives and, if you need it, a small handler file. It
+  becomes a tool she calls, and its trigger phrases run it instantly.
+
+She loads skills at startup from two places:
 
 | where | what |
 |---|---|
@@ -12,7 +19,64 @@ startup from two places:
 After adding or editing one, use tray → **Skills** → **Reload skills**. The log says which skills loaded and why any
 did not (`[skills] … not loaded: step 3 (key): "combo" is missing`).
 
-A loaded skill is used three ways:
+## SKILL.md: instructions
+
+```markdown
+---
+name: weekly-report
+description: Put together and share the weekly status report. Use when they ask for their weekly report or Friday update.
+license: MIT
+metadata:
+  author: you
+---
+
+# Weekly report
+
+## Steps
+1. find_file with query "weekly report template", then open the path it returns.
+2. recall_day for each day this week, and fill in what was done.
+3. send_message to #status on Slack: "Weekly report is up".
+
+## App quirks
+- The template opens in Pages; ⌘⇧S saves a copy.
+
+## Edge cases
+- No template found: ask where they keep it.
+```
+
+| | |
+|---|---|
+| folder | `weekly-report/` with `SKILL.md` in it; the folder's name should be the skill's `name` |
+| `name` | 1–64 lower-case letters, digits and single dashes |
+| `description` | what it does and when to use it (up to 1024 characters). This is all she sees until she loads the skill, so put the words a person would say in it. |
+| other frontmatter | `license`, `compatibility`, `metadata`, `allowed-tools` and anything else are kept and ignored; OpenClaw's one-line JSON `metadata` and Hermes' nested `metadata.hermes` both read fine |
+| body | Markdown instructions. Name her tools (`find_file`, `send_message`, `use_computer`…) and use `<placeholders>` for what changes. |
+| `scripts/`, `references/`, `assets/` | optional files beside it. She lists them when she loads the skill and can read any of them with `read_skill`. |
+
+Only the `name` and `description` of each skill go into her prompt (in the cached part). When a request matches one,
+she calls `read_skill` to load its instructions and follows them with her tools; she can also read a file the skill
+lists (`references/api.md`).
+
+**Scripts.** A script under `scripts/` runs with `run_skill_script` (`.sh`, `.py`, `.js`/`.mjs`, or any executable),
+in the skill's folder, with a two-minute limit, and its output comes back as untrusted text. Scripts in your own
+skills only run when Deskmate was started with `DESKMATE_SKILL_CODE=1`, and the first time a skill wants to run one
+she asks: *The weekly report skill wants to run its script build.sh on this Mac. Allow its scripts from now on?* Your
+yes is kept per skill with a fingerprint of its scripts, so a changed script asks again. In a turn that read
+untrusted text, a script waits for your yes every time.
+
+**Skills she writes herself.** After a task that took five or more tool calls and worked, she drafts a SKILL.md
+into `<user data>/skills/drafts/<name>/` (with a `draft.json` saying why) and asks once. Drafts are never loaded:
+only your yes (said, **Keep it** on the card, tray → **Skills** → **Drafts waiting for your yes**, or Setup) moves
+one into `<user data>/skills/`. When she follows a skill and finds a better way, the draft is a new version of that
+skill; your yes replaces its `SKILL.md` (for a bundled skill, your copy in your skills folder wins from then on,
+while its routine stays the bundled one). Read a draft before you keep it: tray → **Drafts** → **Show it**.
+
+**The bundled skills** are routines with a SKILL.md each, so other agents can read them too, while she runs the
+`skill.json`. A folder with both is listed once, as its routine tool.
+
+## skill.json: app routines
+
+A loaded routine is used three ways:
 
 1. **Said or typed.** A sentence that matches one of its triggers runs it: "message Sam on WhatsApp: running late".
    Skills are checked before the built-in app routines, since their triggers name their app.
@@ -21,7 +85,7 @@ A loaded skill is used three ways:
 3. **In a plan.** The planner can hand a step to the `skill` worker; she matches the step to a skill, or asks her
    brain to pick one and fill in its slots.
 
-## A whole skill
+### A whole routine
 
 ```json
 {
@@ -69,7 +133,7 @@ A loaded skill is used three ways:
 
 Any step may carry a `note` for people reading the file; she ignores it.
 
-## Trigger phrases
+### Trigger phrases
 
 | write | matches |
 |---|---|
@@ -86,7 +150,7 @@ your phrases a separator. Every trigger must use every required slot.
 
 Order matters: the first trigger (of the first skill) that matches wins, so put the more specific phrases first.
 
-## Steps
+### Steps
 
 Every step that presses, types or pastes goes to the skill's own app and is refused if another app has come to
 the front (the run stops with "You switched apps, so I stopped").
@@ -107,7 +171,7 @@ the front (the run stops with "You switched apps, so I stopped").
 
 Text fields take `{slot}`. Slot values that look like a password or a card number are refused before anything runs.
 
-### The send rules
+#### The send rules
 
 These are checked when the skill loads (a skill that breaks them doesn't load) and again while it runs:
 
@@ -119,7 +183,7 @@ These are checked when the skill loads (a skill that breaks them doesn't load) a
 `DESKMATE_CONFIRM_SENDS` (`always` by default) decides whether `confirm` actually asks, the same as for Discord and
 Slack messages; `never` skips the question but never the read-back.
 
-## Handlers (code)
+### Handlers (code)
 
 A `handler.mjs` (or `handler.js`, `handler.cjs`) beside `skill.json` may export:
 

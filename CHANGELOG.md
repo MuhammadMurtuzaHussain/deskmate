@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased: she remembers, and gets better with use
+
+**Memory you can read and edit**
+- Her notes about you are two Markdown files in `<user data>/memory/`: `USER.md` (who you are, what you like, the people you message, your projects) and `MEMORY.md` (facts and lessons), each with a size cap. Both are in her prompt every turn, in the cached part. New agent tools `update_memory` and `forget` beside `remember`, which now files a note under a section; when a file is full she merges or drops notes first. Your own lines and headings are kept as you wrote them.
+- Small talk still fades in days. The facts she kept before move into the files once, on the first launch. `/forget` empties the files and keeps `.bak` copies. Tray → **Open her memory**; Setup → **What she remembers and knows**.
+- Shortcuts leave "text my sister", "fix the form on my portfolio" and "my usual music" to the agent, which has her notes.
+
+**Search the past**
+- `search_past`: SQLite FTS5 (Node's built-in `node:sqlite`, nothing to install) over a new chat archive (`<user data>/chats/`), her day logs and her plans. "What did I ask you about the dentist last week?", "what did you send sam yesterday?". Indexed incrementally before each search; rebuilt from the files when missing or broken. Results count as untrusted text.
+
+**Skills in the open SKILL.md format**
+- Skills written for agentskills.io, OpenClaw's ClawHub or Hermes Agent load from `skills/` and `<user data>/skills/`: a folder with a SKILL.md (YAML frontmatter with `name` and `description`, then instructions) and optional scripts and references. Only names and descriptions are in her prompt; `read_skill` loads one when a request matches. `run_skill_script` runs a skill's scripts, only with `DESKMATE_SKILL_CODE=1` and your yes for that skill (asked again when its scripts change).
+- The bundled WhatsApp, Telegram and Notes routines each have a SKILL.md now; their `skill.json` still runs them.
+
+**Skills she writes herself**
+- After a task that took five or more tool calls and worked, she drafts a SKILL.md (steps, app quirks, edge cases) into `<user data>/skills/drafts/`, shows it on the card beside her and asks in one line. It becomes a skill she uses only after your yes: said, on the card, in the tray or in Setup. When she follows a skill and finds a better way, she proposes the update the same way. Everything is logged in her day log. `DESKMATE_LEARN_SKILLS=0` turns it off.
+
+**Fixes**
+- "Remind me … at 8pm, … at 8:15pm" no longer becomes one garbled reminder through the shortcut; several clock times go to the agent.
+
+**Evals and tests**
+- 12 new eval tasks (a preference from her notes, keeping, changing and forgetting a note, searching the past, picking the right skill). Claude Haiku 5.5 at effort low: 41/44 live, 42/44 on replay.
+- Unit tests for the memory files and the move from JSON, FTS indexing (appends, half-written lines, rewrites, deleted files, a missing or broken database), the YAML frontmatter and SKILL.md loading, and drafting, approving and rejecting skills.
+
 ## Unreleased: one brain with every tool (the agent core)
 
 **The agent core**

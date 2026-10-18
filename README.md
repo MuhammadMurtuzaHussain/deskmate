@@ -39,6 +39,10 @@ Claude Code for code, a planner, reminders, a phone remote, and skills anyone ca
   the Chrome you already have open, a step at a time.
 - **Notices things.** A finished job, "Sam messaged you on Discord", "standup in 10 minutes", the reminders and timers
   you ask for. Quiet hours and Do not disturb hold it all for one "while you were busy…" line.
+- **Remembers you, and gets better with use.** What she knows about you is two plain Markdown files you can open
+  and edit (USER.md, MEMORY.md); "text my sister" just works once she knows who that is. "What did I ask you about
+  the dentist last week?" searches everything you two said and everything she did. After a long task that worked,
+  she writes down how she did it as a skill, and keeps it only on your yes.
 - **Answers your phone.** Text her through your own Telegram bot from anywhere; her "send it?" questions come back
   with Yes / No buttons.
 - **Talks and listens.** A local Whisper model hears you, a local Kokoro voice answers, lip-synced. Give her a wake
@@ -46,7 +50,7 @@ Claude Code for code, a planner, reminders, a phone remote, and skills anyone ca
 - **Lives on your desktop.** She walks over, sits on your windows, points at the file you asked for, swats at your
   pointer, dozes off on your terminal while a long job runs, and reacts when you tap her.
 - **Is yours to shape.** Live2D (VTube Studio), VRM, MMD and rigged FBX characters; personality in a text file; skills
-  in a JSON file.
+  in the open SKILL.md format (the one OpenClaw and Hermes use), or as app routines in a JSON file.
 
 <table>
   <tr>
@@ -119,9 +123,12 @@ Everything in the setup window can be changed later from the menu-bar icon → *
 
 ## Skills
 
-A skill teaches her one routine in one app, as a small JSON recipe: the app, trigger phrases with slots, and steps
-made of her hands' primitives. Drop a folder into your skills folder (tray → **Skills** → **Open my skills folder**)
-and she can do it by voice, the Claude agent gets it as a tool, and the planner can use it as a step.
+Skills come in two kinds. **Instructions** in the open Agent Skills format: a folder with a `SKILL.md` (a name, a
+description, then the steps in Markdown), so skills written for OpenClaw's ClawHub or Hermes Agent work here; she
+loads one when a request matches, and writes new ones herself after long tasks (kept only on your yes). **App
+routines**: a small JSON recipe with the app, trigger phrases with slots, and steps made of her hands' primitives.
+Drop a folder into your skills folder (tray → **Skills** → **Open my skills folder**) and she can do it by voice,
+the Claude agent gets it as a tool, and the planner can use it as a step.
 
 ```json
 {
@@ -139,7 +146,7 @@ and she can do it by voice, the Claude agent gets it as a tool, and the planner 
 }
 ```
 
-Bundled: WhatsApp message, Telegram message, Notes new note. The format, the send rules and handlers:
+Bundled: WhatsApp message, Telegram message, Notes new note. Both formats, the send rules, scripts and handlers:
 [docs/SKILLS.md](docs/SKILLS.md).
 
 ## Characters
@@ -181,7 +188,8 @@ she says about one leaves it. Memory, settings, plans and logs live in your user
 | Where it lives | on your desktop, as a character | a terminal, or a chat app you message | a phone app, a chat window, or a pet on screen |
 | Does things on your computer | native app control, Chrome, Claude Code, plans | shell, files, browser and many integrations | mostly no |
 | Sees your screen | yes, when you ask or let her watch | some, through tools | rarely |
-| Extending it | JSON skills (+ optional code), characters | large plugin / skill ecosystems | closed |
+| Extending it | SKILL.md skills (the same format), app routines, MCP servers, characters | large plugin / skill ecosystems | closed |
+| Memory | Markdown notes you can edit, full-text search of the past, skills she writes herself | similar (Hermes and OpenClaw pioneered it) | a chat history |
 | Asks before sending | built into the hands, not the prompt | depends on the setup | n/a |
 | Runs fully local | yes (Ollama + Kokoro + Whisper) | yes, with a local model | usually cloud |
 
@@ -225,7 +233,7 @@ It started as a reverse-engineering exercise of a commercial companion app:
 
 ## Roadmap
 
-- Skills: more of them, a gallery, and recording a skill by showing her once
+- Skills: more of them, a gallery, and recording a skill by showing her once (she already writes them after long tasks)
 - Windows hands out of experimental (needs testers with a PC), Linux hands
 - Signed and notarized macOS builds, signed Windows builds
 - A shell tool with spoken approval
