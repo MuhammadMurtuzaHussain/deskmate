@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: she plans it out
+
+- Plans for bigger goals: steps with a worker each (the Mac agent, Chrome, Claude Code, app routines, find, open, ask, a summary), shown on a card beside her, run only after a go, with voice edits ("skip step 2", "change step 3 to …", "add a step …"), pause / resume / retry / stop, results handed from step to step, and a pause with the reason when a step fails.
+- A daily log of what she did, and "what did you do today?" / "yesterday?".
+- Live2D: a model's own walk motion (motions.walk) and always-on pose toggles (poses.base).
+
 ## 0.6.0: she works your Mac, and lives on your desktop
 
 **Claude as her brain, and an agent for your Mac**

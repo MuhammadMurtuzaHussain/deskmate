@@ -44,6 +44,18 @@ The rules live in the tools, so the model cannot talk its way past them:
 - Spoken goals are read back before the run starts (`DESKMATE_CONFIRM_JOBS`). "Stop" ends a run at the next step.
 - Every run is logged in `<user data>/tasks/computer-*.log`.
 
+## Plans: bigger goals, step by step
+
+For something with several parts ("check my Slack for anything from Sam, then text him a summary", "clean up my downloads and tell me what you moved") she makes a plan: two to eight steps, each handed to the worker that is good at it.
+
+- **Workers**: the agent on your Mac (Claude brain), Chrome, Claude Code in a project folder, the quick app routines (Discord, Slack, Messages, Spotify, the Claude app), finding a file, opening something, a yes/no question for you, and a summary at the end.
+- **A card** appears beside her with the steps; she reads it out in one line and **waits for your go**. Nothing runs before that (unless `DESKMATE_PLAN_AUTO=1`).
+- **By voice or typing**: "go", "skip step 2", "change step 3 to message Ana instead", "add a step to play music at the end", "pause" (after the current step), "resume", "retry", "stop the plan". The card has Go / Pause / Resume / Stop buttons too, and so does the menu-bar icon.
+- **While it runs**, each step's result goes to the next one, the card ticks steps off with what came of them, and a step that fails pauses the plan with the reason. Messages still get read back before they are sent.
+- Ask for one with "make a plan to …", `/plan …`, or just say the goal; her brain decides when something needs a plan.
+
+**What did you do today?** Everything she does (messages sent, files found, plans and their steps, Claude jobs, agent runs) goes into a daily log in `<user data>/log/`, and "what did you do today?" or "… yesterday?" gets you the recap. Plans are kept in `<user data>/plans/`.
+
 ## Her body on the desktop
 
 | you say | she does |

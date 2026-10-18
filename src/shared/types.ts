@@ -12,12 +12,12 @@ export type DanceStyle = 'groove' | 'slow' | 'spin'
  * Things she can do on the computer, beyond talking. `claude` hands a job to Claude Code (the coding agent
  * installed on the machine) in a project folder; `claude_resume` continues an earlier session there.
  */
-export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer' | 'find'
-export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer', 'find']
+export type ToolName = 'claude' | 'claude_resume' | 'open' | 'tasks' | 'cancel' | 'browse' | 'page' | 'chrome' | 'app' | 'computer' | 'find' | 'plan'
+export const TOOL_NAMES: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'chrome', 'app', 'computer', 'find', 'plan']
 /** Only a Claude brain may pick `computer` (a multi-step agent run across desktop apps); small models would overreach. */
 export const CLAUDE_ONLY_TOOLS: ToolName[] = ['computer']
 /** The ones her brain may pick. `chrome` (tab and page verbs) only ever comes from the spoken-command router. */
-export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app', 'find']
+export const BRAIN_TOOLS: ToolName[] = ['claude', 'claude_resume', 'open', 'tasks', 'cancel', 'browse', 'page', 'app', 'find', 'plan']
 export interface ToolCall {
   name: ToolName
   /** the instruction for Claude, the browsing goal, the question about the page, the thing to open, a chrome verb,
@@ -69,6 +69,36 @@ export interface CharacterVoice {
   elevenlabs?: string
   /** macOS `say` voice */
   say?: string
+}
+
+/** Who does a step of a plan. */
+export type PlanWorker = 'computer' | 'browse' | 'claude' | 'app' | 'find' | 'open' | 'say' | 'ask'
+
+export interface PlanStep {
+  /** short, shown on the plan card ("Find the March invoice") */
+  text: string
+  worker: PlanWorker
+  /** the self-contained instruction that worker gets */
+  input: string
+  /** Claude Code: the project folder they named */
+  dir?: string | null
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+  /** what came of it, in a sentence or two */
+  result?: string
+}
+
+/** A bigger goal broken into steps she works through one at a time, after a go. */
+export interface Plan {
+  id: string
+  goal: string
+  title: string
+  steps: PlanStep[]
+  status: 'draft' | 'running' | 'paused' | 'done' | 'stopped'
+  /** index of the step running or next up */
+  current: number
+  createdAt: number
+  /** why it paused, or how it ended */
+  note?: string
 }
 
 /** What her body is doing on the desktop, beyond idle and dancing. */
@@ -253,7 +283,13 @@ export interface DeskmateApi {
   remote?(action: RemoteAction): Promise<void>
   /** the setup window's state changed in the main process (a pairing request came in, say) */
   onSetupChanged?(cb: () => void): void
+  /** plan card window */
+  onPlan?(cb: (plan: Plan | null) => void): void
+  planAction?(action: PlanAction): void
+  planHeight?(px: number): void
 }
+
+export type PlanAction = 'go' | 'pause' | 'resume' | 'stop' | 'retry' | 'dismiss'
 
 declare global {
   interface Window {

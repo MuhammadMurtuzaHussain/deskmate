@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
+import type { Plan, PlanAction, Anchors, AvatarCommand, BodyState, DeskmateApi, Gesture, PermissionKind, RemoteAction, ReplyPayload } from '../shared/types'
 
 const api: DeskmateApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -49,7 +49,12 @@ const api: DeskmateApi = {
   remote: (action: RemoteAction) => ipcRenderer.invoke('setup:remote', action),
   onSetupChanged: (cb) => {
     ipcRenderer.on('setup:changed', () => cb())
-  }
+  },
+  onPlan: (cb) => {
+    ipcRenderer.on('plan:update', (_event, plan: Plan | null) => cb(plan))
+  },
+  planAction: (action: PlanAction) => ipcRenderer.send('plan:action', action),
+  planHeight: (px: number) => ipcRenderer.send('plan:height', px)
 }
 
 contextBridge.exposeInMainWorld('deskmate', api)

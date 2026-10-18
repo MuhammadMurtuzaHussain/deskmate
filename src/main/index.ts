@@ -18,12 +18,15 @@ import { cleanTranscript, localSttSelected, sttHealthy, sttUrl, transcribe, wavD
 import { autostartLocalTts, localTtsSelected, synthesize } from './tts'
 import { CommandBar } from './bar'
 import { Body } from './body'
+import { Journal } from './journal'
+import { planCommand, planSummary, plannerSystem, PLAN_SCHEMA, PlanStore, reviseSystem, toPlan, type PlanCommand } from './plan'
+import { PlanCard } from './planwin'
 import { runComputerTask } from './computer'
 import { Hands, HandsError } from './hands'
 import { newerRelease, updateCheckEnabled, type Release } from './updates'
 import { createWakeMatcher } from './wake'
 import { ProjectWatcher } from './watcher'
-import { BODY_COMMANDS, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
+import { BODY_COMMANDS, type Plan, type PlanAction, type PlanWorker, type AppConfig, type Audio, type AvatarCommand, type BodyCommand, type CharacterConfig, type Emotion, type PermissionKind, type Reply, type ReplyPayload, type SetupState, type ToolCall, type Touch } from '../shared/types'
 
 // In development everything is in the project; packaged, characters/tts-local/icons ship as extraResources.
 const ROOT = app.getAppPath()
@@ -118,6 +121,18 @@ const body = new Body({
   log: (line) => console.log(`[body] ${line}`),
   busy: () => acting || browsing || herSpeaking || hearing
 })
+// What she did, by day ("what did you do today?"), and the plan she is showing or working through.
+const journal = new Journal(join(USER_DATA, 'log'))
+const plans = new PlanStore(join(USER_DATA, 'plans'))
+let plan: Plan | null = null
+let planRunning = false
+/** set to end the running step early (stop), or to pause after it (pause) */
+let planHalt: 'pause' | 'stop' | null = null
+/** Claude Code jobs a plan started: their end is a step result, not something to announce */
+const planJobs = new Set<string>()
+/** 1 = run a plan as soon as it is made, without waiting for a go (DESKMATE_PLAN_AUTO) */
+const PLAN_AUTO = /^(1|true|yes|on)$/i.test(process.env.DESKMATE_PLAN_AUTO?.trim() || '')
+
 /** minutes without anything happening before she nods off; 0 keeps her awake (DESKMATE_SLEEP_AFTER) */
 const SLEEP_AFTER_MIN = Number(process.env.DESKMATE_SLEEP_AFTER ?? 10)
 let lastActivity = Date.now()
@@ -256,6 +271,20 @@ function buildTrayMenu(): Menu {
     { type: 'separator' },
     { label: win?.isVisible() ? 'Hide her' : 'Show her', click: toggleWindow },
     { label: `Command bar${commandShortcut ? `  ${shortcutText(commandShortcut)}` : ''}`, click: () => bar.show() },
+    ...(plan && plan.status !== 'done' && plan.status !== 'stopped'
+      ? [
+          {
+            label: `Plan: ${plan.title}`,
+            submenu: [
+              { label: 'Show the plan', click: () => plan && planCard.show(plan) },
+              ...(plan.status === 'draft' ? [{ label: 'Go', click: () => void planDo({ kind: 'go' }) }] : []),
+              ...(plan.status === 'paused' ? [{ label: 'Resume', click: () => void planDo({ kind: 'resume' }) }] : []),
+              ...(plan.status === 'running' ? [{ label: 'Pause after this step', click: () => void planDo({ kind: 'pause' }) }] : []),
+              { label: 'Stop the plan', click: () => void planDo({ kind: 'stop' }) }
+            ]
+          }
+        ]
+      : []),
     {
       label: 'Her body',
       submenu: [
@@ -382,6 +411,7 @@ const PRELOAD = join(__dirname, '../preload/index.js')
 const COMMAND_SHORTCUT = process.env.DESKMATE_COMMAND_SHORTCUT?.trim() || 'Alt+Space'
 let commandShortcut: string | null = null
 const bar = new CommandBar(PRELOAD, loadPage)
+const planCard = new PlanCard(PRELOAD, loadPage, () => win ?? null)
 /** auto (default): her panel tucks away until you hover over her · always: it stays */
 const PANEL = process.env.DESKMATE_PANEL?.trim().toLowerCase() === 'always' ? 'always' : 'auto'
 
@@ -416,6 +446,8 @@ function createWindow(): void {
   })
   // Sit above everything, on every Space, like the overlay in the reel.
   win.setAlwaysOnTop(true, 'floating')
+  // The plan card stays beside her wherever she goes.
+  win.on('move', () => planCard.place())
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
   // Closing hides her; the tray keeps the app alive. Quit from the tray menu.
@@ -773,6 +805,10 @@ function jobTitle(call: ToolCall): string {
 }
 
 async function cancelJob(id?: string): Promise<Reply> {
+  if (planRunning && !id) {
+    stopPlan()
+    return sayPlain('Plan stopped.')
+  }
   if (acting) {
     actStop = true
     if (pending?.kind === 'confirm') pending.resolve(false)
@@ -1034,6 +1070,7 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
       portrait
     })
     console.log(`[apps] ${result.ok ? 'done' : 'not done'}: ${result.summary}`)
+    journal.add('app', result.summary)
     memory.addTurn('user', `[${APPS[req.app].name}: ${result.summary}]`)
     return sayPlain(result.say, result.ok ? 'happy' : 'sad')
   } finally {
@@ -1063,19 +1100,40 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
   acting = true
   actStop = false
   refreshTray()
+  const log = taskLogger('computer')
+  try {
+    const result = await agentGoal(goal, log, () => actStop || quitting)
+    console.log(`[computer] ${result.ok ? 'done' : 'not done'} after ${result.steps} step(s): ${result.answer.slice(0, 160)}`)
+    memory.addTurn('user', `[On the Mac, "${goal}": ${result.answer.slice(0, 300)}]`)
+    journal.add('mac', `${goal} → ${result.answer.slice(0, 200)}`)
+    return sayPlain(result.answer, result.ok ? 'happy' : 'sad')
+  } finally {
+    acting = false
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+/** A log file in <user data>/tasks for one run. */
+function taskLogger(prefix: string): (line: string) => void {
   mkdirSync(join(USER_DATA, 'tasks'), { recursive: true })
-  const logPath = join(USER_DATA, 'tasks', `computer-${Date.now().toString(36)}.log`)
-  const log = (line: string): void => {
+  const logPath = join(USER_DATA, 'tasks', `${prefix}-${Date.now().toString(36)}.log`)
+  return (line: string): void => {
     try {
       appendFileSync(logPath, `[${new Date().toISOString()}] ${line}\n`)
     } catch {
       // not her problem
     }
   }
+}
+
+/** The agent's loop with her hands and eyes, for "do X on my Mac" and for plan steps. Needs a Claude brain. */
+async function agentGoal(goal: string, log: (line: string) => void, stopped: () => boolean): Promise<{ ok: boolean; answer: string; steps: number }> {
+  const agentBrain = brain.claudeForAgent
+  if (!agentBrain) return { ok: false, answer: 'That needs Claude as my brain (Setup, from my menu).', steps: 0 }
   log(`goal: ${goal} (model ${agentBrain.model}, effort ${agentBrain.effort})`)
-  console.log(`[computer] ${agentBrain.model}: ${goal}`)
-  const stopped = (): boolean => actStop || quitting
-  try {
+  console.log(`[computer] ${agentBrain.model}: ${goal.slice(0, 120)}`)
+  {
     const result = await runComputerTask(goal, {
       client: agentBrain.client,
       model: agentBrain.model,
@@ -1101,13 +1159,7 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
       selfBundleIds: ['com.github.Electron', 'com.murtuza.deskmate'],
       maxSteps: Math.max(5, Number(process.env.DESKMATE_AGENT_STEPS) || 25)
     })
-    console.log(`[computer] ${result.ok ? 'done' : 'not done'} after ${result.steps} step(s): ${result.answer.slice(0, 160)}`)
-    memory.addTurn('user', `[On the Mac, "${goal}": ${result.answer.slice(0, 300)}]`)
-    return sayPlain(result.answer, result.ok ? 'happy' : 'sad')
-  } finally {
-    acting = false
-    refreshTray()
-    status(listening ? listeningStatus() : 'idle')
+    return result
   }
 }
 
@@ -1214,12 +1266,11 @@ function findFiles(query: string): Promise<string[]> {
 }
 
 /** "Where's my resume?": find it, show it in Finder, walk over and point at it. */
-async function findAndShow(query: string): Promise<Reply> {
-  const what = query.trim()
-  if (!what) return sayPlain('Find what?')
+/** Finds it, shows it in Finder and points at it; null when nothing matched. */
+async function findAndReveal(what: string): Promise<{ name: string; where: string; more: number } | null> {
   status(`looking for ${what}…`)
   const found = await findFiles(what)
-  if (!found.length) return sayPlain(`I couldn't find anything called ${what} on this Mac.`, 'sad')
+  if (!found.length) return null
   const file = found[0]
   const name = basename(file)
   const where = basename(join(file, '..'))
@@ -1234,8 +1285,316 @@ async function findAndShow(query: string): Promise<Reply> {
     }
   }
   if (rect) void body.pointAt(rect)
-  const more = found.length > 1 ? ` There ${found.length === 2 ? 'is one more' : `are ${found.length - 1} more`} with that name.` : ''
-  return sayPlain(`Here: ${name}, in ${where}.${more}`, 'happy')
+  journal.add('find', `${what} → ${file}`)
+  return { name, where, more: found.length - 1 }
+}
+
+/** "Where's my resume?": find it, show it in Finder, walk over and point at it. */
+async function findAndShow(query: string): Promise<Reply> {
+  const what = query.trim()
+  if (!what) return sayPlain('Find what?')
+  const hit = await findAndReveal(what)
+  if (!hit) return sayPlain(`I couldn't find anything called ${what} on this Mac.`, 'sad')
+  const more = hit.more > 0 ? ` There ${hit.more === 1 ? 'is one more' : `are ${hit.more} more`} with that name.` : ''
+  return sayPlain(`Here: ${hit.name}, in ${hit.where}.${more}`, 'happy')
+}
+
+// ---- plans: a bigger goal as steps, a card beside her, run after a go
+
+/** Which workers a plan may use right now. */
+function planWorkers(): PlanWorker[] {
+  const w: PlanWorker[] = []
+  if (brain.claudeForAgent && appHands.available) w.push('computer')
+  if (chrome.chromeAvailable()) w.push('browse')
+  if (hands) w.push('claude')
+  w.push('app', 'find', 'open', 'say', 'ask')
+  return w
+}
+
+function showPlan(): void {
+  if (!plan) return
+  plans.save(plan)
+  planCard.show(plan)
+  refreshTray()
+}
+
+async function makePlan(goal: string): Promise<Reply> {
+  const what = goal.trim()
+  if (!what) return sayPlain('A plan for what?')
+  if (!brain.canThink) return sayPlain('I need a brain to plan with. Pick one in Setup, from my menu.', 'sad')
+  if (planRunning) return sayPlain('I\'m in the middle of a plan. Say "stop the plan" first.', 'annoyed')
+  status('planning…')
+  const workers = planWorkers()
+  let obj: Record<string, unknown>
+  try {
+    obj = await brain.plan(plannerSystem(workers), `Goal: ${what}`, PLAN_SCHEMA)
+  } catch (err) {
+    return sayPlain(`I couldn't plan that: ${(err as Error).message.slice(0, 120)}`, 'sad')
+  }
+  const next = toPlan(what, obj, workers)
+  if (!next) return sayPlain("I couldn't break that into steps. Say it another way?", 'sad')
+  plan = next
+  console.log(`[plan] ${next.title}: ${next.steps.map((s) => `${s.worker}: ${s.text}`).join(' | ')}`)
+  journal.add('plan', `planned "${next.title}" (${next.steps.length} steps)`)
+  showPlan()
+  if (PLAN_AUTO) {
+    void runPlan()
+    return sayPlain(`On it: ${next.title}.`)
+  }
+  return sayPlain(planSummary(next))
+}
+
+/** "Change step 3 to …", "add a step …": the planner rewrites the steps not yet done. */
+async function revisePlan(instruction: string): Promise<Reply> {
+  if (!plan) return QUIET
+  const p = plan
+  const done = p.steps.slice(0, p.current).filter((s) => s.status === 'done' || s.status === 'skipped')
+  const rest = p.steps.slice(done.length).filter((s) => s.status !== 'skipped')
+  status('changing the plan…')
+  const workers = planWorkers()
+  let obj: Record<string, unknown>
+  try {
+    obj = await brain.plan(
+      reviseSystem(workers),
+      `Goal: ${p.goal}\nPlan: ${JSON.stringify({ title: p.title, steps: rest.map(({ text, worker, input, dir }) => ({ text, worker, input, dir: dir ?? null })) })}\nChange: ${instruction}`,
+      PLAN_SCHEMA
+    )
+  } catch (err) {
+    return sayPlain(`I couldn't change it: ${(err as Error).message.slice(0, 120)}`, 'sad')
+  }
+  const revised = toPlan(p.goal, obj, workers, p.id)
+  if (!revised) return sayPlain("I couldn't work that change in. Say it another way?")
+  p.steps = [...done, ...revised.steps]
+  p.current = done.length
+  p.title = revised.title || p.title
+  showPlan()
+  return sayPlain(planSummary(p))
+}
+
+/** Waits for a Claude Code job to end. */
+function jobEnded(id: string): Promise<Task> {
+  return new Promise((resolve) => {
+    const on = (t: Task): void => {
+      if (t.id !== id) return
+      agent.off('end', on)
+      resolve(t)
+    }
+    agent.on('end', on)
+  })
+}
+
+/** One step through its worker. Earlier results ride along so later steps can use them. */
+async function runStep(step: Plan['steps'][number], earlier: string): Promise<{ ok: boolean; result: string }> {
+  const context = earlier ? `\n\nWhat the earlier steps found or did:\n${earlier}` : ''
+  const stopped = (): boolean => planHalt === 'stop' || quitting
+  const log = taskLogger(`plan-${step.worker}`)
+  log(`step: ${step.text} · ${step.input}`)
+  switch (step.worker) {
+    case 'computer': {
+      if (!brain.claudeForAgent) return { ok: false, result: 'that needs Claude as my brain' }
+      if (!(await checkAppTrust())) {
+        askForAccessibility()
+        return { ok: false, result: 'I need Accessibility to work your apps' }
+      }
+      const r = await agentGoal(step.input + context, log, stopped)
+      return { ok: r.ok, result: r.answer }
+    }
+    case 'browse': {
+      if (!chrome.chromeAvailable()) return { ok: false, result: 'I can only drive Chrome on a Mac' }
+      browsing = true
+      browseStop = false
+      try {
+        const r = await browse(step.input + context, { plan: (sys, user, schema) => brain.plan(sys, user, schema), confirm, onStep: status, log, stopped: () => browseStop || stopped() })
+        return { ok: r.ok, result: r.answer }
+      } finally {
+        browsing = false
+      }
+    }
+    case 'claude': {
+      if (!hands) return { ok: false, result: "Claude Code isn't installed here" }
+      const project = projects.resolve(step.dir) ?? mentionedProject(projects.list(), step.input) ?? projects.current()
+      if (!project) return { ok: false, result: 'I need to know which project folder (pick one under "Claude works in")' }
+      const task = agent.run({ prompt: step.input + context, cwd: project.path })
+      planJobs.add(task.id)
+      status(`Claude · ${task.title}`)
+      const end = await jobEnded(task.id)
+      return { ok: end.status === 'done', result: (end.result || end.lastText || end.error || '').slice(0, 600) }
+    }
+    case 'app': {
+      let req = parseAppRequest(step.input)
+      if (!req && brain.canThink) req = fromPlan(await brain.plan(APP_PLAN_SYSTEM, step.input, APP_PLAN_SCHEMA).catch(() => ({})))
+      if (!req) {
+        if (brain.claudeForAgent) return runStep({ ...step, worker: 'computer' }, earlier)
+        return { ok: false, result: "I couldn't tell which app or who" }
+      }
+      if (req.app !== 'messages' && req.app !== 'spotify' && !(await checkAppTrust())) {
+        askForAccessibility()
+        return { ok: false, result: 'I need Accessibility to work your apps' }
+      }
+      const r = await runApp(req, { hands: appHands, confirm, confirmMessages: CONFIRM_SENDS !== 'never', confirmPrompts: false, onStep: status, log, stopped, portrait })
+      return { ok: r.ok, result: r.summary }
+    }
+    case 'find': {
+      const hit = await findAndReveal(step.input)
+      return hit ? { ok: true, result: `${hit.name}, in ${hit.where}` } : { ok: false, result: `nothing called ${step.input}` }
+    }
+    case 'open':
+      await openThing(step.input)
+      return { ok: true, result: `opened ${step.input}` }
+    case 'say': {
+      const skipped = (plan?.steps ?? []).filter((s) => s.status === 'skipped' || s.status === 'failed').map((s) => s.text).join('; ')
+      let say = earlier ? earlier.split('\n').slice(-3).join(' ') : step.input
+      if (brain.canThink) {
+        const r = await brain
+          .plan(
+            'You tell the user what was done or found, out loud, as their companion: two or three short spoken sentences. Say only what the results below show, with names and numbers exact. Steps listed as skipped or failed did not happen: never say they did, even if the request mentions them. Reply with ONE JSON object: {"say": string}',
+            `Request: ${step.input}\n\nResults (the only things that happened):\n${earlier || '(none)'}${skipped ? `\n\nSkipped, did not happen: ${skipped}` : ''}`,
+            { type: 'object', properties: { say: { type: 'string' } }, required: ['say'] }
+          )
+          .catch(() => null)
+        if (r?.say) say = String(r.say)
+      }
+      await sayPlain(say, 'happy')
+      return { ok: true, result: say }
+    }
+    case 'ask': {
+      const yes = await confirm(step.input)
+      return yes ? { ok: true, result: 'you said yes' } : { ok: false, result: 'you said no' }
+    }
+  }
+}
+
+/** Works through the plan from where it is: one step at a time, pausing on a failure or a "pause". */
+async function runPlan(): Promise<void> {
+  if (!plan || planRunning) return
+  const p = plan
+  planRunning = true
+  planHalt = null
+  p.status = 'running'
+  p.note = undefined
+  showPlan()
+  journal.add('plan', `started "${p.title}"`)
+  try {
+    while (p.current < p.steps.length) {
+      const step = p.steps[p.current]
+      if (step.status === 'skipped' || step.status === 'done') {
+        if (step.status === 'skipped') journal.add('step', `skipped (not done): ${step.text}`)
+        p.current++
+        continue
+      }
+      if (planHalt) break
+      const n = p.current + 1
+      step.status = 'running'
+      step.result = undefined
+      showPlan()
+      status(`plan · step ${n} of ${p.steps.length} · ${step.text}`)
+      const earlier = p.steps
+        .filter((s) => s.status === 'done' && s.result)
+        .map((s) => `- ${s.text}: ${s.result}`)
+        .join('\n')
+      let out: { ok: boolean; result: string }
+      try {
+        out = await runStep(step, earlier)
+      } catch (err) {
+        out = { ok: false, result: (err as Error).message }
+      }
+      if (planHalt === 'stop') {
+        step.status = 'pending'
+        break
+      }
+      step.result = out.result.slice(0, 600)
+      step.status = out.ok ? 'done' : 'failed'
+      journal.add('step', `${out.ok ? 'done' : 'failed'}: ${step.text}${out.result ? ` → ${out.result.slice(0, 200)}` : ''}`)
+      showPlan()
+      if (!out.ok) {
+        p.status = 'paused'
+        p.note = `Step ${n} didn't work: ${out.result.slice(0, 160)}`
+        showPlan()
+        await sayPlain(`Step ${n}, ${step.text.toLowerCase()}, didn't work: ${out.result.slice(0, 160)}. Say retry, skip step ${n}, or stop the plan.`, 'sad')
+        return
+      }
+      p.current++
+    }
+    if (planHalt === 'stop') return
+    if (planHalt === 'pause') {
+      p.status = 'paused'
+      p.note = 'Paused. Say resume when you want me to carry on.'
+      showPlan()
+      await sayPlain('Paused. Say resume when you want me to carry on.')
+      return
+    }
+    p.status = 'done'
+    showPlan()
+    const did = p.steps.filter((s) => s.status === 'done').map((s) => s.text).join('; ')
+    const skippedSteps = p.steps.filter((s) => s.status === 'skipped').map((s) => s.text).join('; ')
+    journal.add('plan', `finished "${p.title}": did ${did || 'nothing'}${skippedSteps ? `; skipped (not done) ${skippedSteps}` : ''}`)
+    memory.addTurn('user', `[Plan "${p.title}" done: ${p.steps.filter((s) => s.status === 'done').map((s) => s.text).join('; ')}]`)
+    // A plan that ends with a "say" step has already said what came of it.
+    if (p.steps.at(-1)?.worker !== 'say') await sayPlain(`Done: ${p.title}.`, 'happy')
+  } finally {
+    planRunning = false
+    planHalt = null
+    refreshTray()
+    status(listening ? listeningStatus() : 'idle')
+  }
+}
+
+function stopPlan(): Reply | null {
+  if (!plan || plan.status === 'done' || plan.status === 'stopped') return null
+  const running = planRunning
+  plan.status = 'stopped'
+  plan.note = 'Stopped.'
+  planHalt = 'stop'
+  // Cut the step that is running short, whatever worker has it.
+  actStop = true
+  browseStop = true
+  for (const id of planJobs) agent.cancel(id)
+  if (pending?.kind === 'confirm') pending.resolve(false)
+  journal.add('plan', `stopped "${plan.title}"`)
+  showPlan()
+  void running
+  return null
+}
+
+/** What they said or clicked about the plan. */
+async function planDo(cmd: PlanCommand | { kind: 'dismiss' }): Promise<Reply> {
+  if (!plan) return QUIET
+  switch (cmd.kind) {
+    case 'go':
+    case 'resume':
+      if (planRunning) return QUIET
+      void runPlan()
+      return sayPlain(cmd.kind === 'go' ? 'Going.' : 'Carrying on.')
+    case 'retry': {
+      if (planRunning || plan.status !== 'paused') return QUIET
+      const step = plan.steps[plan.current]
+      if (step) step.status = 'pending'
+      void runPlan()
+      return sayPlain('Trying that step again.')
+    }
+    case 'pause':
+      if (!planRunning) return QUIET
+      planHalt = 'pause'
+      return sayPlain("I'll pause after this step.")
+    case 'stop':
+      stopPlan()
+      return sayPlain('Plan stopped.')
+    case 'skip': {
+      const step = plan.steps[cmd.index]
+      if (!step || step.status === 'done') return sayPlain("That one's already done.")
+      if (step.status === 'running') return sayPlain("That one's running right now. Say stop the plan if you want it cut short.")
+      step.status = 'skipped'
+      showPlan()
+      if (plan.status === 'paused' && cmd.index === plan.current) return sayPlain(`Skipped step ${cmd.index + 1}. Say resume to carry on.`)
+      return sayPlain(`Skipped step ${cmd.index + 1}.`)
+    }
+    case 'revise':
+      return revisePlan(cmd.instruction)
+    case 'dismiss':
+      if (plan.status === 'draft' || plan.status === 'paused') stopPlan()
+      planCard.hide()
+      return QUIET
+  }
 }
 
 /** Runs one tool call, from the router (explicit) or from her brain (she already said she is on it). */
@@ -1259,6 +1618,8 @@ async function runTool(call: ToolCall, opts: { voice?: boolean; acknowledged?: b
       return runComputer(call.input, opts)
     case 'find':
       return findAndShow(call.input)
+    case 'plan':
+      return makePlan(call.input)
     case 'claude':
     case 'claude_resume': {
       if (!hands) return sayPlain("I can't find Claude Code on this computer. Install it and log in once, then ask me again.", 'sad')
@@ -1355,7 +1716,22 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     }
   }
   // "stop" while something runs always means stop that.
-  if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (acting || browsing || agent.running().length)) return cancelJob()
+  if (/^(?:stop|stop it|cancel|that's enough|enough)[.!]?$/i.test(stripName(text)) && (planRunning || acting || browsing || agent.running().length)) return cancelJob()
+
+  // The plan on the card: "go", "skip step 2", "change step 3 to …", "pause", "stop the plan".
+  const plainSaid = stripName(text).replace(/^(?:can you |could you |please )+/i, '')
+  if (plan && (plan.status === 'draft' || plan.status === 'paused' || plan.status === 'running')) {
+    const cmd = planCommand(plainSaid, plan)
+    if (cmd) return planDo(cmd)
+  }
+  // "Make a plan to …", "/plan …"; "what did you do today?"
+  const planAsk = /^(?:\/plan\s+|(?:make|draw up|put together|come up with|give me) a plan (?:to|for)\s+|plan (?:out |how to )?)(.+)$/i.exec(plainSaid)
+  if (planAsk) return makePlan(planAsk[1])
+  const dayAsk = /^(?:what (?:did|have) you (?:do|done|been doing|get done)|what have you been up to|recap)(?: for me)?(?: (today|yesterday))?[?.!]*$/i.exec(plainSaid)
+  if (dayAsk) {
+    const when = dayAsk[1]?.toLowerCase() === 'yesterday' ? 'yesterday' : 'today'
+    return report({ kind: 'day', phase: 'status', title: when, detail: journal.describe(when === 'yesterday' ? -1 : 0) })
+  }
 
   // Her body: "come here", "sit on this window", "go to sleep", "walk around", "where's my resume?".
   const said = stripName(text).replace(/^(?:can you |could you |please )+/i, '').replace(/[.!]+$/, '')
@@ -1424,6 +1800,9 @@ agent.on('end', (task: Task) => {
   const folder = basename(task.cwd)
   const secs = Math.round(((task.endedAt ?? Date.now()) - task.startedAt) / 1000)
   console.log(`[hands] job ${task.id} ${task.status} after ${secs}s${task.costUsd ? ` ($${task.costUsd.toFixed(2)})` : ''}: ${task.error ?? (task.result ?? '').slice(0, 120)}`)
+  journal.add('claude', `${task.status}: ${task.title} in ${folder}`)
+  // A job a plan started is that step's result; the plan says what came of it.
+  if (planJobs.delete(task.id)) return
   const tell = async (): Promise<void> => {
     if (task.status === 'done') await report({ phase: 'done', title: task.title, folder, detail: (task.result || task.lastText || '').slice(0, 1500) })
     else if (task.status === 'failed') await report({ phase: 'failed', title: task.title, folder, detail: task.error })
@@ -1623,6 +2002,11 @@ ipcMain.on('window:ignore-mouse', (_event, ignore: boolean) => {
 })
 
 ipcMain.on('bar:hide', () => bar.hide())
+ipcMain.on('plan:action', (_event, action: PlanAction) => {
+  const known: PlanAction[] = ['go', 'pause', 'resume', 'stop', 'retry', 'dismiss']
+  if (known.includes(action)) void planDo({ kind: action } as PlanCommand)
+})
+ipcMain.on('plan:height', (_event, px: number) => planCard.setHeight(Number(px)))
 
 // ---- phone remote: a Telegram bot brings the paired phone's messages into her chat path
 
@@ -1985,6 +2369,7 @@ app.on('before-quit', () => {
   remote?.stop()
   bar.destroy()
   body.destroy()
+  planCard.destroy()
   for (const t of agent.running()) agent.cancel(t.id)
   stopLocalTts()
 })

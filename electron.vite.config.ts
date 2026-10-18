@@ -11,7 +11,8 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
           bar: resolve(__dirname, 'src/renderer/bar.html'),
-          setup: resolve(__dirname, 'src/renderer/setup.html')
+          setup: resolve(__dirname, 'src/renderer/setup.html'),
+          plan: resolve(__dirname, 'src/renderer/plan.html')
         }
       }
     }
