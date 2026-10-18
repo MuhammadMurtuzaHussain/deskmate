@@ -28,7 +28,8 @@ export interface ToolOutcome {
   image?: ToolImage
 }
 
-export type Origin = 'typed' | 'voice' | 'phone'
+/** schedule: a scheduled job running on its own (scheduler.ts); nobody just asked, and the user may be away */
+export type Origin = 'typed' | 'voice' | 'phone' | 'schedule'
 
 /** What a tool sees while it runs in a turn. */
 export interface ToolCtx {
@@ -36,6 +37,8 @@ export interface ToolCtx {
   taint: Taint
   /** true when this call is risky and the turn read untrusted text: a routine with its own read-back must use it */
   mustConfirm: boolean
+  /** the user already said yes to this exact call (the guard asked in a scheduled run): no read-back needed */
+  approved?: boolean
   confirm(question: string): Promise<boolean>
   onStep(text: string): void
   log(line: string): void
@@ -66,6 +69,10 @@ export interface WorkerHost {
   listReminders(ctx: ToolCtx): Promise<ToolOutcome>
   cancelReminder(a: { query: string; all: boolean }, ctx: ToolCtx): Promise<ToolOutcome>
   makePlan(a: { goal: string }, ctx: ToolCtx): Promise<ToolOutcome>
+  /** a job she runs on her own, again and again (schedule.ts) */
+  scheduleJob(a: ScheduleInput, ctx: ToolCtx): Promise<ToolOutcome>
+  listJobs(ctx: ToolCtx): Promise<ToolOutcome>
+  changeJob(a: { query: string; action: JobAction; when: string | null; task: string | null }, ctx: ToolCtx): Promise<ToolOutcome>
   calendar(a: { which: 'today' | 'tomorrow' | 'next' }, ctx: ToolCtx): Promise<ToolOutcome>
   recallDay(a: { day: 'today' | 'yesterday' }, ctx: ToolCtx): Promise<ToolOutcome>
   /** the notifications she saw lately (messages, mail), newest last */
@@ -84,6 +91,25 @@ export interface WorkerHost {
 }
 
 export type PastKind = 'any' | 'chat' | 'did' | 'plans'
+
+export type JobAction = 'pause' | 'resume' | 'delete' | 'run_now' | 'change'
+
+/** schedule_job's input: the task, their words for when, and the same timing in fields for phrasing the rules miss. */
+export interface ScheduleInput {
+  task: string
+  when: string
+  as_plan: boolean
+  kind: 'weekly' | 'interval' | 'monthly' | 'days' | 'once'
+  days: string[]
+  times: string[]
+  every_minutes: number | null
+  day_of_month: number | null
+  nth: number | null
+  between: string | null
+  at: string | null
+}
+
+const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
 
 /** A tool from a connected MCP server, as mcp.ts lists it. */
 export interface ExternalTool {
@@ -284,6 +310,69 @@ export function buildTools(host: WorkerHost, opts: ToolsOptions = {}): ToolSpec[
     risk: 'delete',
     describe: (i) => (i.all ? 'cancel all your reminders' : `cancel the "${s(i.query)}" reminder`),
     run: (i, ctx) => host.cancelReminder({ query: s(i.query), all: Boolean(i.all) }, ctx)
+  })
+  add({
+    name: 'schedule_job',
+    description:
+      'Set up a job you do on your own, again and again, at set times: "every weekday at 9 summarise my Slack", "every Sunday evening plan my week", "every hour check if the build is green". Each time it comes round you do the task with your tools and tell them what you found (by voice, or on their phone when they are away). Not for reminders: "remind me every day at 9 to stretch" is set_reminder with a repeat. task: what to do each time, in their words ("summarise my Slack"), nothing added; when: their words for when ("every weekday at 9"). The same timing as fields too: kind weekly (days + times), interval (every_minutes under 1440, days, between "HH:MM-HH:MM" or null), monthly (day_of_month 1–31 or -1 for the last day, or nth 1–5 / -1 with one weekday in days, + times), days (every_minutes as a multiple of 1440 for every N days, + times), once (at "YYYY-MM-DDTHH:MM"); days are weekday names ([] for every day), times are "HH:MM" 24-hour; unused fields null or []. as_plan: true when each run should lay out a plan on the card for their go (planning their week) rather than just doing it.',
+    input_schema: schema({
+      task: str,
+      when: str,
+      as_plan: { type: 'boolean' },
+      kind: { type: 'string', enum: ['weekly', 'interval', 'monthly', 'days', 'once'] },
+      days: { type: 'array', items: { type: 'string', enum: DAY_NAMES } },
+      times: { type: 'array', items: str },
+      every_minutes: nullable({ type: 'integer' }),
+      day_of_month: nullable({ type: 'integer' }),
+      nth: nullable({ type: 'integer' }),
+      between: nullable(str),
+      at: nullable(str)
+    }),
+    // A job set up from someone else's text would act on its own later.
+    risk: 'external',
+    describe: (i) => `schedule "${s(i.task)}" ${s(i.when)}`,
+    run: (i, ctx) =>
+      host.scheduleJob(
+        {
+          task: s(i.task),
+          when: s(i.when),
+          as_plan: Boolean(i.as_plan),
+          kind: (['weekly', 'interval', 'monthly', 'days', 'once'].includes(String(i.kind)) ? i.kind : 'weekly') as ScheduleInput['kind'],
+          days: Array.isArray(i.days) ? i.days.map((d) => String(d).toLowerCase()) : [],
+          times: Array.isArray(i.times) ? i.times.map((t) => String(t)) : [],
+          every_minutes: typeof i.every_minutes === 'number' ? i.every_minutes : null,
+          day_of_month: typeof i.day_of_month === 'number' ? i.day_of_month : null,
+          nth: typeof i.nth === 'number' ? i.nth : null,
+          between: i.between ? s(i.between) : null,
+          at: i.at ? s(i.at) : null
+        },
+        ctx
+      )
+  })
+  add({
+    name: 'list_jobs',
+    description: 'The scheduled jobs: what each does, when, when it runs next, how the last run went, and any step waiting for their yes.',
+    input_schema: schema({}),
+    run: (_i, ctx) => host.listJobs(ctx)
+  })
+  add({
+    name: 'change_job',
+    description:
+      'Pause, resume, delete, run now, or change a scheduled job, named by words from it ("the slack summary", "the build check"). For change: when is their new timing in words ("every weekday at 8") or null, task the new task or null.',
+    input_schema: schema({ query: str, action: { type: 'string', enum: ['pause', 'resume', 'delete', 'run_now', 'change'] }, when: nullable(str), task: nullable(str) }),
+    strict: false,
+    risk: (i) => (i.action === 'delete' ? 'delete' : i.action === 'change' || i.action === 'run_now' ? 'external' : null),
+    describe: (i) => `${i.action === 'run_now' ? 'run' : String(i.action ?? 'change')} the scheduled job "${s(i.query)}"`,
+    run: (i, ctx) =>
+      host.changeJob(
+        {
+          query: s(i.query),
+          action: (['pause', 'resume', 'delete', 'run_now', 'change'].includes(String(i.action)) ? i.action : 'change') as JobAction,
+          when: i.when ? s(i.when) : null,
+          task: i.task ? s(i.task) : null
+        },
+        ctx
+      )
   })
   add({
     name: 'make_plan',

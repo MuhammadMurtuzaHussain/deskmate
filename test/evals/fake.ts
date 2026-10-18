@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MemoryFiles, type MemorySection } from '../../src/main/memfiles.ts'
 import { describeHits, PastIndex } from '../../src/main/past.ts'
+import { changeJob, jobsLine, resolveSchedule, ScheduleStore, scheduledLine } from '../../src/main/schedule.ts'
 import { describeGuide, findGuide, guideIndex, loadGuides, type Guide } from '../../src/main/skillmd.ts'
 import type { Skill } from '../../src/main/skills.ts'
-import type { ChatApp, PastKind, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
+import type { ChatApp, JobAction, PastKind, ScheduleInput, ToolCtx, ToolOutcome, WorkerHost } from '../../src/main/tools.ts'
 import { untrusted } from '../../src/main/untrusted.ts'
 
 export interface FakeWorld {
@@ -32,6 +33,8 @@ export interface FakeWorld {
   past?: { daysAgo: number; kind: string; text: string; at?: string }[]
   /** instruction skills (SKILL.md) she has */
   guides?: { name: string; description: string; body: string }[]
+  /** scheduled jobs already set up, in words ("every weekday at 9") */
+  jobs?: { task: string; when: string }[]
 }
 
 export interface HostCall {
@@ -64,6 +67,7 @@ export class FakeHost implements WorkerHost {
   private past: PastIndex | null = null
   /** facts of importance 1–2 (they fade in the app) */
   readonly fading: string[] = []
+  private store: ScheduleStore | null = null
 
   constructor(world: FakeWorld = {}, answer: (question: string) => boolean = () => true, now = new Date()) {
     this.world = world
@@ -104,6 +108,7 @@ export class FakeHost implements WorkerHost {
   /** Removes the scratch folder. */
   dispose(): void {
     this.past?.close()
+    this.store?.stop()
     if (this.home) rmSync(this.home, { recursive: true, force: true })
     this.home = null
   }
@@ -126,8 +131,8 @@ export class FakeHost implements WorkerHost {
     this.rec('send_message', a, ctx)
     const chat = known(this.world.chats?.[a.app], a.to)
     if (!chat) return { ok: false, text: `There is no chat called ${a.to} in ${APP_NAMES[a.app]}; nothing was sent.` }
-    // DESKMATE_CONFIRM_SENDS=always, the default: every message is read back.
-    if (!(await ctx.confirm(`Send "${a.text}" to ${chat} on ${APP_NAMES[a.app]}?`))) return { ok: false, text: 'The user said no; not sent.', say: 'Okay, not sent.' }
+    // DESKMATE_CONFIRM_SENDS=always, the default: every message is read back (unless the guard just asked about it).
+    if (!ctx.approved && !(await ctx.confirm(`Send "${a.text}" to ${chat} on ${APP_NAMES[a.app]}?`))) return { ok: false, text: 'The user said no; not sent.', say: 'Okay, not sent.' }
     return this.ok(`Sent "${a.text}" to ${chat} on ${APP_NAMES[a.app]}${a.photo ? ' with a photo of you' : ''}.`, `Sent to ${chat}.`)
   }
 
@@ -226,6 +231,37 @@ export class FakeHost implements WorkerHost {
   async makePlan(a: { goal: string }, ctx: ToolCtx): Promise<ToolOutcome> {
     this.rec('make_plan', a, ctx)
     return this.ok(`A plan with 3 steps for "${a.goal}" is on the card beside you, waiting for the user's go. Tell them it is ready.`)
+  }
+
+  /** The scheduled jobs, in a scratch schedule.json, with the clock stopped at "now". */
+  get schedule(): ScheduleStore {
+    if (!this.store) {
+      this.store = new ScheduleStore(join(this.scratch(), 'schedule.json'), () => {}, { now: () => this.now.getTime() })
+      for (const j of this.world.jobs ?? []) {
+        const r = resolveSchedule({ task: j.task, when: j.when, as_plan: false, kind: 'weekly', days: [], times: [], every_minutes: null, day_of_month: null, nth: null, between: null, at: null }, this.now)
+        if ('rule' in r) this.store.add({ task: j.task, rule: r.rule, when: j.when })
+      }
+    }
+    return this.store
+  }
+
+  async scheduleJob(a: ScheduleInput, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('schedule_job', a as unknown as Record<string, unknown>, ctx)
+    const r = resolveSchedule(a, this.now)
+    if ('error' in r) return { ok: false, text: r.error }
+    const job = this.schedule.add({ task: a.task, rule: r.rule, when: a.when, mode: a.as_plan ? 'plan' : 'agent' })
+    return this.ok(scheduledLine(job, this.now.getTime()))
+  }
+
+  async listJobs(ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('list_jobs', {}, ctx)
+    return this.ok(jobsLine(this.schedule.list(), this.schedule.waiting(), this.now.getTime()))
+  }
+
+  async changeJob(a: { query: string; action: JobAction; when: string | null; task: string | null }, ctx: ToolCtx): Promise<ToolOutcome> {
+    this.rec('change_job', a, ctx)
+    const r = changeJob(this.schedule, a, this.now)
+    return { ok: r.ok, text: r.text, say: r.text }
   }
 
   async calendar(a: { which: string }, ctx: ToolCtx): Promise<ToolOutcome> {

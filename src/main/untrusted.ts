@@ -6,7 +6,7 @@
  * says. Pure, so the tests and the eval use it as is.
  */
 
-export type UntrustedSource = 'screen' | 'web' | 'message' | 'notification' | 'phone' | 'mcp' | 'past' | 'skill'
+export type UntrustedSource = 'screen' | 'web' | 'message' | 'notification' | 'phone' | 'mcp' | 'past' | 'skill' | 'schedule'
 
 /** What a tool does that someone could trick her into: these wait for a yes in a turn that read untrusted text. */
 export type Risk = 'send' | 'delete' | 'purchase' | 'shell' | 'external'
@@ -19,7 +19,9 @@ const SOURCE_NAMES: Record<UntrustedSource, string> = {
   phone: 'a message from the phone remote',
   mcp: 'a connected tool server',
   past: 'old logs that hold text from elsewhere',
-  skill: "a skill script's output"
+  skill: "a skill script's output",
+  // Not text from elsewhere: a run nobody is watching, so its risky steps wait for a yes the same way.
+  schedule: 'your scheduled job'
 }
 
 /** The paragraph every system prompt that sees wrapped text carries. */
@@ -72,6 +74,12 @@ export class Taint {
 /** The question she asks before a risky tool runs in a turn that read untrusted text; `what` starts with a verb
  * ("send \"running late\" to sam on Discord"). */
 export function guardQuestion(what: string, taint: Taint): string {
+  const sources = taint.list()
+  if (sources.includes('schedule')) {
+    const others = sources.filter((x) => x !== 'schedule').map((x) => SOURCE_NAMES[x])
+    const read = others.length ? ` and I read ${others.length > 1 ? `${others.slice(0, -1).join(', ')} and ${others.at(-1)}` : others[0]}` : ''
+    return `This is for your scheduled job${read}, so I'm checking first: ${what}. Go ahead?`
+  }
   const read = taint.describe()
   return read ? `I read ${read} just now, so I'm checking first: ${what}. Go ahead?` : `${what[0].toUpperCase()}${what.slice(1)}. Go ahead?`
 }

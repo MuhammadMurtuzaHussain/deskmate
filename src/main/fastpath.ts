@@ -1,6 +1,7 @@
 import { parseAppRequest, type AppRequest } from './apps.ts'
 import { routeCommand } from './commands.ts'
 import { parseReminder } from './reminders.ts'
+import { parseSchedule, ruleFields } from './schedule.ts'
 import { matchSkill, skillToolName, type Skill } from './skills.ts'
 
 /**
@@ -95,6 +96,18 @@ function reminderCall(text: string, now: Date): FastCall | null {
   }
 }
 
+/** "every weekday at 9 summarise my Slack": a job, when the timing sits cleanly at one end of the sentence and the
+ * rest reads as a task; anything less clear (or a reminder) is the agent's. */
+function scheduleCall(text: string, now: Date): FastCall | null {
+  if (/^(?:what|which|show(?: me)?|list|tell me|do i have|have i got|any)\b.*\b(?:scheduled|recurring)\b/i.test(text)) return { tool: 'list_jobs', input: {}, why: 'jobs list' }
+  if (COMPOUND.test(text)) return null
+  const p = parseSchedule(text, now)
+  if (!p || !p.clean || p.task.split(/\s+/).length < 2) return null
+  // "every hour" said alone with a question, or a task that is only a pronoun, is not a clear job.
+  if (/^(?:it|that|this|so|too|again)$/i.test(p.task)) return null
+  return { tool: 'schedule_job', input: { task: p.task, when: p.when, as_plan: /^(?:plan|make a plan)\b/i.test(p.task), ...ruleFields(p.rule) }, why: 'schedule' }
+}
+
 /** The shortcut for this message, or null when the agent should read it. */
 export function fastRoute(raw: string, opts: { skills?: Skill[]; now?: Date } = {}): FastCall | null {
   const call = shortcut(raw, opts)
@@ -113,6 +126,8 @@ function shortcut(raw: string, opts: { skills?: Skill[]; now?: Date }): FastCall
   if (hit) return { tool: skillToolName(hit.skill), input: hit.slots, why: `skill ${hit.skill.name}` }
 
   if (!slash) {
+    const job = scheduleCall(text, now)
+    if (job) return job
     const reminder = reminderCall(text, now)
     if (reminder) return reminder
     const app = parseAppRequest(text)

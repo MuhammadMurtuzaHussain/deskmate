@@ -429,13 +429,13 @@ export function parseRule(raw: string, now = new Date(), tz = localZone()): Pars
     take(/\b(?:on )?the (\d{1,2})(?:st|nd|rd|th)? (?:day )?of (?:every|each|the) month\b/.exec(s)) ??
     take(/\b(?:every|each) month on the (\d{1,2})(?:st|nd|rd|th)?\b/.exec(s)) ??
     take(/\bmonthly on the (\d{1,2})(?:st|nd|rd|th)?\b/.exec(s))
-  const firstOrLast = monthDay ? null : take(/\b(?:on )?the (first|last) day of (?:every|each|the) month\b/.exec(s))
+  const firstOrLast = monthDay ? null : take(/\b(?:on )?the (first|1st|last) (?:day )?of (?:every|each|the) month\b/.exec(s))
   if (nthWd) monthly = { day: null, nth: ORDINALS[nthWd[1]], weekday: dayIndex(nthWd[2]) }
   else if (monthDay) {
     const d = Number(monthDay[1])
     if (d < 1 || d > 31) return null
     monthly = { day: d, nth: null, weekday: null }
-  } else if (firstOrLast) monthly = { day: firstOrLast[1] === 'first' ? 1 : -1, nth: null, weekday: null }
+  } else if (firstOrLast) monthly = { day: firstOrLast[1] === 'last' ? -1 : 1, nth: null, weekday: null }
   else if (take(/\b(?:monthly|every month|each month)\b/.exec(s))) monthly = { day: wallClock(now.getTime(), tz).d, nth: null, weekday: null }
 
   const nDays = monthly ? null : take(new RegExp(`\\bevery (other|${NUM}) days\\b|\\bevery other day\\b`).exec(s))
@@ -839,6 +839,110 @@ export class ScheduleStore {
       renameSync(tmp, this.path)
     } catch (err) {
       console.warn('[schedule] could not save', (err as Error).message)
+    }
+  }
+}
+
+// ---- what the tools say (the app's host and the eval's fake share these)
+
+export interface ScheduleFields {
+  task: string
+  when: string
+  as_plan: boolean
+  kind: string
+  days: string[]
+  times: string[]
+  every_minutes: number | null
+  day_of_month: number | null
+  nth: number | null
+  between: string | null
+  at: string | null
+}
+
+/** The rule for schedule_job: their words first, the agent's fields when the words are too odd for the rules. */
+export function resolveSchedule(a: ScheduleFields, now = new Date(), tz = localZone()): { rule: Rule } | { error: string } {
+  if (!a.task.trim()) return { error: 'What should the job do each time? Ask the user.' }
+  if (REMINDER_WORDS.test(a.task) && /^(?:remind|nudge|ping|poke|wake)\b/i.test(a.task.trim())) return { error: 'That is a reminder, not a job: use set_reminder with a repeat.' }
+  const rule = parseRule(a.when, now, tz)?.rule ?? ruleFromFields(a, now, tz)
+  if (!rule) return { error: `I could not tell when "${a.when}" is. Ask the user for a day and a time ("every weekday at 9", "every hour").` }
+  if (rule.kind === 'once' && rule.at <= now.getTime()) return { error: `${a.at ?? a.when} has already passed; ask the user.` }
+  if (nextRun(rule, now.getTime(), tz) === null) return { error: `"${a.when}" never comes round; ask the user.` }
+  return { rule }
+}
+
+/** "my" → "your", for her lines about the task. */
+function yours(task: string): string {
+  return task.replace(/\bmy\b/gi, 'your').replace(/\bme\b/gi, 'you').replace(/\bi\b/g, 'you')
+}
+
+/** "In 20 minutes", "at 9:00 AM", "tomorrow at 9:00 AM", "on Monday at 9:00 AM". */
+export function nextText(at: number, now: number, tz?: string): string {
+  const until = at - now
+  if (until < 90 * 60_000) return `in ${Math.max(1, Math.round(until / 60_000))} minute${Math.round(until / 60_000) === 1 ? '' : 's'}`
+  const opts = tz ? { timeZone: tz } : {}
+  const clock = new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...opts })
+  const day = (t: number): string => new Date(t).toLocaleDateString('en-CA', opts)
+  if (day(at) === day(now)) return `at ${clock}`
+  if (day(at) === day(now + 86_400_000)) return `tomorrow at ${clock}`
+  const weekday = new Date(at).toLocaleDateString('en-US', { weekday: 'long', ...(until > 6 * 86_400_000 ? { month: 'long', day: 'numeric' } : {}), ...opts })
+  return `on ${weekday} at ${clock}`
+}
+
+/** "Okay: every weekday at 9:00 AM I'll summarise your Slack. First run on Monday at 9:00 AM." */
+export function scheduledLine(job: Job, now: number): string {
+  const first = job.nextAt !== null ? ` First run ${nextText(job.nextAt, now, job.tz)}.` : ''
+  const what = job.mode === 'plan' ? `put a plan on the card to ${yours(job.task)}` : yours(job.task)
+  return `Okay: ${ruleText(job.rule, job.tz)}, I'll ${what}.${first}`
+}
+
+/** The jobs in one or two lines for her to say, or for the agent to read. */
+export function jobsLine(jobs: Job[], waiting: Waiting[], now: number): string {
+  if (!jobs.length) return waiting.length ? `No scheduled jobs, but ${waiting.length} step${waiting.length === 1 ? '' : 's'} still wait for your yes.` : 'No scheduled jobs.'
+  const items = jobs.slice(0, 8).map((j) => {
+    const next = j.paused ? 'paused' : j.nextAt !== null ? `next ${nextText(j.nextAt, now, j.tz)}` : 'done'
+    const last = j.last ? `; last run ${j.last.status}${j.last.summary ? `: ${j.last.summary.slice(0, 80)}` : ''}` : ''
+    return `"${j.label}" ${ruleText(j.rule, j.tz)} (${next}${last})`
+  })
+  const more = jobs.length > 8 ? `, and ${jobs.length - 8} more` : ''
+  const wait = waiting.length ? ` Waiting for your yes: ${waiting.slice(0, 3).map((w) => `${w.what} (for "${w.label}")`).join('; ')}.` : ''
+  return `${jobs.length === 1 ? 'One scheduled job' : `${jobs.length} scheduled jobs`}: ${items.join('; ')}${more}.${wait}`
+}
+
+/** change_job on a store; run_now comes back as `run` for the caller to start. */
+export function changeJob(
+  store: ScheduleStore,
+  a: { query: string; action: 'pause' | 'resume' | 'delete' | 'run_now' | 'change'; when: string | null; task: string | null },
+  now = new Date()
+): { ok: boolean; text: string; run?: Job } {
+  const hits = store.match(a.query, /^(?:all|every(?:thing| job)?|all (?:of )?(?:them|my jobs))$/i.test(a.query.trim()) && (a.action === 'pause' || a.action === 'resume' || a.action === 'delete'))
+  if (!hits.length) return { ok: false, text: `No scheduled job matches "${a.query}". ${jobsLine(store.list(), [], now.getTime())}` }
+  if (hits.length > 1 && a.action !== 'pause' && a.action !== 'resume' && a.action !== 'delete') return { ok: false, text: `Which one? ${jobsLine(hits, [], now.getTime())}` }
+  const names = joinWords(hits.map((j) => `"${j.label}"`))
+  switch (a.action) {
+    case 'pause':
+      for (const j of hits) store.setPaused(j.id, true)
+      return { ok: true, text: `Paused ${names}.` }
+    case 'resume':
+      for (const j of hits) store.setPaused(j.id, false)
+      return { ok: true, text: `${names} ${hits.length > 1 ? 'are' : 'is'} back on${hits.length === 1 && hits[0].nextAt ? `; next run ${nextText(store.get(hits[0].id)?.nextAt ?? 0, now.getTime(), hits[0].tz)}` : ''}.` }
+    case 'delete':
+      for (const j of hits) store.remove(j.id)
+      return { ok: true, text: `Deleted ${names}.` }
+    case 'run_now':
+      return { ok: true, text: `Running "${hits[0].label}" now; I'll say what it finds.`, run: hits[0] }
+    case 'change': {
+      const job = hits[0]
+      const patch: Parameters<ScheduleStore['update']>[1] = {}
+      if (a.when) {
+        const rule = parseRule(a.when, now, job.tz)?.rule
+        if (!rule) return { ok: false, text: `I could not tell when "${a.when}" is. Ask for a day and a time.` }
+        patch.rule = rule
+        patch.when = a.when
+      }
+      if (a.task) patch.task = a.task
+      if (!a.when && !a.task) return { ok: false, text: 'Change it how? Give a new when or task.' }
+      const done = store.update(job.id, patch)
+      return done ? { ok: true, text: scheduledLine(done, now.getTime()).replace(/^Okay: /, 'Changed: ') } : { ok: false, text: 'That job is gone.' }
     }
   }
 }
