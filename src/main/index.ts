@@ -304,7 +304,7 @@ async function reloadSkills(): Promise<void> {
 const journal = new Journal(join(USER_DATA, 'log'))
 const plans = new PlanStore(join(USER_DATA, 'plans'))
 /** Full-text search over the chat archive, the day logs and the plans (a cache beside them, rebuilt when missing). */
-const past = new PastIndex(join(USER_DATA, 'past.db'), { chats: CHATS_DIR, journal: join(USER_DATA, 'log'), plans: join(USER_DATA, 'plans') })
+const past = new PastIndex(join(USER_DATA, 'past.db'), { chats: CHATS_DIR, journal: join(USER_DATA, 'log'), plans: join(USER_DATA, 'plans'), activity: join(USER_DATA, 'activity') })
 /** Skills she wrote herself, waiting for the user's yes. */
 const drafts = new SkillDrafts(USER_SKILLS)
 let plan: Plan | null = null

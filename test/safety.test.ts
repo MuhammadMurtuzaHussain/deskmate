@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import { ActivityLog, describeRecent } from '../src/main/activity.ts'
+import { PastIndex } from '../src/main/past.ts'
 import { runAgentTurn, runOneTool, type CallEvent, type ModelCall } from '../src/main/core.ts'
 import { cleanPrefs, defaultLevel, makeGate, resolve, withFloor, withLevel, type PermissionPrefs } from '../src/main/permissions.ts'
 import { looksSecret, redact, redactDeep, registerSecret, type SecretBox } from '../src/main/secrets.ts'
@@ -223,6 +224,13 @@ test('activity log: redacted, by day, undone marks, last undoable', () => {
     assert.match(told, /trash_file.*undone/)
     assert.ok(!/read_page/.test(told), 'looking is left out when there was doing')
     assert.equal(log.find(a.id, now)?.tool, 'send_message')
+    // the search index reads the activity log as things she did
+    const idx = new PastIndex(join(dir, 'past.db'), { chats: join(dir, 'chats'), journal: join(dir, 'log'), plans: join(dir, 'plans'), activity: join(dir, 'activity') })
+    idx.sync()
+    const hits = idx.search('pdf', { category: 'did' })
+    assert.ok(hits.some((h) => h.kind === 'activity:trash_file' && /old\.pdf/.test(h.text) && /bin the old pdf/.test(h.text)), JSON.stringify(hits))
+    assert.ok(!idx.search('sk-ant-api03').some((h) => /qqqq/.test(h.text)), 'no key in the index')
+    idx.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

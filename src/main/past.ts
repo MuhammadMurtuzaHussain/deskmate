@@ -23,6 +23,8 @@ export interface PastHit {
 export interface PastSources {
   chats: string
   journal: string
+  /** the activity log (<user data>/activity): every tool call, as "did" entries */
+  activity?: string
   plans: string
 }
 
@@ -42,6 +44,16 @@ export function ftsQuery(query: string): string {
 }
 
 type Db = DatabaseSyncType
+
+/** One activity-log line as a search entry: "trash_file /Users/me/old.pdf → Moved old.pdf to the Trash (for: bin the
+ * old pdf; after your yes)". Undo marks are not entries. */
+function activityItem(o: Record<string, unknown>): { at: number; kind: string; text: string } | null {
+  if (typeof o.tool !== 'string' || typeof o.at !== 'number') return null
+  const args = o.args && typeof o.args === 'object' ? Object.values(o.args as Record<string, unknown>).filter((v) => typeof v === 'string' && v).join(' · ') : ''
+  const result = typeof o.result === 'string' ? o.result : ''
+  const why = typeof o.why === 'string' && o.why ? ` (for: ${o.why})` : ''
+  return { at: o.at, kind: `activity:${o.tool}`, text: `${o.tool} ${args} → ${result}${why}`.slice(0, 1200) }
+}
 
 function openDb(path: string): Db {
   // Loaded when first needed, so a runtime without it only loses search, and a bundler leaves the built-in alone.
@@ -165,6 +177,7 @@ export class PastIndex {
     try {
       jsonl(this.sources.chats, 'chat', (o) => (typeof o.text === 'string' && typeof o.at === 'number' ? { at: o.at, kind: o.role === 'assistant' ? 'her' : 'you', text: o.text } : null))
       jsonl(this.sources.journal, 'did', (o) => (typeof o.text === 'string' && typeof o.at === 'number' ? { at: o.at, kind: String(o.kind ?? 'log'), text: o.text } : null))
+      if (this.sources.activity) jsonl(this.sources.activity, 'did', activityItem)
       if (existsSync(this.sources.plans)) {
         for (const name of readdirSync(this.sources.plans)) {
           if (!name.endsWith('.json')) continue
