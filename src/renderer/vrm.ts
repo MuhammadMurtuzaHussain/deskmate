@@ -331,10 +331,12 @@ export function createVRMAvatar(canvas: HTMLCanvasElement, character: CharacterC
       camera.aspect = w / h
       // Fit the model's height into the band between the bubble and the panel.
       const band = Math.max(100, h - TOP - BOTTOM)
-      const visibleHeight = modelHeight * (h / band) * 1.02
+      // camera.zoom > 1 frames her closer; the aim moves up by the cropped amount so her face stays in view.
+      const zoom = Math.max(0.5, character.camera?.zoom ?? 1)
+      const visibleHeight = (modelHeight * (h / band) * 1.02) / zoom
       const dist = visibleHeight / 2 / Math.tan((camera.fov * Math.PI) / 360)
       const centerShift = ((TOP - BOTTOM) / 2 / h) * visibleHeight
-      const targetY = modelCenter.y + centerShift + (character.camera?.yOffset ?? 0)
+      const targetY = modelCenter.y + centerShift + (character.camera?.yOffset ?? 0) + (modelHeight * (1 - 1 / zoom)) / 2
       camera.position.set(modelCenter.x, targetY + modelHeight * 0.02, modelCenter.z + dist)
       camera.lookAt(modelCenter.x, targetY, modelCenter.z)
       camera.updateProjectionMatrix()

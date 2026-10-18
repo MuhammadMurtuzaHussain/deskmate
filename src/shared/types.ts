@@ -81,7 +81,8 @@ export interface CharacterConfig {
   outfits?: Outfit[]
   /** 3D only: .vrma (VRM) or .vmd (MMD) clips she can dance to; without any she uses the built-in groove */
   animations?: { name: string; file: string }[]
-  camera?: { fov?: number; yOffset?: number }
+  /** zoom: 1 fits her whole body; above 1 frames her closer (she stays anchored at the head, the legs crop first) */
+  camera?: { fov?: number; yOffset?: number; zoom?: number }
   idle?: { armsDown?: number }
   dance?: { bpm?: number }
   /** MMD only: emotion → morph names joined with '+' (defaults cover the usual Japanese and ARKit names) */

@@ -74,7 +74,7 @@ Example (the bundled Victoria):
 - **`local.json`**: a gitignored file next to `character.json` whose keys override it, for private things: `animations`, `voice`, `model`, `outfits`.
 - **Outfits**: `model` swaps the whole file; `hide`/`show` toggle meshes (VRM) or materials (MMD) by name fragment; `tint` recolours materials whose name contains the key (works on light textures). Ask her to change, type `/outfit`, or use the tray.
 - **Morphs (MMD)**: `"morphs": { "happy": "笑い+mouthSmileLeft+mouthSmileRight", "mouth": "あ", "blink": "まばたき" }`; join several with `+`.
-- **Framing**: `camera.fov` and `camera.yOffset` (fraction of body height) if she sits too high or low; `idle.armsDown` if her arms hang wrong (VRM rigs start in a T-pose, MMD rigs in an A-pose).
+- **Framing**: `camera.zoom` to frame her closer (`1` fits her whole body, `1.35` crops at the knees and keeps her face where it was; works for Live2D and 3D), `camera.fov` and `camera.yOffset` (fraction of body height) if she sits too high or low; `idle.armsDown` if her arms hang wrong (VRM rigs start in a T-pose, MMD rigs in an A-pose).
 
 Bundled 3D characters: Victoria (bundled file) and Vita, Vivi, Shino (fetched from github.com/madjin/vrm-samples on first use). All four are VRoid Project sample models whose metadata states CC0 (see `src/renderer/public/models/victoria/LICENSE.txt`).
 

@@ -263,12 +263,22 @@ export async function runApp(req: AppRequest, deps: RoutineDeps): Promise<Routin
       await sleep(200)
     }
     await hands.key('cmd+k', id)
-    await sleep(500)
+    // Type only once the search box is seen to have focus: if ⌘K did not open it, the name (and the Enter after it)
+    // would land in whatever chat is open. Unreadable counts as not open (a run that could not read it is why).
+    let search: FocusedElement | null = null
+    for (let i = 0; i < 8 && !(search?.role && EDITABLE_ROLES.has(search.role)); i++) {
+      await sleep(250)
+      search = await hands.focused(id).catch(() => null)
+    }
+    deps.log(`switcher opened: ${JSON.stringify(search)}`)
+    if (!(search?.role && EDITABLE_ROLES.has(search.role))) {
+      return fail(`I couldn't see ${app.name}'s search open, so I didn't type anything.`, `quick switcher not seen after cmd+k (${JSON.stringify(search)})`)
+    }
     await hands.type(req.to, id)
     await sleep(req.app === 'slack' ? 1400 : 1000)
-    const search = await hands.focused(id).catch(() => null)
+    search = await hands.focused(id).catch(() => null)
     deps.log(`switcher: ${JSON.stringify(search)}`)
-    if (!boxHolds(search, req.to)) {
+    if (!search?.value || !boxHolds(search, req.to)) {
       await backOut(hands, id)
       return fail(`${app.name}'s search didn't take what I typed, so I stopped.`, `quick switcher did not show "${req.to}" (${JSON.stringify(search)})`)
     }

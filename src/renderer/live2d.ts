@@ -97,7 +97,9 @@ export function createLive2DAvatar(canvas: HTMLCanvasElement, character: Charact
       const ow = model.internalModel.originalWidth
       const oh = model.internalModel.originalHeight
       const availH = app.screen.height - TOP - BOTTOM
-      const scale = Math.min(availH / oh, (app.screen.width - 20) / ow)
+      // camera.zoom > 1 frames her closer: anchored at the top, so the legs crop first and her face stays in view.
+      const zoom = Math.max(0.5, character.camera?.zoom ?? 1)
+      const scale = Math.min(availH / oh, (app.screen.width - 20) / ow) * zoom
       model.scale.set(scale)
       model.anchor.set(0.5, 0)
       model.x = app.screen.width / 2

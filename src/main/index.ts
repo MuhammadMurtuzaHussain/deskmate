@@ -421,7 +421,32 @@ function status(text: string): void {
   win?.webContents.send('status', text)
 }
 
-/** One downscaled JPEG of the primary display. The overlay hides itself for the instant of the capture. */
+/**
+ * Greys out her own window in a capture, so she does not read herself as part of the screen. This replaced hiding the
+ * window while capturing, which made her blink out on every message with the local brain (it looks each time).
+ */
+function maskOwnWindow(bmp: Buffer, size: Electron.Size, display: Electron.Display): void {
+  if (!win?.isVisible()) return
+  const b = win.getBounds()
+  const d = display.bounds
+  const sx = size.width / d.width
+  const sy = size.height / d.height
+  const x0 = Math.max(0, Math.floor((b.x - d.x) * sx))
+  const y0 = Math.max(0, Math.floor((b.y - d.y) * sy))
+  const x1 = Math.min(size.width, Math.ceil((b.x + b.width - d.x) * sx))
+  const y1 = Math.min(size.height, Math.ceil((b.y + b.height - d.y) * sy))
+  const stride = bmp.length / size.height
+  for (let y = y0; y < y1; y++) {
+    const row = y * stride
+    for (let x = x0; x < x1; x++) {
+      const i = row + x * 4
+      bmp[i] = bmp[i + 1] = bmp[i + 2] = 128
+      bmp[i + 3] = 255
+    }
+  }
+}
+
+/** One downscaled JPEG of the primary display, with her own window greyed out. */
 async function captureScreen(): Promise<Stimulus['screenshot']> {
   if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
     console.warn(`[screen] access status: ${systemPreferences.getMediaAccessStatus('screen')} (needs Screen Recording permission)`)
@@ -430,7 +455,6 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
   const display = screen.getPrimaryDisplay()
   const width = 1280
   const height = Math.round((display.size.height / display.size.width) * width)
-  win.setOpacity(0)
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
@@ -452,11 +476,14 @@ async function captureScreen(): Promise<Stimulus['screenshot']> {
       status('My eyes are off: the screen comes back black. System Settings → Privacy & Security → Screen Recording → switch Deskmate (or Electron) off and on again, then restart me.')
       return undefined
     }
-    const jpeg = source.thumbnail.toJPEG(60)
+    const size = source.thumbnail.getSize()
+    maskOwnWindow(bmp, size, display)
+    const jpeg = nativeImage.createFromBitmap(bmp, size).toJPEG(60)
     if (process.env.DESKMATE_DEBUG_SAVE_CAPTURE) writeFileSync(process.env.DESKMATE_DEBUG_SAVE_CAPTURE, jpeg)
     return { data: jpeg.toString('base64'), mediaType: 'image/jpeg' }
-  } finally {
-    win.setOpacity(1)
+  } catch (err) {
+    console.warn(`[screen] capture failed: ${(err as Error).message}`)
+    return undefined
   }
 }
 
@@ -953,6 +980,14 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
   if (reply.tool && confirmFirst) {
     // Her "on it" would be a lie until they say yes; the read-back replaces it.
     return runTool(reply.tool, { voice: opts.voice })
+  }
+  if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude)\b/i.test(text)) {
+    // Her memory holds earlier requests, and a small model will replay one ("what's on my screen?" once re-sent a
+    // Discord message from an hour before). App actions run only when this message names the app.
+    console.log(`[apps] ignored an app action the message did not ask for: ${reply.tool.input}`)
+    reply.tool = undefined
+    // Her line was about that action; never leave a direct message unanswered.
+    if (/\b(?:send|sending|sent|telling|messag\w*|on it)\b/i.test(reply.say)) reply.say = 'Sorry, I got muddled. Say that again?'
   }
   await deliver(reply, 'chat')
   if (reply.tool) void runTool(reply.tool, { voice: opts.voice, acknowledged: true })
