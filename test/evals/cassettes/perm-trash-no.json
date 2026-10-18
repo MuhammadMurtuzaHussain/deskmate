@@ -1,0 +1,64 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:56:38.341Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_0117ZutxYUi2iFnjHkr6i7SB",
+          "name": "find_file",
+          "input": {
+            "query": "setup.dmg in Downloads"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01K9bSQ4mzC7aXyaC1X3Uor7",
+          "name": "find_file",
+          "input": {
+            "query": "setup.dmg"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_014FyWDbebmPmAw6nTFpsSAQ",
+          "name": "trash_file",
+          "input": {
+            "path": "/Users/me/Downloads/setup.dmg"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[annoyed] You said no to that, so I've left setup.dmg in Downloads alone. My first search also turned up a vlog file instead, which I didn't touch. Tell me if you want me to try the trash again."
+        }
+      ]
+    }
+  ]
+}

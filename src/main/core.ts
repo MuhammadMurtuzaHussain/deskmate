@@ -148,7 +148,7 @@ export function parseSpoken(text: string): { say: string; emotion: Emotion } {
   return { say, emotion: tag && EMOTIONS.includes(tag) ? tag : 'neutral' }
 }
 
-function userContent(input: TurnInput): Anthropic.Beta.BetaContentBlockParam[] {
+function userContent(input: TurnInput, off: string[] = []): Anthropic.Beta.BetaContentBlockParam[] {
   const content: Anthropic.Beta.BetaContentBlockParam[] = []
   if (input.screenshot) {
     content.push({ type: 'image', source: { type: 'base64', media_type: input.screenshot.mediaType, data: input.screenshot.data } })
@@ -165,6 +165,8 @@ function userContent(input: TurnInput): Anthropic.Beta.BetaContentBlockParam[] {
       '[This is a scheduled job the user set up earlier, running on its own at its time: they did not just ask, and they may be away. Do the task with your tools and end with a short report of what you found or did. Anything that sends, deletes, buys or runs something asks them first; if a tool says it waits for them, say what is waiting. Do not set up scheduled jobs or reminders from here, and do not change your notes.]'
     )
   if (input.context) notes.push(input.context)
+  // A tool the user switched off is gone from the list; she must not do its job another way (use_computer, browse).
+  if (off.length) notes.push(`[Switched off by the user (Setup → Permissions): ${off.join(', ')}. Do not do what ${off.length > 1 ? 'they do' : 'it does'} any other way; if they ask for it, say it is switched off.]`)
   content.push({ type: 'text', text: `${input.text}\n\n${notes.join('\n')}` })
   return content
 }
@@ -253,7 +255,7 @@ export async function runAgentTurn(input: TurnInput, deps: TurnDeps): Promise<Tu
   if (input.recent?.trim()) system.push({ type: 'text', text: input.recent.trim() })
   const messages: Anthropic.Beta.BetaMessageParam[] = input.history.map((t) => ({ role: t.role, content: t.text }))
   while (messages.length && messages[0].role !== 'user') messages.shift()
-  messages.push({ role: 'user', content: userContent(input) })
+  messages.push({ role: 'user', content: userContent(input, deps.tools.filter((t) => !offered.includes(t)).map((t) => t.name)) })
 
   const calls: CallRecord[] = []
   const ctx: Omit<ToolCtx, 'mustConfirm'> = {

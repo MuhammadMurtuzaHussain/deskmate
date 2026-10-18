@@ -1,0 +1,16 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:56.064Z",
+  "responses": [
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[annoyed] Spotify is switched off in your settings, so I can't touch the music. Turn it back on under Setup, then ask me again and I'll skip it for you."
+        }
+      ]
+    }
+  ]
+}

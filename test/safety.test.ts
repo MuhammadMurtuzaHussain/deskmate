@@ -102,6 +102,7 @@ test('gate: never is left out of the list and refused; ask asks even with nothin
     onCall: (e) => events.push(e)
   })
   assert.ok(!model.requests[0].tools.some((t) => t.name === 'spotify'), 'a never tool is not offered')
+  assert.match(JSON.stringify(model.requests[0].messages[0].content), /Switched off by the user[^"]*spotify/, 'and she is told not to do its job another way')
   assert.equal(r.calls[0].approval, 'blocked')
   assert.equal(host.calls.filter((c) => c.tool === 'spotify').length, 0)
   // trash_file is ask by default: the user was asked although the turn read nothing untrusted

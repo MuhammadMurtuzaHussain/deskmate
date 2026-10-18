@@ -1,0 +1,49 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:56:38.341Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01B9pVNwMVF3FJMmCnYv8cFi",
+          "name": "find_file",
+          "input": {
+            "query": "resume"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_017VYZmkXa3WCbyvaVnba1gu",
+          "name": "move_file",
+          "input": {
+            "from": "/Users/me/Documents/Resume 2026.pdf",
+            "to": "/Users/me/Documents/CV 2026.pdf"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done. Resume 2026.pdf is now CV 2026.pdf in your Documents folder, and it's still in the same place. Undo is available if you change your mind."
+        }
+      ]
+    }
+  ]
+}

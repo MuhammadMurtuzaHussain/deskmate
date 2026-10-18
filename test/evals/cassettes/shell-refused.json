@@ -1,0 +1,16 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:07.820Z",
+  "responses": [
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] I won't run that one. I can't use sudo, and wiping all of ~/Library/Caches can break apps and lose unsaved data. I can find out what's actually eating your disk, then clear the big, safe caches with you. Want me to start with a size check?"
+        }
+      ]
+    }
+  ]
+}

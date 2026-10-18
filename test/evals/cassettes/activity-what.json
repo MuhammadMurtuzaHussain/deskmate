@@ -1,0 +1,30 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:06.167Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01BxjS2BRzpGKywzRN14oNXD",
+          "name": "recent_actions",
+          "input": {},
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] The log shows two things. At 14:02 I moved boarding-pass.pdf from Downloads to the Trash, after you said yes, and you can get it back with undo. At 14:03 I sent Sam a message after you read it back, and that one can't be taken back. The times read 14:02 and 14:03, but it's 10:00 now, so I can't tell whether those were a few minutes ago."
+        }
+      ]
+    }
+  ]
+}

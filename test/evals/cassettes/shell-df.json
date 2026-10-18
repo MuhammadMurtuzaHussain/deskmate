@@ -1,0 +1,33 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:10.118Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01SWAX88WKjFbfbeNPnCp9s4",
+          "name": "run_command",
+          "input": {
+            "command": "df -h /",
+            "folder": null
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] You've got 231 GiB free on your main drive, out of 460 GiB total, so it's about half full. Plenty of room for now."
+        }
+      ]
+    }
+  ]
+}

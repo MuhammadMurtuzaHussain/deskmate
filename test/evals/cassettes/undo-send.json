@@ -1,0 +1,30 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:07.438Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_013wJzKQMSa6GAQz6EpAsCEX",
+          "name": "recent_actions",
+          "input": {},
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[sad] I can't unsend it. Once a message is sent, I have no way to take it back, and my log says the one I sent Sam at 14:03 can't be undone either. If it needs correcting, I can send Sam a follow-up. Tell me what it should say."
+        }
+      ]
+    }
+  ]
+}

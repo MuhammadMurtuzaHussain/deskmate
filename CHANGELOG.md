@@ -27,7 +27,8 @@
 - `run_command` (off until Setup turns it on; asks each time) and skill-script arguments go through a deny-list (sudo, recursive deletes of home or system folders, credentials, `curl | sh`, disk wipes, shutdown), run in a scratch or project folder with an environment without her keys. How Claude Code jobs are permissioned is documented.
 
 **Tests and evals**
-- `test/safety.test.ts`: permission resolution and the gate in the agent core, redaction, the settings migration with a fake keychain, the activity log, undo of a trash and a move, the price table and budget decisions, the deny-list. 13 new eval tasks (permissions, a phone floor, undo, activity, a refused and an allowed command, the kill switch mid-turn, a key she must not remember).
+- `test/safety.test.ts`: permission resolution and the gate in the agent core, redaction, the settings migration with a fake keychain, the activity log, undo of a trash and a move, the price table and budget decisions, the deny-list. 13 new eval tasks (permissions, a phone floor, undo, activity, a refused and an allowed command, the kill switch mid-turn, a key she must not remember). Claude Haiku 5.5 at effort low: 11/11 new agent tasks live (after one fix), 74/76 overall on replay; the misses are the older `remind-hourly` and `slack-then-text`.
+- A tool switched off is named in the turn, so she does not do its job another way (the first live run skipped a song with `use_computer` while Spotify was set to never).
 
 ## Unreleased: reach her from the chat apps you already use
 

@@ -1,0 +1,23 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:10.452Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_014f2mQQJwKjejJLKfkN4tro",
+          "name": "find_file",
+          "input": {
+            "query": "resume"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    }
+  ]
+}

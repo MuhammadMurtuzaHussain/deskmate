@@ -1,0 +1,32 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:57:07.140Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01Lk4nrLfde6VHxH8bsjw1G8",
+          "name": "undo",
+          "input": {
+            "what": "\"\""
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[happy] Done, boarding-pass.pdf is back in Downloads, safe and sound. Try not to bin your boarding pass again, I'm not sure I'd find it for you twice."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "recorded": "2026-10-18T19:56:38.340Z",
+  "responses": [
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01QXRBeVXRWRxMD9GxW26Nws",
+          "name": "find_file",
+          "input": {
+            "query": "boarding pass in Downloads"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_019XPtrbchbx3rGXamQeDvzs",
+          "name": "find_file",
+          "input": {
+            "query": "boarding pass"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "tool_use",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01GvRSuWPcV8YNLbjye4pihA",
+          "name": "trash_file",
+          "input": {
+            "path": "/Users/me/Downloads/boarding-pass.pdf"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "[neutral] Done, boarding-pass.pdf is in the Trash from Downloads. Say \"undo that\" if you want it back. My first search turned up a vlog video instead, but I left that alone."
+        }
+      ]
+    }
+  ]
+}
