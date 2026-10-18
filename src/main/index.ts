@@ -839,6 +839,9 @@ async function runBrowse(goal: string, acknowledged: boolean): Promise<Reply> {
 let acting = false
 let actStop = false
 
+/** The message itself asks her to do something in an app (not a question about the screen, not small talk). */
+const ACTION_REQUEST = /\b(?:text|message|msg|dm|send|tell|reply|post|open|launch|go to|play|pause|add|write|type|call|search|find|create|make|start|book|order|share|forward|turn on|turn off)\b/i
+
 /** Asks macOS for Accessibility for whoever runs her and opens the right page of System Settings. */
 function askForAccessibility(): void {
   if (process.platform !== 'darwin') return
@@ -862,7 +865,11 @@ async function runAppTool(input: string, opts: { voice?: boolean; acknowledged?:
     status('working out who and what…')
     req = fromPlan(await brain.plan(APP_PLAN_SYSTEM, input, APP_PLAN_SCHEMA).catch(() => ({})))
   }
-  if (!req) return sayPlain('So far I can message people on Discord and Slack, and ask the Claude app things. Who, where, and what should it say?')
+  if (!req && brain.claudeForAgent && ACTION_REQUEST.test(input)) {
+    // Another app (Messages, WhatsApp, Notes, …): that is the agent's job.
+    return runComputer(input, opts)
+  }
+  if (!req) return sayPlain('On my own I can message people on Discord and Slack, and ask the Claude app things. Pick Claude as my brain in Setup for other apps.')
   if (!(await checkAppTrust())) {
     askForAccessibility()
     const who = app.isPackaged ? 'Deskmate' : 'the app you started me from (Electron, or your terminal)'
@@ -932,13 +939,14 @@ async function runComputer(goal: string, opts: { voice?: boolean; acknowledged?:
       // not her problem
     }
   }
-  log(`goal: ${goal} (model ${agentBrain.model})`)
+  log(`goal: ${goal} (model ${agentBrain.model}, effort ${agentBrain.effort})`)
   console.log(`[computer] ${agentBrain.model}: ${goal}`)
   const stopped = (): boolean => actStop || quitting
   try {
     const result = await runComputerTask(goal, {
       client: agentBrain.client,
       model: agentBrain.model,
+      effort: agentBrain.effort,
       hands: appHands,
       confirm,
       screenshot: () => captureScreen().catch(() => undefined),
@@ -1073,12 +1081,23 @@ async function handleChat(rawText: string, opts: { voice?: boolean } = {}): Prom
     return runTool(reply.tool, { voice: opts.voice })
   }
   if (reply.tool?.name === 'app' && !/\b(?:discord|slack|claude)\b/i.test(text)) {
-    // Her memory holds earlier requests, and a small model will replay one ("what's on my screen?" once re-sent a
-    // Discord message from an hour before). App actions run only when this message names the app.
-    console.log(`[apps] ignored an app action the message did not ask for: ${reply.tool.input}`)
-    reply.tool = undefined
-    // Her line was about that action; never leave a direct message unanswered.
-    if (/\b(?:send|sending|sent|telling|messag\w*|on it)\b/i.test(reply.say)) reply.say = 'Sorry, I got muddled. Say that again?'
+    // The quick routines only cover Discord, Slack and the Claude app. A request for another app ("text Notepad on
+    // Messages") is real work for the agent when Claude is her brain. Otherwise it is either a small model replaying an
+    // old request from memory ("what's on my screen?" once re-sent a Discord message), or something she cannot do yet.
+    const asked = ACTION_REQUEST.test(text)
+    if (asked && brain.claudeForAgent) {
+      console.log(`[apps] not a Discord/Slack/Claude request; the agent takes it: ${text.slice(0, 80)}`)
+      reply.tool = { name: 'computer', input: text, dir: null }
+    } else {
+      console.log(`[apps] ignored an app action the message did not ask for: ${reply.tool.input}`)
+      reply.tool = undefined
+      // Her line was about that action; never leave a direct message unanswered, and say why.
+      if (/\b(?:send|sending|sent|telling|texting|messag\w*|on it)\b/i.test(reply.say)) {
+        reply.say = asked
+          ? 'I can only work Discord, Slack and the Claude app on my own. Pick Claude as my brain in Setup and I can do other apps too.'
+          : 'Sorry, I got muddled. Say that again?'
+      }
+    }
   }
   await deliver(reply, 'chat')
   if (reply.tool) void runTool(reply.tool, { voice: opts.voice, acknowledged: true })
@@ -1353,7 +1372,7 @@ async function setupState(): Promise<SetupState> {
       geminiKey: brain.hasGeminiKey,
       claude: await (async () => {
         const list = await brain.claudeModelList()
-        return { key: brain.hasClaudeKey, model: brain.claudeModel, models: list.models, error: list.error }
+        return { key: brain.hasClaudeKey, model: brain.claudeModel, effort: brain.claudeEffort, models: list.models, error: list.error }
       })()
     },
     voice: {
@@ -1396,8 +1415,8 @@ ipcMain.handle('setup:gemini', async (_event, key: string) => {
   if (result.ok) status(`${character.name} is thinking with ${brain.modelName} now`)
   return result
 })
-ipcMain.handle('setup:claude', async (_event, key: string | null, model: string) => {
-  const result = await brain.useClaude(key ? String(key) : null, String(model ?? ''))
+ipcMain.handle('setup:claude', async (_event, key: string | null, model: string, effort?: string) => {
+  const result = await brain.useClaude(key ? String(key) : null, String(model ?? ''), effort as 'low' | 'medium' | 'high' | undefined)
   if (result.ok) {
     status(`${character.name} is thinking with ${brain.modelName} now`)
     refreshTray()

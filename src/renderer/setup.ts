@@ -16,6 +16,8 @@ const claudeKey = $<HTMLInputElement>('claude-key')
 const claudePick = $<HTMLDivElement>('claude-pick')
 const claudeModel = $<HTMLSelectElement>('claude-model')
 const useClaude = $<HTMLButtonElement>('use-claude')
+const claudeEffort = $<HTMLSelectElement>('claude-effort')
+const effortPick = (): 'low' | 'medium' | 'high' => claudeEffort.value as 'low' | 'medium' | 'high'
 
 /** What each current model is good for here; anything else the key offers is listed after these. */
 const CLAUDE_NOTES: Record<string, string> = {
@@ -85,6 +87,7 @@ function render(state: SetupState): void {
   if (b.claude) {
     claudeKey.placeholder = b.claude.key ? 'a key is saved; paste a new one to replace it' : 'paste your Anthropic API key (sk-ant-…)'
     fillClaudeModels(b.claude.models, b.claude.model)
+    if (b.claude.effort && document.activeElement !== claudeEffort) claudeEffort.value = b.claude.effort
     if (b.claude.error) message(`Claude: ${b.claude.error}`, 'bad')
   }
 
@@ -148,7 +151,7 @@ claudeForm.addEventListener('submit', async (e) => {
   const key = claudeKey.value.trim()
   if (!key || !api.useClaude) return
   message('Checking the key…')
-  const result = await api.useClaude(key, claudeModel.value || 'claude-opus-5-5')
+  const result = await api.useClaude(key, claudeModel.value || 'claude-opus-5-5', effortPick())
   if (result.models?.length) fillClaudeModels(result.models, claudeModel.value || 'claude-opus-5-5')
   if (result.ok) claudeKey.value = ''
   message(result.ok ? `Key works. She thinks with ${claudeModel.value} now.` : (result.error ?? 'That did not work.'), result.ok ? 'good' : 'bad')
@@ -159,9 +162,9 @@ useClaude.addEventListener('click', async () => {
   if (!api.useClaude || !claudeModel.value) return
   useClaude.disabled = true
   message(`Switching to ${claudeModel.value}…`)
-  const result = await api.useClaude(null, claudeModel.value)
+  const result = await api.useClaude(null, claudeModel.value, effortPick())
   useClaude.disabled = false
-  message(result.ok ? `She thinks with ${claudeModel.value} now.` : (result.error ?? 'That did not work.'), result.ok ? 'good' : 'bad')
+  message(result.ok ? `She thinks with ${claudeModel.value} at ${effortPick()} effort now.` : (result.error ?? 'That did not work.'), result.ok ? 'good' : 'bad')
   await refresh()
 })
 

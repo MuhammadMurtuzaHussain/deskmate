@@ -28,7 +28,7 @@ Then just talk. She listens for a pause, transcribes the sentence on your machin
 
 ## Claude brain and the agent on your Mac
 
-Pick **Claude** in the setup window (menu-bar icon → Setup…), paste an Anthropic API key, and choose a model from the list your key can use. Claude Opus 5.5 is the default and the most dependable at multi-step work; Claude Sonnet 5.5 and Claude Haiku 5.5 answer faster and cost less. Or in `.env`: `DESKMATE_BRAIN=anthropic`, `ANTHROPIC_API_KEY=…`, `ANTHROPIC_MODEL=claude-opus-5-5`. Usage is billed to your Anthropic account (an API key is separate from a Claude.ai subscription).
+Pick **Claude** in the setup window (menu-bar icon → Setup…), paste an Anthropic API key, and choose a model from the list your key can use. Claude Opus 5.5 is the default and the most dependable at multi-step work; Claude Sonnet 5.5 and Claude Haiku 5.5 answer faster and cost less. Or in `.env`: `DESKMATE_BRAIN=anthropic`, `ANTHROPIC_API_KEY=…`, `ANTHROPIC_MODEL=claude-opus-5-5`, `ANTHROPIC_EFFORT=low` (low, the default, is quickest and cheapest; medium and high think harder). Once you pick a brain in the setup window, that choice wins over `.env`. Usage is billed to your Anthropic account (an API key is separate from a Claude.ai subscription).
 
 With Claude as her brain:
 

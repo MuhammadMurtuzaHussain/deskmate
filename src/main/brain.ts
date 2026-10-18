@@ -2,7 +2,7 @@ import type { Memory } from './memory'
 import type { Settings } from './settings'
 import { geminiGenerate, geminiCheckKey, GeminiBlockedError, GeminiQuotaError, type GeminiContent } from './gemini'
 import type Anthropic from '@anthropic-ai/sdk'
-import { callClaude, claudeClient, ClaudeError, DEFAULT_CLAUDE_MODEL, listClaudeModels, replyText, type ClaudeModelInfo } from './anthropic'
+import { callClaude, claudeClient, CLAUDE_EFFORTS, ClaudeError, DEFAULT_CLAUDE_MODEL, listClaudeModels, replyText, type ClaudeEffort, type ClaudeModelInfo } from './anthropic'
 import { ollamaChat, ollamaModels, type OllamaMessage } from './ollama'
 import { AVATAR_COMMANDS, BRAIN_TOOLS, CLAUDE_ONLY_TOOLS, EMOTIONS, type AvatarCommand, type BrainMode, type Emotion, type Reply, type ToolCall, type ToolName, type Touch } from '../shared/types'
 
@@ -73,7 +73,7 @@ const REPLY_SCHEMA = {
 }
 
 /** With a Claude brain she has one more tool: a real agent run across the apps on this Mac. */
-const CLAUDE_TOOLS_NOTE = `- With Claude as your brain you also have "tool": "computer": for anything on this Mac that takes several steps across apps and is not covered by the tools above ("find the PDF Sam sent on WhatsApp and open it", "open Spotify and play my liked songs", "in Notion, add 'call mum' to my todo page"). "tool_input" is the goal in their words, with every detail they gave. Simple app messages still use "app"; web lookups still use "browse"; code work still uses "claude".`
+const CLAUDE_TOOLS_NOTE = `- With Claude as your brain you also have "tool": "computer": for anything they want done in an app on this Mac other than a Discord or Slack message or a Claude-app prompt. Texting someone in Messages / iMessage, WhatsApp or Telegram, writing in Notes, playing music in Spotify, working in Notion, Finder, Mail, Calendar: all "computer" ("text Notepad on iMessage that I'm running late", "open Spotify and play my liked songs"). "tool_input" is the goal in their words, with every detail they gave, including the exact words to send. "app" is only for Discord, Slack and the Claude desktop app; web lookups still use "browse"; code work still uses "claude".`
 
 /** The reply contract as a strict schema for structured output: every field required, no extras, nulls spelled out. */
 const CLAUDE_REPLY_SCHEMA = {
@@ -160,6 +160,8 @@ export class Brain {
   /** Claude (Anthropic API): key, chosen model, and a client made from the key */
   private claudeKey: string | null = null
   claudeModel: string
+  /** how hard Claude thinks, for chat, planning and the agent alike (ANTHROPIC_EFFORT / setup window; default low) */
+  claudeEffort: ClaudeEffort
   private claude: Anthropic | null = null
   private claudeModels: { at: number; list: ClaudeModelInfo[] } | null = null
   readonly model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
@@ -175,17 +177,23 @@ export class Brain {
   ) {
     // .env wins; otherwise what was picked in the first-run window.
     const saved = settings.get()
-    this.ollamaModel = process.env.OLLAMA_MODEL?.trim() || saved.ollamaModel || DEFAULT_OLLAMA_MODEL
-    const brainEnv = process.env.DESKMATE_BRAIN?.trim().toLowerCase()
-    this.preferOllama = brainEnv ? brainEnv === 'ollama' : saved.brain === 'ollama'
-    this.claudeModel = process.env.ANTHROPIC_MODEL?.trim() || saved.anthropicModel || DEFAULT_CLAUDE_MODEL
+    // What was picked in the setup window wins; .env is the starting point until something is picked there. (The other
+    // way round, a DESKMATE_BRAIN=ollama line in .env quietly undid a Claude choice on every launch.)
+    const envBrain = process.env.DESKMATE_BRAIN?.trim().toLowerCase()
+    const brainPref = saved.brain ?? (envBrain === 'claude' ? 'anthropic' : envBrain)
+    if (saved.brain && envBrain && envBrain !== saved.brain) console.log(`[brain] using ${saved.brain} as picked in Setup (DESKMATE_BRAIN=${envBrain} in .env is ignored)`)
+    this.ollamaModel = saved.ollamaModel || process.env.OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL
+    this.preferOllama = brainPref === 'ollama'
+    this.claudeModel = saved.anthropicModel || process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_CLAUDE_MODEL
     this.claudeKey = (process.env.ANTHROPIC_API_KEY || saved.anthropicApiKey || '').trim() || null
+    const effort = (saved.anthropicEffort || process.env.ANTHROPIC_EFFORT?.trim().toLowerCase() || 'low') as ClaudeEffort
+    this.claudeEffort = CLAUDE_EFFORTS.includes(effort) ? effort : 'low'
     const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || saved.geminiApiKey || '').trim()
     if (key) {
       this.key = key
       this.mode = 'gemini'
     }
-    if (this.claudeKey && (brainEnv ? brainEnv === 'anthropic' || brainEnv === 'claude' : saved.brain === 'anthropic')) {
+    if (this.claudeKey && brainPref === 'anthropic') {
       this.claude = claudeClient(this.claudeKey)
       this.mode = 'anthropic'
     }
@@ -229,7 +237,7 @@ export class Brain {
   }
 
   /** Setup window: think with Claude. A new key is checked by listing its models; the model must be one of them. */
-  async useClaude(key: string | null, model: string): Promise<{ ok: boolean; error?: string; models?: ClaudeModelInfo[] }> {
+  async useClaude(key: string | null, model: string, effort?: ClaudeEffort): Promise<{ ok: boolean; error?: string; models?: ClaudeModelInfo[] }> {
     const useKey = key?.trim() || this.claudeKey
     if (!useKey) return { ok: false, error: 'Paste an Anthropic API key first (console.anthropic.com → API keys).' }
     let models: ClaudeModelInfo[]
@@ -243,9 +251,10 @@ export class Brain {
     if (!models.some((m) => m.id === pick)) return { ok: false, error: `This key cannot use ${pick}.`, models }
     this.claudeKey = useKey
     this.claudeModel = pick
+    if (effort && CLAUDE_EFFORTS.includes(effort)) this.claudeEffort = effort
     this.claude = claudeClient(useKey)
     this.mode = 'anthropic'
-    this.settings.set({ brain: 'anthropic', anthropicApiKey: useKey, anthropicModel: pick })
+    this.settings.set({ brain: 'anthropic', anthropicApiKey: useKey, anthropicModel: pick, anthropicEffort: this.claudeEffort })
     return { ok: true, models }
   }
 
@@ -267,8 +276,8 @@ export class Brain {
   }
 
   /** The client the computer agent uses, when her brain is Claude. */
-  get claudeForAgent(): { client: Anthropic; model: string } | null {
-    return this.mode === 'anthropic' && this.claude ? { client: this.claude, model: this.claudeModel } : null
+  get claudeForAgent(): { client: Anthropic; model: string; effort: ClaudeEffort } | null {
+    return this.mode === 'anthropic' && this.claude ? { client: this.claude, model: this.claudeModel, effort: this.claudeEffort } : null
   }
 
   get hasGeminiKey(): boolean {
@@ -327,7 +336,7 @@ export class Brain {
         system: [{ type: 'text', text: system }],
         messages: [{ role: 'user', content: user }],
         schema: strictSchema(schema),
-        effort: 'low',
+        effort: this.claudeEffort,
         maxTokens: 8000
       })
       text = replyText(res)
@@ -476,7 +485,7 @@ export class Brain {
         ],
         messages,
         schema: CLAUDE_REPLY_SCHEMA,
-        effort: 'low',
+        effort: this.claudeEffort,
         maxTokens: 8000
       })
       text = replyText(res)

@@ -7,6 +7,9 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5'
 
+export type ClaudeEffort = 'low' | 'medium' | 'high'
+export const CLAUDE_EFFORTS: ClaudeEffort[] = ['low', 'medium', 'high']
+
 /** Models that take the server-side refusal fallback (`fallbacks: "default"`): a declined request is re-run on the
  * model Anthropic recommends for that category instead of coming back empty. */
 const SERVER_FALLBACK = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5'])
@@ -36,7 +39,7 @@ export interface ClaudeCall {
   tools?: Anthropic.Beta.BetaToolUnion[]
   /** JSON schema for the reply (structured output); omit for tool use */
   schema?: Record<string, unknown>
-  effort?: 'low' | 'medium' | 'high'
+  effort?: ClaudeEffort
   maxTokens?: number
 }
 

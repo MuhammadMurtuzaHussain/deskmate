@@ -27,6 +27,7 @@ section { background: var(--card); border: 1px solid var(--line); border-radius:
 .msg.good { color: var(--ok); }
 a { color: var(--accent); }
 code { font: 12px ui-monospace, Menlo, monospace; background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 5px; }
+select.narrow { flex: none; width: auto; }
 input, select { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.06); color: var(--ink); outline: none; font: inherit; }
 input:focus, select:focus { border-color: var(--accent); }
 button { padding: 7px 12px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.08); color: var(--ink); cursor: pointer; font: inherit; white-space: nowrap; }

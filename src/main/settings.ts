@@ -12,6 +12,7 @@ export interface SettingsData {
   /** Claude through the Anthropic API (ANTHROPIC_API_KEY / ANTHROPIC_MODEL in .env win) */
   anthropicApiKey?: string
   anthropicModel?: string
+  anthropicEffort?: 'low' | 'medium' | 'high'
   /** the first-run window was finished or closed once */
   setupDone?: boolean
 }

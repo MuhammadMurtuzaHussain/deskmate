@@ -14,6 +14,7 @@ import { Hands, HandsError, type Snapshot } from './hands'
 export interface ComputerDeps {
   client: Anthropic
   model: string
+  effort: 'low' | 'medium' | 'high'
   hands: Hands
   /** reads the question out and waits for a yes */
   confirm(question: string): Promise<boolean>
@@ -266,7 +267,7 @@ export async function runComputerTask(goal: string, deps: ComputerDeps): Promise
         system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
         messages,
         tools: TOOLS,
-        effort: 'medium',
+        effort: deps.effort,
         maxTokens: 16000
       })
     } catch (err) {

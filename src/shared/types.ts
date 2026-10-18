@@ -153,7 +153,7 @@ export interface SetupState {
     modelName: string
     ollama: { running: boolean; models: string[]; current: string }
     geminiKey: boolean
-    claude: { key: boolean; model: string; models: { id: string; name: string }[]; error?: string }
+    claude: { key: boolean; model: string; effort?: 'low' | 'medium' | 'high'; models: { id: string; name: string }[]; error?: string }
   }
   voice: { provider: 'local' | 'elevenlabs' | 'system'; localServer: boolean }
   /** granted / denied / not-determined / restricted / unknown, as macOS reports them; keys is null without the helper */
@@ -192,7 +192,7 @@ export interface DeskmateApi {
   useOllama?(model: string): Promise<{ ok: boolean; error?: string }>
   useGemini?(key: string): Promise<{ ok: boolean; error?: string }>
   /** checks the key (when given), lists its models, and switches her brain to Claude with that model */
-  useClaude?(key: string | null, model: string): Promise<{ ok: boolean; error?: string; models?: { id: string; name: string }[] }>
+  useClaude?(key: string | null, model: string, effort?: 'low' | 'medium' | 'high'): Promise<{ ok: boolean; error?: string; models?: { id: string; name: string }[] }>
   allow?(kind: PermissionKind): Promise<void>
   finishSetup?(): Promise<void>
   openSetup?(): void
