@@ -43,6 +43,9 @@ Claude Code for code, a planner, reminders, a phone remote, and skills anyone ca
   and edit (USER.md, MEMORY.md); "text my sister" just works once she knows who that is. "What did I ask you about
   the dentist last week?" searches everything you two said and everything she did. After a long task that worked,
   she writes down how she did it as a skill, and keeps it only on your yes.
+- **Works on her own schedule.** "Every weekday at 9 summarise my Slack", "every hour check if the build is green":
+  each run tells you what it found (on your phone when you're away) and asks before it sends anything. A heartbeat
+  checks a short list you keep and stays quiet unless something needs you; an optional morning brief sums up the day.
 - **Answers your phone.** Text her through your own Telegram bot from anywhere; her "send it?" questions come back
   with Yes / No buttons.
 - **Talks and listens.** A local Whisper model hears you, a local Kokoro voice answers, lip-synced. Give her a wake
@@ -190,6 +193,7 @@ she says about one leaves it. Memory, settings, plans and logs live in your user
 | Sees your screen | yes, when you ask or let her watch | some, through tools | rarely |
 | Extending it | SKILL.md skills (the same format), app routines, MCP servers, characters | large plugin / skill ecosystems | closed |
 | Memory | Markdown notes you can edit, full-text search of the past, skills she writes herself | similar (Hermes and OpenClaw pioneered it) | a chat history |
+| On a schedule | plain-words jobs, a heartbeat checklist, a morning brief; away runs wait for your yes | cron jobs and heartbeats (they pioneered it) | reminders |
 | Asks before sending | built into the hands, not the prompt | depends on the setup | n/a |
 | Runs fully local | yes (Ollama + Kokoro + Whisper) | yes, with a local model | usually cloud |
 

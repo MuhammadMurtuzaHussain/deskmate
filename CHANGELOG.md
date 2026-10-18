@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased: she does things on her own schedule
+
+**Scheduled jobs**
+- "Every weekday at 9 summarise my Slack", "every Sunday evening plan my week", "every hour check if the build is green": jobs in plain words, kept in `<user data>/schedule.json`. Rules read the usual shapes (weekdays, weekends, named days, clock times and parts of the day, every N minutes or hours with a window, days of the month, the nth weekday, every other day); odder phrasing is filled in by the agent as fields. New agent tools `schedule_job`, `list_jobs`, `change_job` (pause, resume, delete, run now, change); clean phrases go through a shortcut.
+- The next run is computed on the wall clock of the job's time zone: daylight saving keeps 9:00 at 9:00, a skipped time runs just after the jump, a repeated one runs once. A run missed while the Mac slept or was off is caught up once (not once per slot), or dropped when more than `DESKMATE_SCHEDULE_CATCHUP_HOURS` late.
+- Each run is an isolated agent turn (or a plan on the card). Results are said at the desk, sent to the Telegram remote when you are away, otherwise told when you come back; always in the day log. Every-few-minutes jobs skip quiet hours.
+- Scheduled runs follow the guard: anything that sends, deletes, buys or runs asks first (out loud, or on the phone when you are away); with nobody to answer, the step waits for your yes instead of running. Tray → **Scheduled**, Setup → **7 · Scheduled**.
+
+**Heartbeat**
+- Every `DESKMATE_HEARTBEAT_MINUTES` (default 30, 0 off) one small Claude call reads your checklist in `<user data>/memory/HEARTBEAT.md` against your calendar, reminders, messages and jobs, and stays silent unless something needs you. No tools, small `max_tokens`, cached prefix; skipped (no call) with an empty checklist, in quiet hours, when busy, or idle overnight. Token use per beat in `<user data>/log/heartbeat-usage.jsonl`.
+
+**Morning brief** (opt-in in Setup)
+- On the first unlock, wake or return after the hour you set: today's calendar, reminders, overnight job results, messages and one line from her notes, said short and shown on a card.
+
+**Also**
+- Setup → **What she tells you about** has a switch for scheduled results and check-ins. Shortcut turns leave a note in the conversation history of which tool ran, so a follow-up knows ("delete that job").
+
+**Evals and tests**
+- 13 new eval tasks on scheduling and scheduled runs. Claude Haiku 5.5 at effort low: 56/57 live, 56/57 on replay.
+- Unit tests for next-run computation (weekdays, intervals with windows, months, daylight saving in New York and Dublin, skipped and repeated hours), catch-up after sleep, phrase parsing, the run router (desk, phone, away, quiet hours, busy, plans), waiting steps, heartbeat silence and skip rules, and the brief.
+
 ## Unreleased: she remembers, and gets better with use
 
 **Memory you can read and edit**
